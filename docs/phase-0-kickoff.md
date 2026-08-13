@@ -8,11 +8,11 @@
 
 ## Prerequisites (check before P0.T1)
 
-- [ ] **Docker Desktop** installed and running; Settings → Resources → memory set to ~8–12 GB (§24). Already installed per §24 — just confirm the memory allocation.
-- [ ] **Git** + a new empty **GitHub repo** (private is fine) to push to.
+- [x] **Docker Desktop** installed and running; Settings → Resources → memory set to ~8–12 GB (§24). Already installed per §24 — just confirm the memory allocation.
+- [x] **Git** + a new empty **GitHub repo** (private is fine) to push to.
 - [ ] **Python 3.12** available locally (`uv` recommended for speed, or plain `pip` + venv — your call).
-- [ ] **Claude Code** installed and authenticated.
-- [ ] Copy `decisions-log.md` and `master-development-plan.md` into the repo's `/docs` folder (P0.T1 creates the folder).
+- [x] **Claude Code** installed and authenticated.
+- [x] Copy `decisions-log.md` and `master-development-plan.md` into the repo's `/docs` folder (P0.T1 creates the folder).
 - [ ] AWS / Stripe / SendGrid — **not needed yet.** AWS is P10; Stripe CLI is P4; notifications are log-only (§19).
 
 ---
@@ -21,7 +21,7 @@
 **Prompt to Claude Code:**
 > Create a monorepo skeleton matching decisions-log §20. Top-level folders: `/services` containing `event-service/`, `search-service/`, `booking-service/`, `payment-service/`, `notification-service/` (each with an empty `app/` and a placeholder `README.md`); `/frontend`; `/infra`; `/docs`. Add a root `README.md` describing the project and the folder layout, a root `.gitignore` covering Python (`__pycache__`, `.venv`, `*.pyc`, `.env`) and Node (`node_modules`, build output), and a root `.env.example` with placeholder keys for DB creds, Keycloak, and service ports (no real secrets). Initialize git and make the first commit. Do not add service code yet — this is structure only.
 
-**Done when:** `tree` matches the §20 layout; repo pushed to GitHub; first commit exists.
+**Done when:** `tree` matches the §20 layout; repo pushed to GitHub; first commit exists. ✅ Done
 
 ---
 
