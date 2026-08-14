@@ -333,3 +333,36 @@ No broken links, no unbalanced code fences, no large/binary files, service
 placeholder READMEs (booking/payment/notification/search) all still
 accurate as unbuilt stubs. `services/event-service/README.md`'s documented
 run command was tested live, not just read — starts cleanly.
+
+---
+
+## 2026-08-14 — Commit-granularity rule, and squashing the commit-spam it fixes
+
+User called out that recent commits looked redundant — several small
+doc-only fixes (a folder-org note, a LICENSE removal, an emoji swap, a
+build-log catch-up entry) had each landed as their own commit instead of
+being batched with the substantive commit they were really part of. This is
+a broader version of two earlier, narrower rules (checklist ticks get folded
+into code commits; build-log entries get folded into code commits) — both
+of which were themselves fixes for the same underlying pattern recurring at
+a smaller scale. Generalized this time instead of patching the specific
+case again: **every commit is one real, complete unit of work** — code, or a
+doc change substantial enough to stand alone — never a bare mechanical tweak
+riding solo, and never an entire session crammed into one giant commit
+either. Locked into `CLAUDE.md`'s Conventions section so it's visible
+project-wide, not just in my own memory — retired the two narrower memory
+entries this supersedes.
+
+Squashed three redundant clusters via rebase + force-push (same pattern as
+every prior history cleanup this session):
+- `docs/phases/` move + the folder-organization convention note → one commit
+  (both were the same request, split for no reason).
+- `docs/report/` creation + the "report drafting had been skipped" build-log
+  catch-up → one commit (again, same request).
+- LICENSE removal + emoji-marker cleanup + the academic-presentation
+  hard-rules writeup → one commit (all three were one continuous scan-and-fix
+  pass, artificially split into three).
+
+10 commits in that range collapsed to 6, with nothing lost — same end state,
+verified via `git status` (clean) and spot-checking that `LICENSE` stayed
+gone and `docs/report`/`docs/phases` both still existed post-squash.

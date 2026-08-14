@@ -156,10 +156,26 @@ issues worth locking in against:
   a phase/task ID inside the message itself (`P3.T4`, `(Phase 3)`) — that context lives in
   `master-development-plan.md`, not git history. e.g. `booking-service: add Redis TTL hold
   strategy`, not `booking-service: add Redis TTL hold strategy (P3.T5)`.
-- **Never let a docs-only change ride along with a real code commit**, and never let a
-  commit message *sound* doc-only when it isn't (avoid leading verbs like "Document,"
-  "Record," "Confirm" on a commit that actually changes code). A `/docs` update gets its
-  own commit.
+- **Every commit is one real, complete unit of work — never a bare mechanical
+  tweak, never a whole session crammed into one commit.** "Incremental" means
+  committing at the boundary of a real unit of work, not after every file edit
+  and not once at the end of a long session either. A unit of work is: a code
+  change, or a doc change substantial enough to stand alone in history — a new
+  file, a real rewrite, a genuine reorg (`docs/phases/`, `architecture.html`).
+  It is **not**: a one-line reference fix, a single deleted file, a short
+  clarifying note, an emoji swap, a checklist tick, a build-log entry for the
+  task just finished. None of those earn a commit by themselves. When one
+  comes up, either fold it into whatever real commit is already happening, or
+  — if several small fixes pile up in one session with nothing else to attach
+  to — batch them together into *one* commit, not one each. Before committing,
+  ask: "does this stand on its own in history, or is it commit-spam?" A
+  docs-only change never rides silently inside a code commit's diff without
+  being mentioned in the message, and a commit message never *sounds*
+  doc-only when it isn't (avoid leading verbs like "Document," "Record,"
+  "Confirm" on a commit that actually changes code) — but "gets its own
+  commit" no longer means "gets its own commit every single time." (Locked
+  2026-08-14 after several sessions produced exactly the commit-spam this
+  rule now forbids — see `docs/build-log.md` for the squashes that fixed it.)
 - **DTO layer is a strict validation boundary, not a formality.** Every enum-backed field
   is typed as its real Python `Enum`, never `str` — let Pydantic's automatic 422 reject
   bad values before business logic ever sees them. Reject blank/whitespace-only required
