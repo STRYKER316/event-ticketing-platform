@@ -43,7 +43,7 @@
 **Prompt to Claude Code:**
 > Add **Keycloak** to `/infra/docker-compose.yml` in **dev mode** (`start-dev --import-realm`) with its embedded database (§5, §12) — no dedicated Postgres. Create a realm export at `/infra/keycloak/realm-export.json` defining: a realm (e.g. `ticketing`); two realm roles `user` and `organizer` (§15); one client for the frontend (public, PKCE) and one confidential/direct-access client usable for obtaining test tokens via password grant; and 2–3 seed users (one plain `user`, one with both `user` and `organizer` roles). Mount the export so it imports on startup.
 
-**Done when:** Keycloak boots and imports the realm; a token can be obtained via password grant for a seed user, and its decoded claims show the expected realm roles.
+**Done when:** Keycloak boots and imports the realm; a token can be obtained via password grant for a seed user, and its decoded claims show the expected realm roles. ✅ Done
 
 ---
 
