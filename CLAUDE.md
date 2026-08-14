@@ -26,7 +26,8 @@ full every session. When in doubt, the decisions log wins.
   /_shared/auth          shared FastAPI JWT-validation dependency (build once in P0, reuse everywhere)
 /frontend                minimal React, 5 screens, Nginx-served (Phase 7, not before)
 /infra                   docker-compose.yml, Traefik config, Keycloak realm export
-/docs                    decisions-log.md, master-development-plan.md, phase-0-kickoff.md
+/docs                    decisions-log.md, master-development-plan.md, phase-0-kickoff.md,
+                         build-log.md (append-only build diary — decisions, failures, fixes)
 ```
 
 ## Non-negotiable architecture invariants
@@ -62,7 +63,9 @@ stripe-python, structlog (JSON logs), prometheus-fastapi-instrumentator, Traefik
 - **Per-phase loop:** PLAN → REVIEW PLAN → IMPLEMENT (small, continuous, green commits —
   don't batch a whole phase into one commit) → TEST (pytest unit + testcontainers
   integration; Kafka phases must test redelivery-is-a-no-op) → REVIEW → DOCUMENT
-  (draft the report section this phase feeds, log any decisions-log delta) →
+  (draft the report section this phase feeds, log any decisions-log delta; also
+  append an entry to `docs/build-log.md` — what was built, what failed and why, what
+  fixed it, any ad hoc decision too small for the decisions log) →
   CHECKPOINT (tag/merge at the phase boundary).
 - **`main` stays bootable at every commit.** If a session ends mid-task, the previous
   commit should still `docker compose up` cleanly. Config-gate anything half-finished
