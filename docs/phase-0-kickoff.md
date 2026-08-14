@@ -77,18 +77,18 @@
 **Prompt to Claude Code:**
 > Add developer ergonomics: a root `Makefile` (or `justfile`) with `up`, `down`, `logs`, `test` targets (§25); a small `get-token.sh` helper that does the Keycloak password-grant curl and prints an access token for manual API calls; and a "Local Development" section in the root README covering how to boot the stack, get a token, hit a protected endpoint, and a placeholder note that the **Stripe CLI** (`stripe listen --forward-to ...`) will be needed later for P4 (§24).
 
-**Done when:** `make up` / `make test` work from a clean checkout; `get-token.sh` returns a usable token.
+**Done when:** `make up` / `make test` work from a clean checkout; `get-token.sh` returns a usable token. ✅ Done
 
 ---
 
 ## Phase 0 exit checklist (all must pass before P1)
 
-- [ ] Full infra stack boots healthy on the M3 in one `make up`.
-- [ ] Authenticated request round-trips Traefik → service → Keycloak-validated → DB → 200.
-- [ ] Role enforcement works (`user` vs `organizer`).
-- [ ] Structured JSON logs + `/metrics` on the service.
-- [ ] Kafka produce→consume proven.
-- [ ] Everything committed; `main` bootable.
+- [x] Full infra stack boots healthy on the M3 in one `make up`.
+- [x] Authenticated request round-trips Traefik → service → Keycloak-validated → DB → 200.
+- [x] Role enforcement works (`user` vs `organizer`).
+- [x] Structured JSON logs + `/metrics` on the service.
+- [x] Kafka produce→consume proven.
+- [x] Everything committed; `main` bootable.
 
 **Report evidence captured this phase (§16):** local topology figure (v1), auth-flow figure, "auth as a platform dependency" writeup, the service-scaffold pattern — these feed the *Project Description*, *Requirement Gathering*, and *Technologies Used* drafts (Milestone A).
 

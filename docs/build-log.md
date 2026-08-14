@@ -208,3 +208,29 @@ generating a unique topic name per test run (`phase0-smoke-test-{uuid4}`),
 which also matches the "throwaway" framing in the task prompt better than a
 fixed topic name would have. Re-ran three times consecutively after the fix,
 all green, to actually confirm the fix rather than trusting one clean run.
+
+---
+
+## 2026-08-14 — P0.T7: Dev workflow (Makefile, get-token.sh) — Phase 0 exit
+
+Added a root `Makefile` (`up`/`down`/`logs`/`test`), `get-token.sh` (Keycloak
+password-grant helper, defaults to seed user `alice`/`changeme`, hardcodes the
+confidential `ticketing-service` client since that's the one with direct
+grants enabled — the public frontend client can't do password grant at all),
+and a "Local Development" section in the root README.
+
+**Verified as a genuine clean-checkout simulation, not just re-running in the
+existing shell:** deleted `.env`, ran `make up` (confirmed it auto-copies
+`.env.example`), got a token with zero args (`alice`) and with explicit args
+(`bob`), hit both `/demo/protected` and `/demo/organizer-only` with the
+returned tokens, confirmed a wrong-password call fails loudly (non-zero exit,
+no bogus token printed) instead of silently succeeding. Also re-ran `make
+test` inside a real `zsh -l` login shell rather than the working shell's
+already-exported `PATH`, since `uv` was installed mid-session (P0.T4) and a
+prior turn's manual `export PATH=...` could have been masking a real gap for
+a genuinely fresh terminal.
+
+**Phase 0 exit checklist:** all six items ticked — every one had already been
+independently verified live across P0.T1–T7 (stack boots, auth round-trips
+end-to-end, role enforcement, JSON logs + metrics, Kafka round-trip, `main`
+bootable at every commit). Phase 1 (Event Service) is next.

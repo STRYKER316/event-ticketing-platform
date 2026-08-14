@@ -24,6 +24,28 @@ architectural or scope decision.
 /docs                    decisions-log.md, master-development-plan.md, phase-0-kickoff.md
 ```
 
+## Local Development
+
+```sh
+make up             # copies .env.example -> .env if missing, boots the compose stack
+./get-token.sh       # prints an access token for seed user alice (pass a different user/pass as args)
+curl -H "Authorization: Bearer $(./get-token.sh)" http://localhost/demo/protected
+make logs            # tail all container logs
+make down            # stop the stack
+make test            # run suites that don't need live infra (currently: shared-auth)
+```
+
+Seed users (see `infra/keycloak/realm-export.json`), all password `changeme`:
+
+| Username | Roles |
+|---|---|
+| `alice` | `user` |
+| `bob` | `user`, `organizer` |
+| `carol` | `organizer` |
+
+**Stripe CLI** (`stripe listen --forward-to ...`) isn't needed yet — that's P4
+(§24). Notifications are log-only for now (§19), no SendGrid/etc. needed.
+
 ## Status
 
 Phase 0 (Foundation & Walking Skeleton) — in progress. Nothing is deployed or
