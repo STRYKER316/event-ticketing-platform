@@ -37,6 +37,9 @@
 
 **Done when:** `docker compose up` brings every infra container to healthy; `docker compose ps` shows all green; the Traefik dashboard loads. ✅ Done
 
+> Built as `init.sh` (not `.sql`) — a shell script so credentials template from
+> `.env` at container-init time instead of being hardcoded. See `docs/build-log.md`.
+
 ---
 
 ## P0.T3 — Keycloak + realm
@@ -60,6 +63,12 @@
 > Build a minimal FastAPI service template and instantiate it once (call it `event-service` for now, but keep the app factory reusable across services). It must include: a `/healthz` endpoint; a `/metrics` endpoint via `prometheus-fastapi-instrumentator`; structured JSON logging via `structlog`; a `Dockerfile` (`python:3.12-slim`, uvicorn); and one **protected** demo route using the P0.T4 auth dependency plus one `organizer`-only route. Add the service to `/infra/docker-compose.yml` behind Traefik using Docker labels for routing. Connect it to `event_db` (a trivial "SELECT 1" health-check query is enough for now — no schema yet).
 
 **Done when:** `curl` through Traefik to `/healthz` returns 200; the protected route returns 401 without a token and 200 with a valid Keycloak token; the organizer-only route 403s for a plain `user`; logs come out as JSON; `/metrics` scrapes. ✅ Done
+
+> This task also required adding a `docker-socket-proxy` sidecar
+> (`infra/docker-socket-proxy/`) in front of the Docker socket — Traefik's
+> Docker-labels discovery was otherwise completely broken on this machine's
+> Docker Desktop build. Not in the original prompt scope; see `docs/build-log.md`
+> for the root cause.
 
 **This is the walking-skeleton validation checkpoint** — the whole point of Phase 0.
 
