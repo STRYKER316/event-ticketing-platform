@@ -10,7 +10,7 @@
 
 - [x] **Docker Desktop** installed and running; Settings → Resources → memory set to ~8–12 GB (§24). Already installed per §24 — just confirm the memory allocation.
 - [x] **Git** + a new empty **GitHub repo** (private is fine) to push to.
-- [ ] **Python 3.12** available locally (`uv` recommended for speed, or plain `pip` + venv — your call).
+- [x] **Python 3.12** available locally (`uv` recommended for speed, or plain `pip` + venv — your call).
 - [x] **Claude Code** installed and authenticated.
 - [x] Copy `decisions-log.md` and `master-development-plan.md` into the repo's `/docs` folder (P0.T1 creates the folder).
 - [ ] AWS / Stripe / SendGrid — **not needed yet.** AWS is P10; Stripe CLI is P4; notifications are log-only (§19).
@@ -51,7 +51,7 @@
 **Prompt to Claude Code:**
 > Create a small shared Python package (e.g. `/services/_shared/auth/`) providing a reusable FastAPI dependency for Keycloak JWT validation, since every service validates tokens independently (§4). It must: fetch the realm's JWKS from Keycloak and cache it (refresh on unknown `kid`); validate the token's RS256 signature, `iss`, `aud`, and expiry; expose `get_current_user()` returning the decoded principal (subject + roles from `realm_access`); and provide a `require_role("organizer")`-style dependency factory that 403s when the role is absent (§15). Write pytest unit tests covering: valid token passes; expired/tampered token rejected; missing required role → 403. Mock the JWKS endpoint in tests so they don't need a live Keycloak.
 
-**Done when:** unit tests green; the dependency is importable by any service.
+**Done when:** unit tests green; the dependency is importable by any service. ✅ Done
 
 ---
 
