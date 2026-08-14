@@ -27,7 +27,9 @@ full every session. When in doubt, the decisions log wins.
 /frontend                minimal React, 5 screens, Nginx-served (Phase 7, not before)
 /infra                   docker-compose.yml, Traefik config, Keycloak realm export
 /docs                    decisions-log.md, master-development-plan.md, phase-0-kickoff.md,
-                         build-log.md (append-only build diary — decisions, failures, fixes)
+                         build-log.md (append-only build diary — decisions, failures, fixes),
+                         architecture.html (living topology + flow diagrams, current state —
+                         see "End-of-phase walkthrough" below)
 ```
 
 ## Non-negotiable architecture invariants
@@ -67,6 +69,14 @@ stripe-python, structlog (JSON logs), prometheus-fastapi-instrumentator, Traefik
   append an entry to `docs/build-log.md` — what was built, what failed and why, what
   fixed it, any ad hoc decision too small for the decisions log) →
   CHECKPOINT (tag/merge at the phase boundary).
+- **End-of-phase walkthrough.** At CHECKPOINT — not after every task — do a live,
+  narrated walkthrough with the user: bring the stack up, hit real endpoints, show
+  real logs/output, don't just describe it. Then update `docs/architecture.html` to
+  match current state (topology + key flow diagrams, current-state focus like
+  `git status` not `git log` — it shows what's true *now*, `build-log.md` is where
+  history lives). Same file every phase, redeployed in place, not a new file per
+  phase. Commit it as part of the phase's checkpoint. This is also the report's
+  §16 topology/flow evidence, produced once, not redone later for the report.
 - **`main` stays bootable at every commit.** If a session ends mid-task, the previous
   commit should still `docker compose up` cleanly. Config-gate anything half-finished
   rather than leaving `main` broken.

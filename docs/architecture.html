@@ -1,0 +1,477 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Walking Skeleton — event-ticketing-platform</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --surface: #ffffff;
+    --surface-sunken: #eef0f3;
+    --border: #dbe0e6;
+    --text: #171b21;
+    --text-muted: #5b6472;
+    --text-faint: #8993a1;
+    --accent: #2c6e8c;
+    --accent-soft: #e4eef2;
+    --ok: #1a7a4c;
+    --ok-soft: #e4f3ea;
+    --fail: #b3402a;
+    --fail-soft: #fbe9e5;
+    --idle: #8993a1;
+    --idle-soft: #eef0f3;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --serif: Charter, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c;
+      --surface: #1b1f26;
+      --surface-sunken: #21262e;
+      --border: #323a45;
+      --text: #e8ebef;
+      --text-muted: #9aa4b2;
+      --text-faint: #6b7482;
+      --accent: #6fb2d1;
+      --accent-soft: #1f3540;
+      --ok: #4fbf85;
+      --ok-soft: #163527;
+      --fail: #e2735a;
+      --fail-soft: #3a221d;
+      --idle: #6b7482;
+      --idle-soft: #262b33;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #14171c;
+    --surface: #1b1f26;
+    --surface-sunken: #21262e;
+    --border: #323a45;
+    --text: #e8ebef;
+    --text-muted: #9aa4b2;
+    --text-faint: #6b7482;
+    --accent: #6fb2d1;
+    --accent-soft: #1f3540;
+    --ok: #4fbf85;
+    --ok-soft: #163527;
+    --fail: #e2735a;
+    --fail-soft: #3a221d;
+    --idle: #6b7482;
+    --idle-soft: #262b33;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.6;
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+  }
+
+  h1, h2, h3, .mono-label { font-family: var(--mono); text-wrap: balance; }
+
+  header { margin-bottom: 48px; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 10px;
+  }
+
+  h1 {
+    font-size: 34px;
+    font-weight: 600;
+    margin: 0 0 14px;
+    letter-spacing: -0.01em;
+  }
+
+  header p {
+    color: var(--text-muted);
+    font-size: 17px;
+    max-width: 60ch;
+    margin: 0 0 20px;
+  }
+
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; }
+
+  .badge {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+    background: var(--surface);
+  }
+  .badge.ok { color: var(--ok); background: var(--ok-soft); border-color: transparent; }
+
+  section { margin-bottom: 56px; }
+
+  h2 {
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+
+  h2 .num { color: var(--accent); }
+
+  h3 {
+    font-size: 22px;
+    font-weight: 600;
+    margin: 0 0 18px;
+    letter-spacing: -0.005em;
+  }
+
+  section > p.lede {
+    color: var(--text-muted);
+    margin: 0 0 24px;
+    max-width: 68ch;
+  }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    overflow-x: auto;
+  }
+
+  figure svg { display: block; width: 100%; height: auto; min-width: 640px; }
+
+  figcaption {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: var(--text-muted);
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+
+  @media (max-width: 640px) {
+    .two-col { grid-template-columns: 1fr; }
+  }
+
+  .col {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+  }
+
+  .col h4 {
+    font-family: var(--mono);
+    font-size: 13px;
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.ok { background: var(--ok); }
+  .dot.idle { background: var(--idle); }
+
+  .col ul { margin: 0; padding: 0; list-style: none; }
+  .col li {
+    padding: 9px 0;
+    border-top: 1px solid var(--border);
+    font-size: 15px;
+    display: flex;
+    gap: 10px;
+  }
+  .col li:first-child { border-top: none; }
+  .col li .check { font-family: var(--mono); font-size: 13px; color: var(--ok); flex: none; }
+  .col li .dash { font-family: var(--mono); font-size: 13px; color: var(--text-faint); flex: none; }
+
+  pre {
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.7;
+    margin: 0;
+  }
+
+  pre .c { color: var(--text-faint); }
+  pre .out { color: var(--text-muted); }
+  pre .ok { color: var(--ok); }
+  pre .fail { color: var(--fail); }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+    color: var(--text-faint);
+    font-size: 14px;
+    font-family: var(--mono);
+  }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header>
+  <p class="eyebrow">event-ticketing-platform — capstone</p>
+  <h1>Walking Skeleton</h1>
+  <p>What Phase 0 actually built: the request path an authenticated call takes through this system, verified live — not inferred from the checklist. Traced 2026-08-14.</p>
+  <div class="badges">
+    <span class="badge ok">Phase 0 complete</span>
+    <span class="badge">7 tasks · P0.T1–T7</span>
+    <span class="badge">9 containers</span>
+  </div>
+</header>
+
+<section>
+  <h2><span class="num">01</span> — Topology</h2>
+  <h3>One entrypoint, one service so far</h3>
+  <p class="lede">Traefik is the only thing exposed on the host. It discovers <code>event-service</code> by reading Docker labels — through a small proxy, not the raw socket (see note below). Everything else is provisioned for later phases but nothing talks to it yet.</p>
+
+  <figure>
+    <svg viewBox="0 0 900 460" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service; event-service queries Postgres and validates tokens against Keycloak; a docker-socket-proxy feeds Traefik container discovery; MongoDB, Redis, Elasticsearch and Kafka are provisioned but not yet wired to any service.">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+        </marker>
+        <marker id="arrowDim" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--idle)"/>
+        </marker>
+      </defs>
+
+      <!-- Client -->
+      <rect x="24" y="60" width="120" height="52" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="84" y="91" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">client</text>
+
+      <!-- arrow to traefik -->
+      <line x1="144" y1="86" x2="228" y2="86" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="186" y="76" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">:80</text>
+
+      <!-- Traefik -->
+      <rect x="232" y="52" width="140" height="68" rx="8" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5"/>
+      <text x="302" y="82" text-anchor="middle" font-family="var(--mono)" font-size="13" font-weight="600" fill="currentColor">traefik</text>
+      <text x="302" y="100" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">gateway</text>
+
+      <!-- arrow to event-service -->
+      <line x1="372" y1="86" x2="456" y2="86" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="414" y="76" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">routes</text>
+
+      <!-- event-service -->
+      <rect x="460" y="44" width="160" height="84" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="540" y="76" text-anchor="middle" font-family="var(--mono)" font-size="13" font-weight="600" fill="currentColor">event-service</text>
+      <text x="540" y="94" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">FastAPI</text>
+      <text x="540" y="110" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">/healthz /demo/*</text>
+
+      <!-- event-service down to postgres -->
+      <line x1="540" y1="128" x2="540" y2="196" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="608" y="166" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">SELECT 1</text>
+
+      <rect x="460" y="200" width="160" height="52" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="540" y="222" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">postgres</text>
+      <text x="540" y="238" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">event_db</text>
+
+      <!-- event-service right to keycloak -->
+      <line x1="620" y1="70" x2="716" y2="70" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="668" y="60" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">verify JWT</text>
+
+      <rect x="720" y="44" width="152" height="68" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="796" y="74" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">keycloak</text>
+      <text x="796" y="92" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">realm: ticketing</text>
+
+      <!-- docker socket proxy feeding traefik -->
+      <rect x="232" y="164" width="140" height="52" rx="8" fill="none" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3"/>
+      <text x="302" y="186" text-anchor="middle" font-family="var(--mono)" font-size="11.5" fill="var(--idle)">socket-proxy</text>
+      <text x="302" y="201" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--idle)">nginx, strips /vX.Y</text>
+      <line x1="302" y1="164" x2="302" y2="122" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3" marker-end="url(#arrowDim)"/>
+      <text x="326" y="145" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--idle)">discovery</text>
+
+      <!-- idle infra row -->
+      <line x1="24" y1="320" x2="876" y2="320" stroke="var(--border)" stroke-width="1"/>
+      <text x="24" y="342" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">PROVISIONED — NOT WIRED TO A SERVICE YET</text>
+
+      <g fill="none" stroke="var(--idle)" stroke-width="1.3">
+        <rect x="24" y="360" width="128" height="52" rx="8"/>
+        <rect x="176" y="360" width="128" height="52" rx="8"/>
+        <rect x="328" y="360" width="128" height="52" rx="8"/>
+        <rect x="480" y="360" width="128" height="52" rx="8"/>
+      </g>
+      <g font-family="var(--mono)" font-size="12" fill="var(--idle)" text-anchor="middle">
+        <text x="88" y="390">mongodb</text>
+        <text x="240" y="390">redis</text>
+        <text x="392" y="390">elasticsearch</text>
+        <text x="544" y="390">kafka</text>
+      </g>
+      <g font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)" text-anchor="middle">
+        <text x="88" y="404">seat maps, P1</text>
+        <text x="240" y="404">holds, P3</text>
+        <text x="392" y="404">index, P2</text>
+        <text x="544" y="404">round-trip proven, §P0.T6</text>
+      </g>
+    </svg>
+  </figure>
+  <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · one docker-compose network, host port 80 only.</figcaption>
+</section>
+
+<section>
+  <h2><span class="num">02</span> — Auth flow</h2>
+  <h3>Same token, two outcomes</h3>
+  <p class="lede">This is the actual sequence from the walkthrough above: <code>alice</code> (role <code>user</code>) gets turned away from the organizer route; <code>bob</code> (roles <code>user</code>+<code>organizer</code>) gets through. Nothing about the request differs except whose token it carries.</p>
+
+  <figure>
+    <svg viewBox="0 0 900 520" role="img" aria-label="Sequence diagram: a client requests a token from Keycloak via password grant, receives a JWT with issuer, audience, expiry and role claims, then sends that token to Traefik which forwards to event-service; event-service fetches Keycloak's public keys once and caches them, verifies the token, and checks the organizer role — alice's token is rejected with 403, bob's token is accepted with 200.">
+      <!-- lifelines -->
+      <g stroke="var(--border)" stroke-width="1.3">
+        <line x1="80" y1="70" x2="80" y2="490"/>
+        <line x1="300" y1="70" x2="300" y2="490"/>
+        <line x1="520" y1="70" x2="520" y2="490"/>
+        <line x1="760" y1="70" x2="760" y2="490"/>
+      </g>
+      <g font-family="var(--mono)" font-size="13" font-weight="600" fill="currentColor" text-anchor="middle">
+        <text x="80" y="48">you</text>
+        <text x="300" y="48">keycloak</text>
+        <text x="520" y="48">traefik</text>
+        <text x="760" y="48">event-service</text>
+      </g>
+      <g font-family="var(--mono)" font-size="10" fill="var(--text-muted)" text-anchor="middle">
+        <text x="80" y="62">get-token.sh</text>
+        <text x="760" y="62">shared_auth</text>
+      </g>
+
+      <!-- step 1: password grant -->
+      <line x1="80" y1="90" x2="292" y2="90" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="190" y="82" text-anchor="middle" font-family="var(--mono)" font-size="11">POST /token (password grant)</text>
+
+      <line x1="300" y1="112" x2="88" y2="112" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="190" y="104" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--ok)">JWT · iss, aud, exp, roles=[user]</text>
+
+      <!-- step 2: request with token -->
+      <line x1="80" y1="150" x2="512" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="300" y="142" text-anchor="middle" font-family="var(--mono)" font-size="11">GET /demo/organizer-only  Bearer &lt;JWT&gt;</text>
+
+      <line x1="520" y1="172" x2="752" y2="172" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="640" y="164" text-anchor="middle" font-family="var(--mono)" font-size="11">forward</text>
+
+      <!-- step 3: jwks fetch, dashed = cache path -->
+      <line x1="760" y1="200" x2="308" y2="200" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="4,3" marker-end="url(#arrowDim)"/>
+      <text x="530" y="192" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--idle)">GET /certs (JWKS) — first call only, then cached</text>
+
+      <!-- verify box -->
+      <rect x="700" y="222" width="140" height="40" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+      <text x="770" y="240" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="currentColor">verify sig,</text>
+      <text x="770" y="253" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="currentColor">iss, aud, exp</text>
+
+      <!-- branch point -->
+      <line x1="760" y1="262" x2="760" y2="290" stroke="currentColor" stroke-width="1.3"/>
+      <polygon points="760,290 780,308 760,326 740,308" fill="none" stroke="currentColor" stroke-width="1.3"/>
+      <text x="760" y="312" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="currentColor">has role</text>
+      <text x="760" y="323" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="currentColor">organizer?</text>
+
+      <!-- fail branch: alice -->
+      <line x1="740" y1="308" x2="600" y2="360" stroke="var(--fail)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <rect x="560" y="368" width="200" height="56" rx="8" fill="var(--fail-soft)" stroke="var(--fail)" stroke-width="1.3"/>
+      <text x="660" y="390" text-anchor="middle" font-family="var(--mono)" font-size="12" font-weight="600" fill="var(--fail)">403 alice</text>
+      <text x="660" y="406" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--fail)">roles=[user] — no</text>
+      <text x="660" y="417" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--fail)">organizer claim</text>
+
+      <!-- ok branch: bob -->
+      <line x1="780" y1="308" x2="800" y2="360" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <rect x="700" y="368" width="180" height="56" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.3"/>
+      <text x="790" y="390" text-anchor="middle" font-family="var(--mono)" font-size="12" font-weight="600" fill="var(--ok)">200 bob</text>
+      <text x="790" y="406" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ok)">roles=[user,</text>
+      <text x="790" y="417" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ok)">organizer]</text>
+
+      <!-- return arrows -->
+      <line x1="660" y1="424" x2="300" y2="466" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="2,3" marker-end="url(#arrow)"/>
+      <line x1="790" y1="424" x2="90" y2="480" stroke="var(--ok)" stroke-width="1.2" stroke-dasharray="2,3" marker-end="url(#arrow)"/>
+      <text x="185" y="452" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">response, either way, back through traefik</text>
+    </svg>
+  </figure>
+  <figcaption>Verified live: alice → 403 {"detail":"Requires role: organizer"} · bob → 200 {"message":"organizer access granted"}.</figcaption>
+</section>
+
+<section>
+  <h2><span class="num">03</span> — What's proven vs. not yet built</h2>
+  <div class="two-col">
+    <div class="col">
+      <h4><span class="dot ok"></span>proven, live, this phase</h4>
+      <ul>
+        <li><span class="check">✓</span> gateway routes by Docker labels, no manual config</li>
+        <li><span class="check">✓</span> real Postgres round-trip on /healthz</li>
+        <li><span class="check">✓</span> Keycloak-issued JWT validated end-to-end (sig/iss/aud/exp)</li>
+        <li><span class="check">✓</span> role claim gates a route (403 vs 200, same code path)</li>
+        <li><span class="check">✓</span> every log line is JSON, including uvicorn's own</li>
+        <li><span class="check">✓</span> /metrics scrapes</li>
+        <li><span class="check">✓</span> Kafka produce → consume round-trip</li>
+        <li><span class="check">✓</span> one command (<code>make up</code>) boots all 9 containers</li>
+      </ul>
+    </div>
+    <div class="col">
+      <h4><span class="dot idle"></span>provisioned, not built yet</h4>
+      <ul>
+        <li><span class="dash">–</span> no event/booking/payment logic — only a demo route</li>
+        <li><span class="dash">–</span> MongoDB seat maps unused (Phase 1)</li>
+        <li><span class="dash">–</span> Redis holds unused (Phase 3)</li>
+        <li><span class="dash">–</span> Elasticsearch index unused (Phase 2)</li>
+        <li><span class="dash">–</span> Kafka not wired to any service yet, only smoke-tested</li>
+        <li><span class="dash">–</span> only one of five services exists</li>
+        <li><span class="dash">–</span> no frontend</li>
+        <li><span class="dash">–</span> nothing deployed to AWS (Phase 10)</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">04</span> — Reproduce this yourself</h2>
+  <p class="lede">Every command below is real — this is exactly what was run to trace the diagrams above. Takes about a minute.</p>
+  <pre><span class="c"># from repo root</span>
+make up                                    <span class="c"># boots all 9 containers</span>
+
+<span class="c"># public route — hits real postgres</span>
+curl localhost/healthz
+<span class="out">{"status":"ok"}</span>
+
+<span class="c"># no token</span>
+curl localhost/demo/protected
+<span class="out">{"detail":"Not authenticated"}</span>                    <span class="fail">401</span>
+
+<span class="c"># alice: user only</span>
+TOKEN=$(./get-token.sh alice)
+curl -H "Authorization: Bearer $TOKEN" localhost/demo/organizer-only
+<span class="out">{"detail":"Requires role: organizer"}</span>              <span class="fail">403</span>
+
+<span class="c"># bob: user + organizer</span>
+TOKEN=$(./get-token.sh bob)
+curl -H "Authorization: Bearer $TOKEN" localhost/demo/organizer-only
+<span class="out">{"message":"organizer access granted", ...}</span>        <span class="ok">200</span>
+
+make down                                  <span class="c"># tear down</span></pre>
+</section>
+
+<footer>
+  Full narrative (including what failed and why) lives in <a href="build-log.md">docs/build-log.md</a> — this page is the map, that file is the diary.
+</footer>
+
+</body>
+</html>
