@@ -31,6 +31,9 @@ async def organizer_only(user: Principal = Depends(require_role("organizer"))):
 
 ## Testing
 
+Part of the `/services` uv workspace (single shared `.venv`/`uv.lock` — see
+`services/pyproject.toml`). Run from here or from `/services`:
+
 ```sh
 uv run pytest
 ```

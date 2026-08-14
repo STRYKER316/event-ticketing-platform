@@ -1,0 +1,5 @@
+[tool.uv.workspace]
+members = ["_shared/auth"]
+
+[tool.uv]
+package = false

@@ -2,6 +2,11 @@ version = 1
 revision = 3
 requires-python = ">=3.12"
 
+[manifest]
+members = [
+    "shared-auth",
+]
+
 [[package]]
 name = "annotated-doc"
 version = "0.0.5"
@@ -452,7 +457,7 @@ wheels = [
 [[package]]
 name = "shared-auth"
 version = "0.1.0"
-source = { editable = "." }
+source = { editable = "_shared/auth" }
 dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
