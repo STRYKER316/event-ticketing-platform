@@ -71,13 +71,35 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   AWS (Elastic Beanstalk) is a late-phase deployment target, not a dev environment.
 - **Per-phase loop:** PLAN → REVIEW PLAN → IMPLEMENT (small, continuous, green commits —
   don't batch a whole phase into one commit) → TEST (pytest unit + testcontainers
-  integration; Kafka phases must test redelivery-is-a-no-op) → REVIEW → DOCUMENT
+  integration; Kafka phases must test redelivery-is-a-no-op — see "Test-first vs.
+  build-then-test" below for which comes first) → REVIEW (self-verification via live
+  testing on every phase per the Integrity rule; additionally run a dedicated
+  `/code-review` pass — not just self-verification — on P3 and P8 specifically, see
+  below) → DOCUMENT
   (draft the report section this phase feeds into `docs/report/` — see its README
   for the chapter map and status table, update both the chapter file and that table
   every phase; log any decisions-log delta; also append an entry to
   `docs/build-log.md` — what was built, what failed and why, what fixed it, any ad
   hoc decision too small for the decisions log) →
   CHECKPOINT (tag/merge at the phase boundary).
+- **Test-first vs. build-then-test — decided per task, not blanket.** Write the test
+  capturing the correctness contract *before* the implementation for business-logic
+  Manager methods on correctness-critical paths specifically: the dual hold strategies
+  (P3 — this is the double-booking-critical path the whole benchmark chapter depends
+  on) and payment/webhook idempotency (P4). Everywhere else — routes, schemas,
+  scaffolding, infra wiring, most CRUD Manager methods — build then test, matching how
+  `master-development-plan.md` already sequences a dedicated Tests task at the end of
+  each phase's task list; don't fight that structure by forcing TDD onto tasks it
+  wasn't planned around. When in doubt: if a task is "does this behave correctly under
+  a tricky concurrent/edge case," lean test-first; if it's "does this plumbing work,"
+  build-then-test is fine.
+- **Dedicated code-review pass on P3 and P8 only, not every task.** Self-verification
+  (live testing before claiming done) is the default and matches the Integrity rule —
+  fine for routine work. P3 (dual seat-hold, the one bug class that silently corrupts
+  the product's core guarantee) and P8 (the benchmark — its numbers are the report's
+  only Measured chapter, errors here are load-bearing for the whole report) get an
+  additional adversarial `/code-review` pass before CHECKPOINT, on top of
+  self-verification, not instead of it.
 - **End-of-phase walkthrough.** At CHECKPOINT — not after every task — do a live,
   narrated walkthrough with the user: bring the stack up, hit real endpoints, show
   real logs/output, don't just describe it. Then update `docs/architecture.html` to

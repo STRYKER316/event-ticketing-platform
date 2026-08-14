@@ -366,3 +366,41 @@ every prior history cleanup this session):
 10 commits in that range collapsed to 6, with nothing lost — same end state,
 verified via `git status` (clean) and spot-checking that `LICENSE` stayed
 gone and `docs/report`/`docs/phases` both still existed post-squash.
+
+---
+
+## 2026-08-14 — Process decisions before Phase 1: TDD scope, code-review scope
+
+User asked whether the superpowers skill set (brainstorming, TDD, systematic-
+debugging, etc.) is needed from Phase 1 onward, or whether the phase kickoff
+docs + `CLAUDE.md` already drive the work sufficiently. Answer: mostly the
+latter — this project is already heavily pre-planned (locked architecture,
+task-by-task prompts with explicit done-when criteria), so the
+planning-oriented skills would be redundant ceremony on top of a plan that
+already exists. Two real open questions got surfaced instead of skills:
+test-first vs. build-then-test, and whether to add a dedicated review pass
+anywhere. User delegated both decisions.
+
+**Decided, not blanket:** test-first specifically for the dual hold
+strategies (P3) and payment/webhook idempotency (P4) — the two places where
+writing the correctness contract as a test before the implementation
+actually clarifies the contract, and where a subtle bug wouldn't just fail
+loudly, it would silently corrupt the guarantee the whole project is built
+around (no double-booking) or double-charge/under-refund a customer.
+Build-then-test everywhere else, deliberately choosing *not* to fight
+`master-development-plan.md`'s own task sequencing (a dedicated Tests task
+at the end of each phase's list implies build-then-test was already the
+plan's assumption for routine work).
+
+**Dedicated `/code-review` pass, not self-verification alone, on P3 and P8
+only** — dual-hold because it's the one bug class that corrupts the core
+product guarantee silently rather than failing loudly, and the benchmark
+because its numbers are the report's only Measured chapter and errors there
+are load-bearing for the entire report, not just one feature. Every other
+phase keeps the self-verification-via-live-testing pattern already
+established and working across all of Phase 0.
+
+Both written into `CLAUDE.md`'s Workflow & cadence section as scoped rules
+(not "always TDD" / "always review," which would have been the easy but
+wrong answer) so they apply consistently from Phase 1 without needing to be
+re-decided per phase.
