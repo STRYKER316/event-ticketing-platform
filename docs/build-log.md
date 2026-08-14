@@ -176,3 +176,35 @@ confirm `main` really does stay bootable and the fixes weren't order-dependent
 flukes. All done-when criteria passed both times: `/healthz` → 200 (via
 Traefik), no token → 401, wrong role → 403, right role → 200, `/metrics` →
 200, all logs JSON.
+
+---
+
+## 2026-08-14 — Introduced this file
+
+User asked for a running build diary, separate from the finished code, so the
+history of decisions/failures/fixes isn't lost once a task looks clean in
+hindsight. Backfilled with everything from P0.T1 through P0.T5 above. Added a
+DOCUMENT-step reminder to `CLAUDE.md` so future sessions keep it updated by
+default rather than needing to be asked again.
+
+---
+
+## 2026-08-14 — P0.T6: Kafka smoke test
+
+Wrote a standalone (own `pyproject.toml`, not part of the `/services` uv
+workspace — this is infra tooling, not a service) pytest using `aiokafka`:
+producer sends one JSON message, consumer (fresh `group_id`,
+`auto_offset_reset="earliest"`) reads it back, asserts equality. Lives at
+`infra/kafka-smoke-test/`.
+
+**Failed, then fixed — caught by re-running, not by first-pass success.** The
+test passed on the very first run, but a second consecutive run failed the
+equality assertion. Root cause: the topic name was hardcoded
+(`phase0-smoke-test`), so on the second run the topic already had the first
+run's message sitting in it; with `auto_offset_reset="earliest"` and a brand
+new `group_id` each run, the consumer correctly read the *oldest* message on
+the topic — which was the previous run's, not the one just produced. Fixed by
+generating a unique topic name per test run (`phase0-smoke-test-{uuid4}`),
+which also matches the "throwaway" framing in the task prompt better than a
+fixed topic name would have. Re-ran three times consecutively after the fix,
+all green, to actually confirm the fix rather than trusting one clean run.

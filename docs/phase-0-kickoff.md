@@ -69,7 +69,7 @@
 **Prompt to Claude Code:**
 > Write a throwaway **aiokafka** producer + consumer (a script under `/infra/` or a pytest) that publishes a message to a test topic on the compose Kafka broker and consumes it back, proving the broker works end-to-end before real integrations depend on it (§7). Keep it isolated — it's a smoke test, not wiring for any service.
 
-**Done when:** the message published is consumed and asserted equal; runs green against the running compose stack.
+**Done when:** the message published is consumed and asserted equal; runs green against the running compose stack. ✅ Done
 
 ---
 
