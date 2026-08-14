@@ -404,3 +404,32 @@ Both written into `CLAUDE.md`'s Workflow & cadence section as scoped rules
 (not "always TDD" / "always review," which would have been the easy but
 wrong answer) so they apply consistently from Phase 1 without needing to be
 re-decided per phase.
+
+---
+
+## 2026-08-14 — Full commit-history audit against the granularity rule, Phase 0 closeout
+
+User asked for a full read of every commit (not just the recent ones already
+squashed) against the commit-granularity rule, before moving to Phase 1.
+Read all 20 commits chronologically with file-change stats for each.
+
+**One clear violation found:** `event-service: update README past
+placeholder status` (1 file, 14 lines) directly followed the walking-skeleton
+commit in the same session, documenting the very thing that commit built —
+textbook case of what the rule forbids. Folded it in via one more rebase +
+force-push.
+
+**One borderline case, judged and left as-is:** the small `init.sql`
+reference/docker-socket-proxy correction commit — small, but a complete
+response to its own distinct user request, with nothing adjacent at the time
+to batch it with (unrelated commit before, distinct new deliverable after).
+The rule targets fragmenting one piece of work or letting small fixes pile
+up unbatched, not every small commit on principle — this one didn't fit
+either failure mode, so it stayed.
+
+Everything else checked clean: no commit message body paragraphs anywhere
+in history, no phase/task-ID tags leaking into any of the 20 messages, no
+message sounding doc-only when it wasn't. This closes out Phase 0 — every
+task verified live, every doc cross-referenced and current, commit history
+clean against the rules established this session. Next: Phase 1 (Event
+Service).
