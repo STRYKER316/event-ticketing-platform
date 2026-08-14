@@ -26,10 +26,12 @@ full every session. When in doubt, the decisions log wins.
   /_shared/auth          shared FastAPI JWT-validation dependency (build once in P0, reuse everywhere)
 /frontend                minimal React, 5 screens, Nginx-served (Phase 7, not before)
 /infra                   docker-compose.yml, Traefik config, Keycloak realm export
-/docs                    decisions-log.md, master-development-plan.md, phase-0-kickoff.md,
+/docs                    decisions-log.md, master-development-plan.md,
                          build-log.md (append-only build diary — decisions, failures, fixes),
                          architecture.html (living topology + flow diagrams, current state —
                          see "End-of-phase walkthrough" below)
+  /phases                 phase-0-kickoff.md, phase-1-kickoff.md, ... — one file per phase,
+                           generated from master-development-plan.md as each phase starts
 ```
 
 ## Non-negotiable architecture invariants
@@ -84,8 +86,8 @@ stripe-python, structlog (JSON logs), prometheus-fastapi-instrumentator, Traefik
   P4 → P6 → P5 → P7 → P10 → P9/P11. The benchmark runs right after Booking, before
   Payment — it's the report's only Measured chapter. Don't reorder this without
   updating the master plan.
-- Current phase's task-by-task prompts live in `/docs/phase-0-kickoff.md` (Phase 0);
-  later phases get the same treatment generated from `master-development-plan.md`
+- Each phase's task-by-task prompts live in `/docs/phases/phase-N-kickoff.md` (Phase 0's
+  is there already); later phases get the same treatment generated from `master-development-plan.md`
   section-by-section as they come up.
 
 ## Integrity rule — read before writing status anywhere
@@ -99,6 +101,15 @@ estimated, or placeholder values that could leak into the report undetected.
 
 ## Conventions
 
+- **Keep every folder scannable at a glance — group into subfolders before a flat
+  listing turns into a pile.** If a folder is about to hold more than ~6–8 files of
+  the same kind (one per phase, one per component, one per migration, etc.), give
+  them a subfolder up front rather than after the tenth one lands — see
+  `docs/phases/` as the pattern (moved there while it was one file, not eleven).
+  This applies repo-wide, not just `/docs` — `/infra` already follows it
+  (`keycloak/`, `postgres/`, `docker-socket-proxy/`, `kafka-smoke-test/` instead of
+  everything loose at the top level); keep new infra pieces and any other
+  fast-growing folder to the same standard.
 - Python 3.12, async throughout — no sync `Session` or blocking calls in a request path.
   This is locked (§3): async I/O was a deciding factor over Spring Boot, so don't reach
   for sync patterns even if a past reference codebase does.

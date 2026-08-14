@@ -8,8 +8,8 @@ This file is the opposite: it's *during*-implementation reality, including the
 dead ends.
 
 Each entry is dated and tagged with the task it belongs to (per
-`phase-0-kickoff.md` / `master-development-plan.md`). Newest entries go at the
-bottom.
+`phases/phase-N-kickoff.md` / `master-development-plan.md`). Newest entries go
+at the bottom.
 
 ---
 
@@ -234,3 +234,18 @@ a genuinely fresh terminal.
 independently verified live across P0.T1–T7 (stack boots, auth round-trips
 end-to-end, role enforcement, JSON logs + metrics, Kafka round-trip, `main`
 bootable at every commit). Phase 1 (Event Service) is next.
+
+---
+
+## 2026-08-14 — Reorg: `docs/phases/`
+
+User asked for a standing rule against any folder becoming a flat pile of
+files as the project grows. `/docs` was the obvious near-term risk: with 11
+phases total, `phase-N-kickoff.md` would eventually mean 11 files sitting
+alongside `decisions-log.md`, `master-development-plan.md`, `build-log.md`,
+and `architecture.html` in one flat directory. Moved `phase-0-kickoff.md` →
+`docs/phases/phase-0-kickoff.md` now, while there's only one file to move,
+rather than after several more pile up. Every future phase kickoff doc goes
+there from the start. Updated all references (`README.md`, `CLAUDE.md`,
+`build-log.md`'s own intro line) except this file's historical entries, which
+describe what was true at the time and stay as written.

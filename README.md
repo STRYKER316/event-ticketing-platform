@@ -21,7 +21,8 @@ architectural or scope decision.
   /_shared/auth          shared FastAPI JWT-validation dependency, built once, reused everywhere
 /frontend                minimal React, 5 screens, Nginx-served (Phase 7, not before)
 /infra                   docker-compose.yml, Traefik config, Keycloak realm export
-/docs                    decisions-log.md, master-development-plan.md, phase-0-kickoff.md
+/docs                    decisions-log.md, master-development-plan.md, build-log.md,
+                         architecture.html, /phases (per-phase task checklists)
 ```
 
 ## Local Development
@@ -48,6 +49,7 @@ Seed users (see `infra/keycloak/realm-export.json`), all password `changeme`:
 
 ## Status
 
-Phase 0 (Foundation & Walking Skeleton) — in progress. Nothing is deployed or
-running yet; see `/docs/phase-0-kickoff.md` for the current task list.
+Phase 0 (Foundation & Walking Skeleton) — complete. Phase 1 (Event Service) is
+next; see `/docs/phases/` for task checklists and `/docs/architecture.html` for
+current system state.
 
