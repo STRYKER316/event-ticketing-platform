@@ -32,6 +32,9 @@ full every session. When in doubt, the decisions log wins.
                          see "End-of-phase walkthrough" below)
   /phases                 phase-0-kickoff.md, phase-1-kickoff.md, ... — one file per phase,
                            generated from master-development-plan.md as each phase starts
+  /report                 continuously-drafted report chapters (§16 evidence map) — README.md
+                           has the chapter status table; source material for the P11 template
+                           assembly, not the final formatted document itself
 ```
 
 ## Non-negotiable architecture invariants
@@ -67,9 +70,11 @@ stripe-python, structlog (JSON logs), prometheus-fastapi-instrumentator, Traefik
 - **Per-phase loop:** PLAN → REVIEW PLAN → IMPLEMENT (small, continuous, green commits —
   don't batch a whole phase into one commit) → TEST (pytest unit + testcontainers
   integration; Kafka phases must test redelivery-is-a-no-op) → REVIEW → DOCUMENT
-  (draft the report section this phase feeds, log any decisions-log delta; also
-  append an entry to `docs/build-log.md` — what was built, what failed and why, what
-  fixed it, any ad hoc decision too small for the decisions log) →
+  (draft the report section this phase feeds into `docs/report/` — see its README
+  for the chapter map and status table, update both the chapter file and that table
+  every phase; log any decisions-log delta; also append an entry to
+  `docs/build-log.md` — what was built, what failed and why, what fixed it, any ad
+  hoc decision too small for the decisions log) →
   CHECKPOINT (tag/merge at the phase boundary).
 - **End-of-phase walkthrough.** At CHECKPOINT — not after every task — do a live,
   narrated walkthrough with the user: bring the stack up, hit real endpoints, show

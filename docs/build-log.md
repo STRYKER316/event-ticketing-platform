@@ -249,3 +249,23 @@ rather than after several more pile up. Every future phase kickoff doc goes
 there from the start. Updated all references (`README.md`, `CLAUDE.md`,
 `build-log.md`'s own intro line) except this file's historical entries, which
 describe what was true at the time and stay as written.
+
+---
+
+## 2026-08-14 — Caught up: report drafting had been skipped
+
+User asked what's startable on the report now that Phase 0 is done. Answering
+that surfaced a real process miss: both `CLAUDE.md` and
+`master-development-plan.md` §2 already required drafting the report section
+each phase feeds *during* that phase's DOCUMENT step — not just capturing
+evidence for later — and that never actually happened across P0.T1–T7.
+`build-log.md` and `architecture.html` were kept current; report prose was
+not, despite being asked for the whole time.
+
+Fixed by starting `docs/report/` (chapter-per-file, status table in its
+README, per the new folder-hygiene convention) and drafting the two sections
+Phase 0's evidence actually supports right now: Project Description
+(partial — full version needs P1+P2 too, per Milestone A's real scope) and
+Technologies Used (a running list, appended each phase from here). Did not
+draft Requirement Gathering — it's genuinely blocked on P1.T5's roles table,
+not just unstarted.
