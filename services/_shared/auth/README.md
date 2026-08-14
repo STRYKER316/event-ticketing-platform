@@ -28,6 +28,12 @@ async def organizer_only(user: Principal = Depends(require_role("organizer"))):
 - `AUTH_EXPECTED_AUDIENCE` — e.g. `ticketing-services` (must match the realm's
   `oidc-audience-mapper` output, see `infra/keycloak/realm-export.json`)
 - `AUTH_JWKS_CACHE_TTL_SECONDS` — default `300`
+- `AUTH_JWKS_URI_OVERRIDE` — optional. JWKS is public key material, so fetching it
+  doesn't need to go through the same hostname a token's `iss` claim carries. Set
+  this when the service reaches Keycloak over a different network path than
+  clients used to get their token — e.g. `http://keycloak:8080/realms/ticketing/
+  protocol/openid-connect/certs` from inside the Docker network, while
+  `AUTH_KEYCLOAK_ISSUER` stays the host-facing URL for `iss` validation.
 
 ## Testing
 

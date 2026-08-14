@@ -298,3 +298,38 @@ something to minimize. Locked both the fixes and the deliberate
 non-fixes into a new CLAUDE.md section ("Academic-presentation hard rules")
 so this doesn't need re-litigating each phase, and to stop me from
 "fixing" the author-identity choice unprompted later.
+
+---
+
+## 2026-08-14 — Markdown cleanup pass
+
+User asked for a check across every tracked `.md` file (16 total) for staleness
+— cross-references, broken links, contradictions, drift after today's several
+reorgs (docs/phases, docs/report, architecture.html). Checked internal links,
+backtick-quoted file paths against what actually exists, code-fence balance,
+and read every file that had touched anything today.
+
+Found and fixed:
+- `README.md`'s layout tree didn't mention `docs/report/`, added after this
+  session.
+- `infra/README.md` still said "App services aren't wired in yet" directly
+  above a table listing `event-service` — a straight self-contradiction left
+  over from before P0.T5.
+- `services/_shared/auth/README.md` documented `AUTH_KEYCLOAK_ISSUER`/
+  `AUTH_EXPECTED_AUDIENCE`/`AUTH_JWKS_CACHE_TTL_SECONDS` but not
+  `AUTH_JWKS_URI_OVERRIDE` — a real config field (added mid-P0.T5 for the
+  Docker-internal JWKS fetch) that existed in code but nowhere in its own
+  README.
+- `CLAUDE.md`: "copy the Phase-0 service template (once it exists)" — the
+  template has existed since P0.T5, the parenthetical was stale. Also removed
+  four HTML-comment placeholder lines ("Fill in as they stabilize
+  post-Phase-0") whose trigger condition had been met for a while and whose
+  content already lives in `README.md`'s Local Development section (one of
+  the stale placeholder lines even pointed at the wrong path,
+  `./infra/get-token.sh`, when the real file is at repo root). Also added
+  `uv` to the Tech Stack list — in active use since P0.T4 but never listed.
+
+No broken links, no unbalanced code fences, no large/binary files, service
+placeholder READMEs (booking/payment/notification/search) all still
+accurate as unbuilt stubs. `services/event-service/README.md`'s documented
+run command was tested live, not just read — starts cleanly.

@@ -22,7 +22,8 @@ architectural or scope decision.
 /frontend                minimal React, 5 screens, Nginx-served (Phase 7, not before)
 /infra                   docker-compose.yml, Traefik config, Keycloak realm export
 /docs                    decisions-log.md, master-development-plan.md, build-log.md,
-                         architecture.html, /phases (per-phase task checklists)
+                         architecture.html, /phases (per-phase task checklists),
+                         /report (continuously-drafted report chapters)
 ```
 
 ## Local Development

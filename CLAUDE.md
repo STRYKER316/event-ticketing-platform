@@ -61,7 +61,9 @@ FastAPI (async), SQLAlchemy async + asyncpg + Alembic, Motor (MongoDB), aiokafka
 (KRaft-mode Kafka, no Zookeeper), redis.asyncio, APScheduler, elasticsearch-py,
 stripe-python, structlog (JSON logs), prometheus-fastapi-instrumentator, Traefik v3
 (gateway), Keycloak (dev mode, JWT/OIDC), pytest + testcontainers-python, k6
-(benchmark load), React (frontend, Phase 7 only).
+(benchmark load), React (frontend, Phase 7 only). `uv` for Python
+dependency/workspace management (one shared venv/lockfile across `/services`, §
+"Restructure: uv workspace" in build-log.md).
 
 ## Workflow & cadence (decisions-log §25, §27)
 
@@ -174,8 +176,8 @@ issues worth locking in against:
   rejected-input paths at `error`.
 - **Never query inside a loop.** Any endpoint assembling a response across multiple
   related records bulk-fetches first (`.in_()`-style filters), then assembles in memory.
-- New service = copy the Phase-0 service template (once it exists), don't hand-roll a
-  second pattern.
+- New service = copy the `event-service` template (built in P0.T5 — app factory,
+  `core.py`, Manager+Repository layering), don't hand-roll a second pattern.
 - Update this file after each phase checkpoint if conventions, commands, or structure
   shift — treat it as living documentation, not a one-time snapshot.
 
@@ -247,8 +249,3 @@ tests/
 - Repository methods never commit; Manager methods that mutate always end with
   `await session.commit()`. Same atomicity reasoning as the reference pattern — a Manager
   method may write through more than one Repository call before finishing.
-
-<!-- Fill in as they stabilize post-Phase-0: -->
-<!-- Build/run: make up / make down / make logs -->
-<!-- Test: make test -->
-<!-- Get a dev token: ./infra/get-token.sh -->

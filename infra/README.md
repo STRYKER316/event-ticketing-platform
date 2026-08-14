@@ -1,7 +1,8 @@
 # infra
 
-Shared local infrastructure (§20, §24). App services aren't wired in yet — this is
-just the data/broker/gateway layer.
+Shared local infrastructure (§20, §24) — data/broker/gateway layer, plus
+`event-service` as the first app service wired in behind Traefik (Phase 0). More
+app services get added here as later phases build them.
 
 Copy `../.env.example` to `../.env` and fill in values before running.
 
