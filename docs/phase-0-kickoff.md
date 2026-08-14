@@ -35,7 +35,7 @@
 > - **Traefik v3** — Docker provider (labels-based discovery), dashboard enabled on a local port, entrypoint on `:80`.
 > Pull all credentials/ports from a `.env` file (update `.env.example` accordingly). Add a short `/infra/README.md` documenting each service's port.
 
-**Done when:** `docker compose up` brings every infra container to healthy; `docker compose ps` shows all green; the Traefik dashboard loads.
+**Done when:** `docker compose up` brings every infra container to healthy; `docker compose ps` shows all green; the Traefik dashboard loads. ✅ Done
 
 ---
 
