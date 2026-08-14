@@ -104,6 +104,38 @@ messages, README claims, and especially anything destined for the report — the
 Hold-Mechanism Benchmark (Phase 8) numbers in particular must never be fabricated,
 estimated, or placeholder values that could leak into the report undetected.
 
+## Academic-presentation hard rules — non-negotiable
+
+This repo is graded MS CS capstone work. Everything in it — commit history, file
+contents, structure — should read as such to anyone browsing it, not just the
+report PDF. Established 2026-08-14 after a full repo/commit-history scan found no
+secrets/credential leaks and a clean `.gitignore`, but did find casual-reading
+issues worth locking in against:
+
+- **No emoji anywhere in committed files** — code, docs, commit messages. Use
+  plain text (`**Verified.**`, `- [x]`) for status markers, not `✅`/`🎉`/etc.
+  Emoji in my own conversational replies to the user is fine; emoji in anything
+  that gets committed is not.
+- **No LICENSE file** while this is active graded coursework under review —
+  defaults to all-rights-reserved, avoids ambiguity during grading. Revisit only
+  if there's an explicit later decision to open-source it post-submission.
+- **AI-tool use stays fully visible, on purpose** — "Claude Code" is named
+  throughout `/docs` because these are literally instructions written for it to
+  execute, and that transparency is a deliberate integrity stance for this
+  project (consistent with `docs/build-log.md`'s whole premise), not an oversight
+  to quietly clean up.
+- **No casual/unprofessional language** in anything committed — no profanity, no
+  "hacky"/"dumb"/"lol"-register commentary, no stray `TODO`/`FIXME`/`XXX` left
+  sitting in committed code (track real follow-ups in the phase kickoff docs or
+  build-log instead, not code comments that read as unfinished work).
+- **Commit author identity:** currently `STRYKER316 <ansil.mishra316@gmail.com>`
+  on most commits (a handle, not a name) — explicitly left as-is per the user's
+  choice on 2026-08-14 when this was flagged. Don't "fix" this unprompted; if it
+  changes, it'll be a deliberate ask, not an assumption on my part.
+- Re-run a full scan like this one (`git log`, tracked-file content, secrets,
+  large/binary files, LICENSE, tone) before any major external-facing moment —
+  making the repo public, a demo, or submission — not just once at Phase 0.
+
 ## Conventions
 
 - **Keep every folder scannable at a glance — group into subfolders before a flat

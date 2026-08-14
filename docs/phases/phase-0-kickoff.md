@@ -21,7 +21,7 @@
 **Prompt to Claude Code:**
 > Create a monorepo skeleton matching decisions-log §20. Top-level folders: `/services` containing `event-service/`, `search-service/`, `booking-service/`, `payment-service/`, `notification-service/` (each with an empty `app/` and a placeholder `README.md`); `/frontend`; `/infra`; `/docs`. Add a root `README.md` describing the project and the folder layout, a root `.gitignore` covering Python (`__pycache__`, `.venv`, `*.pyc`, `.env`) and Node (`node_modules`, build output), and a root `.env.example` with placeholder keys for DB creds, Keycloak, and service ports (no real secrets). Initialize git and make the first commit. Do not add service code yet — this is structure only.
 
-**Done when:** `tree` matches the §20 layout; repo pushed to GitHub; first commit exists. ✅ Done
+**Done when:** `tree` matches the §20 layout; repo pushed to GitHub; first commit exists. **— Verified.**
 
 ---
 
@@ -35,7 +35,7 @@
 > - **Traefik v3** — Docker provider (labels-based discovery), dashboard enabled on a local port, entrypoint on `:80`.
 > Pull all credentials/ports from a `.env` file (update `.env.example` accordingly). Add a short `/infra/README.md` documenting each service's port.
 
-**Done when:** `docker compose up` brings every infra container to healthy; `docker compose ps` shows all green; the Traefik dashboard loads. ✅ Done
+**Done when:** `docker compose up` brings every infra container to healthy; `docker compose ps` shows all green; the Traefik dashboard loads. **— Verified.**
 
 > Built as `init.sh` (not `.sql`) — a shell script so credentials template from
 > `.env` at container-init time instead of being hardcoded. See `docs/build-log.md`.
@@ -46,7 +46,7 @@
 **Prompt to Claude Code:**
 > Add **Keycloak** to `/infra/docker-compose.yml` in **dev mode** (`start-dev --import-realm`) with its embedded database (§5, §12) — no dedicated Postgres. Create a realm export at `/infra/keycloak/realm-export.json` defining: a realm (e.g. `ticketing`); two realm roles `user` and `organizer` (§15); one client for the frontend (public, PKCE) and one confidential/direct-access client usable for obtaining test tokens via password grant; and 2–3 seed users (one plain `user`, one with both `user` and `organizer` roles). Mount the export so it imports on startup.
 
-**Done when:** Keycloak boots and imports the realm; a token can be obtained via password grant for a seed user, and its decoded claims show the expected realm roles. ✅ Done
+**Done when:** Keycloak boots and imports the realm; a token can be obtained via password grant for a seed user, and its decoded claims show the expected realm roles. **— Verified.**
 
 ---
 
@@ -54,7 +54,7 @@
 **Prompt to Claude Code:**
 > Create a small shared Python package (e.g. `/services/_shared/auth/`) providing a reusable FastAPI dependency for Keycloak JWT validation, since every service validates tokens independently (§4). It must: fetch the realm's JWKS from Keycloak and cache it (refresh on unknown `kid`); validate the token's RS256 signature, `iss`, `aud`, and expiry; expose `get_current_user()` returning the decoded principal (subject + roles from `realm_access`); and provide a `require_role("organizer")`-style dependency factory that 403s when the role is absent (§15). Write pytest unit tests covering: valid token passes; expired/tampered token rejected; missing required role → 403. Mock the JWKS endpoint in tests so they don't need a live Keycloak.
 
-**Done when:** unit tests green; the dependency is importable by any service. ✅ Done
+**Done when:** unit tests green; the dependency is importable by any service. **— Verified.**
 
 ---
 
@@ -62,7 +62,7 @@
 **Prompt to Claude Code:**
 > Build a minimal FastAPI service template and instantiate it once (call it `event-service` for now, but keep the app factory reusable across services). It must include: a `/healthz` endpoint; a `/metrics` endpoint via `prometheus-fastapi-instrumentator`; structured JSON logging via `structlog`; a `Dockerfile` (`python:3.12-slim`, uvicorn); and one **protected** demo route using the P0.T4 auth dependency plus one `organizer`-only route. Add the service to `/infra/docker-compose.yml` behind Traefik using Docker labels for routing. Connect it to `event_db` (a trivial "SELECT 1" health-check query is enough for now — no schema yet).
 
-**Done when:** `curl` through Traefik to `/healthz` returns 200; the protected route returns 401 without a token and 200 with a valid Keycloak token; the organizer-only route 403s for a plain `user`; logs come out as JSON; `/metrics` scrapes. ✅ Done
+**Done when:** `curl` through Traefik to `/healthz` returns 200; the protected route returns 401 without a token and 200 with a valid Keycloak token; the organizer-only route 403s for a plain `user`; logs come out as JSON; `/metrics` scrapes. **— Verified.**
 
 > This task also required adding a `docker-socket-proxy` sidecar
 > (`infra/docker-socket-proxy/`) in front of the Docker socket — Traefik's
@@ -78,7 +78,7 @@
 **Prompt to Claude Code:**
 > Write a throwaway **aiokafka** producer + consumer (a script under `/infra/` or a pytest) that publishes a message to a test topic on the compose Kafka broker and consumes it back, proving the broker works end-to-end before real integrations depend on it (§7). Keep it isolated — it's a smoke test, not wiring for any service.
 
-**Done when:** the message published is consumed and asserted equal; runs green against the running compose stack. ✅ Done
+**Done when:** the message published is consumed and asserted equal; runs green against the running compose stack. **— Verified.**
 
 ---
 
@@ -86,7 +86,7 @@
 **Prompt to Claude Code:**
 > Add developer ergonomics: a root `Makefile` (or `justfile`) with `up`, `down`, `logs`, `test` targets (§25); a small `get-token.sh` helper that does the Keycloak password-grant curl and prints an access token for manual API calls; and a "Local Development" section in the root README covering how to boot the stack, get a token, hit a protected endpoint, and a placeholder note that the **Stripe CLI** (`stripe listen --forward-to ...`) will be needed later for P4 (§24).
 
-**Done when:** `make up` / `make test` work from a clean checkout; `get-token.sh` returns a usable token. ✅ Done
+**Done when:** `make up` / `make test` work from a clean checkout; `get-token.sh` returns a usable token. **— Verified.**
 
 ---
 

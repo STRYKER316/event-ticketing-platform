@@ -269,3 +269,32 @@ Phase 0's evidence actually supports right now: Project Description
 Technologies Used (a running list, appended each phase from here). Did not
 draft Requirement Gathering — it's genuinely blocked on P1.T5's roles table,
 not just unstarted.
+
+---
+
+## 2026-08-14 — Academic-presentation scan before Phase 1
+
+User asked for a full scan of the repo and commit history for anything that
+would read badly on an MS capstone submission, and to lock in hard rules
+before starting Phase 1. Findings: no secrets/credentials ever committed, no
+accidentally-tracked build artifacts, thorough `.gitignore`, clean commit
+messages (no phase/task IDs leaking in, consistent `type: description`
+style except two pre-convention early commits). Real issues found: commit
+author showing as `STRYKER316` (a handle) on 11 of 13 commits instead of a
+real name; `✅` emoji used as a status marker in one doc, inconsistent with
+the plain `- [x]` checkboxes used elsewhere in the same file; a default
+Apache 2.0 `LICENSE` file of uncertain fit for graded coursework under
+review.
+
+Fixed: removed `LICENSE`; replaced the emoji markers with plain text
+(`**Verified.**`); reworded the two pre-convention commit messages
+("Initial commit", "Add monorepo skeleton...") to match the established
+style — all via one more rebase + force-push, same pattern as the earlier
+history cleanups. **Explicitly left as-is, by the user's own choice:**
+commit author identity stays `STRYKER316` — flagged, not silently "fixed."
+**Explicitly kept, by the user's own choice:** "Claude Code" mentioned by
+name throughout `/docs`, as a deliberate transparency stance rather than
+something to minimize. Locked both the fixes and the deliberate
+non-fixes into a new CLAUDE.md section ("Academic-presentation hard rules")
+so this doesn't need re-litigating each phase, and to stop me from
+"fixing" the author-identity choice unprompted later.
