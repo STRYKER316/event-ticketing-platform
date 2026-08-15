@@ -1,0 +1,28 @@
+[project]
+name = "search-service"
+version = "0.1.0"
+description = "Search service — Elasticsearch-backed event search, Kafka consumer only"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "elasticsearch[async]>=8.15,<9",
+    "structlog>=24.4",
+    "prometheus-fastapi-instrumentator>=7.0",
+    "pydantic-settings>=2.5",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "httpx>=0.27",
+    "testcontainers[elasticsearch]>=4.9",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

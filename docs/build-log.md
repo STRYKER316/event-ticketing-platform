@@ -735,3 +735,53 @@ deleting it produces a `deleted` message. 15/15 `event-service` tests green
 tests for the republish-on-update and delete-notification behavior against
 real Postgres+Mongo, existing tests updated for the new constructor
 parameter).
+
+---
+
+## 2026-08-15 — P2.T2: Search Service scaffold + Elasticsearch client + index mapping
+
+Scaffolded `search-service` from the `event-service` template (app factory,
+`core.py`, `api`/`db`/`logic` layering, `/healthz`, `/metrics`, structured
+logging) per the "new service = copy the template" convention, adapted for a
+service with no Postgres/Mongo of its own (§8 — Elasticsearch is not a
+source of truth): `db/event_index_repository.py` holds the index mapping and
+an `ensure_index()` call instead of SQLAlchemy models, and `/healthz` pings
+Elasticsearch's `info()` instead of a DB `SELECT 1`. The index mapping
+mirrors the event-carried Kafka payload from P2.T1 (`event_id`, `title`,
+`description`, `start_time`/`end_time`, `venue_name`, `performer_names`, and
+a `nested` `seats` field for section/row/label) — no business-logic Manager
+yet, since there's nothing to orchestrate until the consumer (P2.T3) and
+search API (P2.T4) exist. Skipped adding `shared_auth` entirely: every
+search-service route is public, so there's no JWT validation to wire up
+(the "auth requirement explicit" convention is satisfied by never depending
+on it, not by a no-op check).
+
+Real bug caught during this task, not a hypothetical: `pydantic-settings`
+isn't a direct dependency of anything `search-service` uses (`fastapi`,
+`elasticsearch`, `structlog`, `prometheus-fastapi-instrumentator`) — it only
+worked for `event-service` because `shared-auth` pulls it in transitively.
+Missed on the first build, caught immediately by the container crash-looping
+on `ModuleNotFoundError: No module named 'pydantic_settings'` when actually
+run, not left latent. Added it as an explicit dependency.
+
+Also hit a real routing question the moment a second service joined Traefik:
+`event-service`'s router rule is `PathPrefix('/')`, a catch-all that was only
+safe while it was the only registered service. Rather than touch
+`event-service`'s already-checkpointed Phase 1 routes, gave `search-service`
+its own `PathPrefix('/search')` rule and confirmed via Traefik's API
+(`/api/http/routers`) that it gets higher priority (21 vs. 15) than the
+catch-all — Traefik v3's default priority scales with rule length, so no
+explicit `priority` label was needed. `/search` doesn't exist as an endpoint
+yet (P2.T4), but the routing precedence is proven correct now, before
+there's real traffic to get it wrong on.
+
+Verified live: `docker compose build` + `up` from a clean image, watched the
+startup log show `HEAD /events` (404) → `PUT /events` (200) → "Application
+startup complete" — the index is created idempotently on boot, not just
+asserted to work. Confirmed the mapping via `GET /events/_mapping` matches
+what was defined, `/healthz` returns `{"status": "ok"}` hitting the real
+Elasticsearch container, and `event-service`'s existing routes (`/healthz`
+→ 200) are unaffected by the new router. No dedicated test suite for this
+task — matches P1.T1's "wiring only" precedent (verified live, not unit-
+tested) since there's no business logic yet to unit test; P2.T5 adds the
+real integration coverage once the consumer and search API exist.

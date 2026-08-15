@@ -145,6 +145,25 @@ services:
       traefik.http.routers.event-service.rule: PathPrefix(`/`)
       traefik.http.services.event-service.loadbalancer.server.port: "8001"
 
+  search-service:
+    build:
+      context: ../services
+      dockerfile: search-service/Dockerfile
+    environment:
+      SEARCH_SERVICE_PORT: 8002
+      ELASTICSEARCH_HOST: elasticsearch
+      ELASTICSEARCH_PORT: 9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    labels:
+      traefik.enable: "true"
+      # Longer, more specific rules take priority over event-service's
+      # catch-all PathPrefix(`/`) by default in Traefik v3 (priority scales
+      # with rule length) — no explicit priority needed.
+      traefik.http.routers.search-service.rule: PathPrefix(`/search`)
+      traefik.http.services.search-service.loadbalancer.server.port: "8002"
+
   docker-socket-proxy:
     image: nginx:1.27-alpine
     volumes:
