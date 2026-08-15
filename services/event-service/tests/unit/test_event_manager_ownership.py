@@ -78,7 +78,7 @@ async def test_owning_organizer_can_delete():
 
     await manager.delete_event(user, event.id)
 
-    manager._events.delete.assert_awaited_once_with(event)
+    manager._events.delete.assert_awaited_once_with(event.id)
     manager._seat_maps.delete.assert_awaited_once_with(event.id)
 
 
@@ -136,10 +136,7 @@ async def test_seat_map_upsert_republishes_a_published_event():
 
 
 async def test_delete_reports_not_found_when_a_concurrent_delete_won_the_race():
-    # Repository.delete() returns False when its DELETE matched zero rows -- the
-    # row was already gone by the time this request's statement ran. The manager
-    # must treat that as a 404, not a second success with a second round of
-    # side effects (duplicate Kafka `deleted` message, redundant Mongo delete).
+    # delete() returning False (row already gone) must be a 404, not a second success.
     event = make_event()
     manager = make_manager(event)
     manager._events.delete = AsyncMock(return_value=False)

@@ -44,11 +44,8 @@ class EventRepository:
         result = await self._session.execute(select(func.count()).select_from(Event))
         return result.scalar_one()
 
-    async def delete(self, event: Event) -> bool:
-        # A Core-level DELETE (rather than session.delete()+flush()) lets us read back
-        # rowcount: under concurrent duplicate deletes, the loser's DELETE matches zero
-        # rows once the winner has already committed, and the caller needs to know that
-        # so it can report 404 instead of a false 204.
-        result = await self._session.execute(sa_delete(Event).where(Event.id == event.id))
-        await self._session.flush()
+    async def delete(self, event_id: uuid.UUID) -> bool:
+        # Core-level DELETE so rowcount is available: a concurrent duplicate delete
+        # matches zero rows once the winner has already committed.
+        result = await self._session.execute(sa_delete(Event).where(Event.id == event_id))
         return result.rowcount > 0

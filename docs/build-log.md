@@ -1281,26 +1281,107 @@ Traefik — the gateway boundary holds.
    producer — restarted Kafka, repeated the same live test, hang dropped to
    10.1s.
 
-Minor/cosmetic, left as noted rather than fixed: `SeatMapUpsert` accepts
-`NaN`/`Infinity` for seat `x`/`y` (Pydantic's default `allow_inf_nan=True`),
-which round-trip back as `null` on read — a quiet violation of `SeatMap`'s own
-non-optional `float` type on the response side. Not one of the five fixed
-here; flagged for whenever seat-map schema work is next touched.
-
 Every fix got a matching regression test in the real suite, not just the
 adversarial scripts: 8 new DTO tests (`test_event_schemas.py` — length caps at
 exactly the DB column boundary, NUL-byte rejection, capacity at/over the
 `int4` max), 1 new manager unit test (`test_event_manager_ownership.py` —
 `delete_event` returns 404 when the repository reports the row already gone),
 1 new integration test against real Postgres (`test_event_flow.py` — deleting
-the same already-fetched `Event` object twice, second call's rowcount is 0).
-42/42 `event-service` tests green, 18/18 `search-service` tests green
-(unaffected, run as a regression check). All five fixes re-verified live
-against the rebuilt containers after the automated suite passed, including
-re-running the Kafka-outage timing check by hand.
+the same event ID twice, second call's rowcount is 0). 42/42 `event-service`
+tests green, 18/18 `search-service` tests green (unaffected, run as a
+regression check). All five fixes re-verified live against the rebuilt
+containers after the automated suite passed, including re-running the
+Kafka-outage timing check by hand.
 
 No decisions-log delta — nothing here changes a locked decision, this is
 hardening existing endpoints against inputs the original implementation
 didn't anticipate. No `CLAUDE.md` update needed — the fixes follow existing
 conventions (DTO boundary validation, Manager-owns-the-transaction) rather
 than introducing new ones.
+
+**Review gate on the fix commit itself.** This landed as a standalone commit
+after the P1 addendum's own checkpoint, so per the same reasoning as that
+addendum, it had zero review coverage of its own. Ran `/pre-pr` (simplify →
+code-review, `skip:verify` since every fix above was already live-tested by
+hand) scoped to `ead9317..HEAD`, not the full Phase 0-2 diff — Phase 0/1/2
+and the P1 addendum each already got their own gate at their own checkpoint,
+so re-reviewing the whole combined history would only re-review already-
+shipped code.
+
+**Simplify** collapsed the four near-identical bounded-string `Annotated`
+aliases into a `_bounded_str()` factory, changed `EventRepository.delete()`
+to take `event_id: uuid.UUID` instead of the full `Event` object (only `.id`
+was ever used), and dropped a now-pointless `flush()` after the Core-level
+`DELETE` (`execute()` already populates `rowcount`; there's no pending ORM
+state for a Core statement to synchronize). Flagged but correctly left alone
+as out of this diff's scope: `BaseRepository.delete()` has the identical
+`session.delete()+flush()` race this fix diagnosed, inherited by
+`VenueRepository`/`PerformerRepository` — currently unreachable (no delete
+route exists for either yet) so it's latent, not live; worth remembering the
+next time a delete route is added to either.
+
+**Code review** (self-verified — the reviewing agent caught and retracted one
+of its own findings, an aiokafka parameter that doesn't exist, confirming the
+timeout fix has no residual gap) found real issues in both the original fix
+and the simplify pass on top of it:
+- `SeatMapUpsert` was the one write DTO this fix left unbounded — no cap on
+  `sections`/`rows`/`seats` list lengths or on `Seat.label`/row/section names.
+  `publish_upserted` flattens every seat into one Kafka message; past roughly
+  26k seats (~40 bytes of `EventSeat` JSON each) that message crosses
+  aiokafka's default 1MB `max_request_size`, and because `publish_event`
+  commits `status=PUBLISHED` before the Kafka call, the failure mode is the
+  identical bug class this fix set out to close — a 500 with Postgres already
+  committed and search never updated. Added a `MAX_SEAT_MAP_SEATS = 20_000`
+  total-seat model validator on `SeatMapUpsert` plus `max_length=100` on
+  `Seat.label`/`SeatMapRow.name`/`SeatMapSection.name`, chosen with headroom
+  under the 26k Kafka-message threshold rather than an arbitrary round number.
+- `performer_ids` had no `max_length` on either `EventCreate` or
+  `EventUpdate`; `_resolve_performers` passes it straight into an `IN(...)`
+  clause, and asyncpg caps a statement at 32767 bind parameters — an
+  unbounded list is an unhandled driver error (500), not a validation
+  rejection. Capped at 1000.
+- The simplify-introduced `_bounded_str()` factory had two problems: its
+  `-> type` return annotation was factually wrong (it returns
+  `typing._AnnotatedAlias`, verified directly), and building the aliases via
+  a function call makes them unresolvable as types to a static checker — no
+  mypy/pyright is configured here so the impact was latent, but the
+  pre-simplify explicit `Annotated[...]` aliases were four statically-valid
+  lines that saved nothing by being collapsed. Reverted to explicit aliases.
+- That same factory silently gave `EventDescription` `strip_whitespace=True`,
+  which `description` never had before (`str | None`, no stripping) — verified
+  `"   spaced   "` would have started persisting as `"spaced"`, an
+  undocumented behavior change outside this fix's actual scope. Reverted to
+  no whitespace stripping on `description`, keeping only the new max-length
+  cap and NUL-byte rejection.
+- `SeatMapUpsert` still accepted `NaN`/`Infinity` for seat `x`/`y`
+  (Pydantic's default `allow_inf_nan=True`), silently round-tripping back as
+  `null` on read against `SeatMap`'s own non-optional `float` contract —
+  flagged as deferred in this entry's first pass, but a one-line fix
+  (`Field(allow_inf_nan=False)`) in a file already being touched, so closed
+  now rather than left open. That one-line fix immediately surfaced a second,
+  worse bug live: FastAPI's default `RequestValidationError` handler echoes
+  the rejected value back in the response's `input` field, and Starlette's
+  `JSONResponse` renders with `allow_nan=False` (spec-compliant JSON has no
+  `NaN`) — so the *rejection itself* crashed while trying to report a clean
+  422, turning "silently wrong" into a 500, a regression introduced by this
+  same fix-up rather than one found by the original testing pass. Added a
+  `RequestValidationError` handler in `main.py` that walks the error detail
+  and stringifies any non-finite float before JSON-encoding it. No unit test
+  for this one — the existing suite tests at the Manager layer, never through
+  the ASGI app itself, and adding a `TestClient`-based test file for a single
+  exception-handler edge case isn't a pattern this codebase uses elsewhere;
+  live-verified instead (`NaN`/`Infinity`/`-Infinity` all now 422, ordinary
+  validation errors like an empty `sections` list still 422 as before, a
+  valid seat map still 200).
+- A regression test's comment overclaimed what it proved ("simulates" the
+  concurrent-delete race) when both `delete()` calls actually ran in one
+  session/transaction — it proves the rowcount-false-on-repeat-delete half of
+  the contract, not genuine concurrent-session behavior. Reworded to say
+  exactly that, per this file's own Integrity-rule discipline about not
+  overstating what was actually tested.
+- This entry itself had gone stale describing `delete()` as taking an `Event`
+  object after simplify changed it to take `event_id` — corrected above.
+
+11 more regression tests followed the new bounds (seat-count limit at/over
+20,000, `performer_ids` at/over 1000, NaN/Infinity rejection, whitespace
+preserved on `description`). 53/53 `event-service` tests green.

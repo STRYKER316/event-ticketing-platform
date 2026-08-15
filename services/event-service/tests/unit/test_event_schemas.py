@@ -4,7 +4,17 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from pydantic import ValidationError
 
-from app.api.schemas import EventCreate, EventUpdate, Seat, SeatMapRow, SeatMapSection, SeatMapUpsert, VenueCreate
+from app.api.schemas import (
+    MAX_SEAT_MAP_SEATS,
+    POSTGRES_INT4_MAX,
+    EventCreate,
+    EventUpdate,
+    Seat,
+    SeatMapRow,
+    SeatMapSection,
+    SeatMapUpsert,
+    VenueCreate,
+)
 
 FUTURE = datetime.now(timezone.utc) + timedelta(days=1)
 
@@ -78,8 +88,7 @@ def test_seat_map_upsert_accepts_valid_payload():
 
 
 def test_venue_create_rejects_name_over_the_db_column_limit():
-    # events.name is varchar(255) -- an over-length value must be a clean 422 at the
-    # DTO boundary, not an unhandled asyncpg.StringDataRightTruncationError at commit.
+    # events.name is varchar(255)
     with pytest.raises(ValidationError):
         VenueCreate(name="A" * 256, address="1 Main St", capacity=100)
 
@@ -91,12 +100,12 @@ def test_venue_create_rejects_address_over_the_db_column_limit():
 
 def test_venue_create_rejects_capacity_beyond_postgres_int4_range():
     with pytest.raises(ValidationError):
-        VenueCreate(name="Arena", address="1 Main St", capacity=2_147_483_648)
+        VenueCreate(name="Arena", address="1 Main St", capacity=POSTGRES_INT4_MAX + 1)
 
 
 def test_venue_create_accepts_capacity_at_postgres_int4_max():
-    venue = VenueCreate(name="Arena", address="1 Main St", capacity=2_147_483_647)
-    assert venue.capacity == 2_147_483_647
+    venue = VenueCreate(name="Arena", address="1 Main St", capacity=POSTGRES_INT4_MAX)
+    assert venue.capacity == POSTGRES_INT4_MAX
 
 
 def test_venue_create_rejects_nul_byte_in_name():
@@ -105,7 +114,6 @@ def test_venue_create_rejects_nul_byte_in_name():
 
 
 def test_event_create_rejects_title_over_the_db_column_limit():
-    # events.title is varchar(255), same failure mode as the venue name above.
     with pytest.raises(ValidationError):
         EventCreate(title="A" * 256, start_time=FUTURE, end_time=FUTURE + timedelta(hours=2), venue_id=uuid.uuid4())
 
@@ -124,3 +132,80 @@ def test_event_create_rejects_description_over_the_db_column_limit():
 def test_event_create_rejects_nul_byte_in_title():
     with pytest.raises(ValidationError):
         EventCreate(title="ti\x00tle", start_time=FUTURE, end_time=FUTURE + timedelta(hours=2), venue_id=uuid.uuid4())
+
+
+def test_event_create_preserves_whitespace_in_description():
+    event = EventCreate(
+        title="t", description="   spaced   ", start_time=FUTURE, end_time=FUTURE + timedelta(hours=2), venue_id=uuid.uuid4()
+    )
+    assert event.description == "   spaced   "
+
+
+def _seats(count: int) -> list[SeatMapSection]:
+    return [SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label=f"S{i}", x=0, y=0) for i in range(count)])])]
+
+
+def test_seat_map_upsert_rejects_more_seats_than_the_limit():
+    with pytest.raises(ValidationError):
+        SeatMapUpsert(sections=_seats(MAX_SEAT_MAP_SEATS + 1))
+
+
+def test_seat_map_upsert_accepts_exactly_the_seat_limit():
+    upsert = SeatMapUpsert(sections=_seats(MAX_SEAT_MAP_SEATS))
+    assert sum(len(row.seats) for section in upsert.sections for row in section.rows) == MAX_SEAT_MAP_SEATS
+
+
+def test_seat_map_upsert_rejects_a_seat_label_over_the_length_limit():
+    with pytest.raises(ValidationError):
+        SeatMapUpsert(sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="L" * 101, x=0, y=0)])])])
+
+
+def test_seat_map_upsert_rejects_a_section_name_over_the_length_limit():
+    with pytest.raises(ValidationError):
+        SeatMapUpsert(
+            sections=[SeatMapSection(name="A" * 101, rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+        )
+
+
+def test_seat_map_upsert_rejects_a_row_name_over_the_length_limit():
+    with pytest.raises(ValidationError):
+        SeatMapUpsert(
+            sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1" * 101, seats=[Seat(label="A1", x=0, y=0)])])]
+        )
+
+
+def test_seat_rejects_nan_x():
+    with pytest.raises(ValidationError):
+        Seat(label="A1", x=float("nan"), y=0)
+
+
+def test_seat_rejects_infinity_y():
+    with pytest.raises(ValidationError):
+        Seat(label="A1", x=0, y=float("inf"))
+
+
+def test_event_create_rejects_too_many_performer_ids():
+    with pytest.raises(ValidationError):
+        EventCreate(
+            title="t",
+            start_time=FUTURE,
+            end_time=FUTURE + timedelta(hours=2),
+            venue_id=uuid.uuid4(),
+            performer_ids=[uuid.uuid4() for _ in range(1001)],
+        )
+
+
+def test_event_create_accepts_performer_ids_at_the_limit():
+    event = EventCreate(
+        title="t",
+        start_time=FUTURE,
+        end_time=FUTURE + timedelta(hours=2),
+        venue_id=uuid.uuid4(),
+        performer_ids=[uuid.uuid4() for _ in range(1000)],
+    )
+    assert len(event.performer_ids) == 1000
+
+
+def test_event_update_rejects_too_many_performer_ids():
+    with pytest.raises(ValidationError):
+        EventUpdate(performer_ids=[uuid.uuid4() for _ in range(1001)])
