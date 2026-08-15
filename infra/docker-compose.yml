@@ -153,8 +153,12 @@ services:
       SEARCH_SERVICE_PORT: 8002
       ELASTICSEARCH_HOST: elasticsearch
       ELASTICSEARCH_PORT: 9200
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      EVENTS_TOPIC: event.events
     depends_on:
       elasticsearch:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     labels:
       traefik.enable: "true"

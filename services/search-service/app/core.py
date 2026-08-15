@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     elasticsearch_port: int = 9200
     log_level: str = "INFO"
 
+    kafka_bootstrap_servers: str = "localhost:9094"
+    events_topic: str = "event.events"
+    kafka_consumer_group_id: str = "search-service"
+
     @property
     def elasticsearch_url(self) -> str:
         return f"http://{self.elasticsearch_host}:{self.elasticsearch_port}"

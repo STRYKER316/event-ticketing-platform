@@ -785,3 +785,65 @@ Elasticsearch container, and `event-service`'s existing routes (`/healthz`
 task — matches P1.T1's "wiring only" precedent (verified live, not unit-
 tested) since there's no business logic yet to unit test; P2.T5 adds the
 real integration coverage once the consumer and search API exist.
+
+---
+
+## 2026-08-15 — P2.T3: Search Service Kafka consumer (idempotent)
+
+`EventConsumer` (`app/kafka/consumers.py`) parses the raw Kafka payload,
+dispatches on the `action` field to either `EventIndexRepository.upsert`
+(indexes by event ID — a redelivered upsert overwrites the same document
+rather than creating a duplicate, §7) or `.delete` (wrapped in a
+`NotFoundError` catch, so a redelivered or out-of-order delete for an
+already-gone document is a safe no-op, not an error). Deliberately no
+Manager class here, per the phase-kickoff note — ES upsert/delete by ID *is*
+the operation, nothing to orchestrate above it. Per-message exceptions are
+caught and logged at `error` level inside the consume loop rather than
+propagating, so one malformed or failing message can't kill the whole
+background consumer task (no retry/DLQ machinery — that's Notification
+Service's problem per §17, not Search's). Wired into `main.py`'s lifespan as
+a background `asyncio.Task`, cancelled cleanly on shutdown.
+
+Live-verified redelivery end to end against the real stack, not just mocks:
+published a real event through `event-service`, watched `search-service`'s
+own logs show the upsert land in Elasticsearch; then hand-crafted the exact
+same Kafka message via `kafka-console-producer` and replayed it — document
+count stayed at 1, `_version` incremented (proving overwrite, not
+duplication). Same for delete: deleted the event, confirmed the document
+gone, replayed a duplicate delete message, and confirmed Elasticsearch's
+404 was caught and logged cleanly with no crash.
+
+Hit a real, non-obvious infrastructure bug while building the integration
+test suite (`testcontainers` + real Kafka + real Elasticsearch): a fresh ES
+index sat at cluster status `red` (`active_primary_shards: 0`, then still
+unassigned after a 30s `wait_for_status=yellow`) no matter how long the test
+waited. Root-caused via `docker system df -v`: Docker Desktop's VM disk was
+at 90% usage (125.7GB allocated, only 11.7GB free) because of one orphaned,
+unattached 101.6GB anonymous volume, unrelated to this project — Elasticsearch's
+disk-based shard-allocation watermark (low/high at 85%/90%) was correctly
+refusing to allocate the primary shard onto a node that looked full. Not a
+code bug or a flaky test; flagged to the user before touching anything,
+since pruning Docker resources is a system-wide action. User approved a safe
+prune; `docker volume prune` (only removes volumes with zero container
+references, never touches anything in use) reclaimed the 101.6GB and dropped
+usage to 9%. Also hardened `EventIndexRepository.ensure_index()` itself as a
+result — it now sets `number_of_replicas: 0` on index creation (correct for
+this project's single-node ES topology, §12/§24: a replica could never be
+assigned to a second node that doesn't exist, so it would sit unassigned and
+hold cluster health at `yellow` forever for no reason) and blocks on
+`cluster.health(wait_for_status="yellow")` before returning, so neither a
+real deployment nor a test can observe an index that looks created but isn't
+actually shard-ready yet. This is a real production robustness fix the
+disk-space incident surfaced, not just a test workaround.
+
+7/7 `search-service` tests green (5 new unit tests mocking the repository —
+upsert dispatch, delete dispatch, malformed JSON, unknown action, and a
+repository exception all handled without raising; 2 new integration tests
+against real `testcontainers` Kafka + Elasticsearch covering the eventual-
+consistency window and both redelivery cases). One test infra note: reused
+`testcontainers`' `KafkaContainer` needed `confluentinc/cp-kafka:7.6.0` with
+`.with_kraft()` rather than the `apache/kafka` image the compose stack uses
+directly — that container class's bootstrap scripts are Confluent-image-
+specific and the `apache/kafka` image exits immediately under it; not a
+concern for the real stack, which configures `apache/kafka` by hand in
+`docker-compose.yml` already and doesn't go through this test helper.
