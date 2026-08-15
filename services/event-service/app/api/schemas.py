@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from app.db.models import EventStatus
 
@@ -45,8 +45,8 @@ class EventResponse(BaseModel):
     id: uuid.UUID
     title: str
     description: str | None
-    start_time: datetime
-    end_time: datetime
+    start_time: AwareDatetime
+    end_time: AwareDatetime
     status: EventStatus
     organizer_id: str
     venue: VenueResponse
@@ -65,14 +65,14 @@ class EventListResponse(BaseModel):
 class EventCreate(BaseModel):
     title: NonBlankStr
     description: str | None = None
-    start_time: datetime
-    end_time: datetime
+    start_time: AwareDatetime
+    end_time: AwareDatetime
     venue_id: uuid.UUID
     performer_ids: list[uuid.UUID] = []
 
     @field_validator("start_time")
     @classmethod
-    def start_time_not_in_past(cls, value: datetime) -> datetime:
+    def start_time_not_in_past(cls, value: AwareDatetime) -> AwareDatetime:
         if value <= datetime.now(timezone.utc):
             raise ValueError("start_time must be in the future")
         return value
@@ -87,14 +87,14 @@ class EventCreate(BaseModel):
 class EventUpdate(BaseModel):
     title: NonBlankStr | None = None
     description: str | None = None
-    start_time: datetime | None = None
-    end_time: datetime | None = None
+    start_time: AwareDatetime | None = None
+    end_time: AwareDatetime | None = None
     venue_id: uuid.UUID | None = None
     performer_ids: list[uuid.UUID] | None = None
 
     @field_validator("start_time")
     @classmethod
-    def start_time_not_in_past(cls, value: datetime | None) -> datetime | None:
+    def start_time_not_in_past(cls, value: AwareDatetime | None) -> AwareDatetime | None:
         if value is not None and value <= datetime.now(timezone.utc):
             raise ValueError("start_time must be in the future")
         return value
