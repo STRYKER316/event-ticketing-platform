@@ -79,7 +79,7 @@ class EventManager:
         seat_map = SeatMap(event_id=event_id, sections=payload.sections)
         await self._seat_maps.upsert(seat_map)
         if event.status is EventStatus.PUBLISHED:
-            await self._republish(event)
+            await self._republish(event, seat_map)
         return seat_map
 
     async def create_event(self, user: Principal, payload: EventCreate) -> EventResponse:
@@ -131,11 +131,12 @@ class EventManager:
         if was_published:
             await self._producer.publish_deleted(event_id)
 
-    async def _republish(self, event: Event) -> None:
-        seat_map = await self._seat_maps.get_by_event_id(event.id)
+    async def _republish(self, event: Event, seat_map: SeatMap | None = None) -> None:
         if seat_map is None:
-            logger.warning("published_event_missing_seat_map", event_id=str(event.id))
-            return
+            seat_map = await self._seat_maps.get_by_event_id(event.id)
+            if seat_map is None:
+                logger.warning("published_event_missing_seat_map", event_id=str(event.id))
+                return
         await self._producer.publish_upserted(event, seat_map)
 
     async def _fetch_owned_event(self, user: Principal, event_id: uuid.UUID) -> Event:
