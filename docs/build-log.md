@@ -879,3 +879,39 @@ integration test already exercises the exact "publish → becomes searchable"
 path P2.T5 calls for (same Kafka-to-Elasticsearch pipeline `/search`
 queries read from); noted for P2.T5 rather than duplicating it. 10/10
 `search-service` tests green.
+
+---
+
+## 2026-08-15 — P2.T5: Tests
+
+The integration coverage this task calls for (testcontainers Kafka +
+Elasticsearch, publish → becomes searchable, eventual-consistency window,
+redelivery-is-a-no-op) was already built during P2.T3, since idempotency and
+eventual-consistency verification shared the same test harness — no
+duplicate test written. What was still missing, per the phase kickoff's own
+task description: unit tests for **`event-service`'s producer** message-
+building (payload shape, correct key) and **`search-service`'s repository**
+query-building — both added now.
+
+`tests/unit/test_event_producer.py` (`event-service`): mocks the underlying
+`AIOKafkaProducer`, asserts `EventProducer.publish_upserted`/
+`publish_deleted` send to the right topic, key the message with the raw
+event ID bytes (not a JSON-encoded string), and produce the exact JSON
+payload shape (`action`, flattened `seats`, etc.) — this is the one thing
+the existing `EventManager` tests never actually verified, since they mocked
+the producer itself rather than exercising it.
+
+`tests/unit/test_event_index_repository.py` (`search-service`): mocks the
+`AsyncElasticsearch` client, asserts `EventIndexRepository.search()` builds
+`match_all` for a blank query vs. `multi_match` over the right four fields
+for a real one, sorts by `_score` for relevance vs. `start_time` for that
+sort field, always appends the `event_id` tiebreaker, and passes pagination
+args through as `from_`/`size` correctly (not swapped).
+
+17/17 `event-service` tests green, 17/17 `search-service` tests green.
+Combined with every prior task's live verification against the real running
+stack (Kafka messages read directly off the topic, real `curl` calls through
+Traefik, real Elasticsearch document counts), this closes out Phase 2's
+per-task work. Phase-end checklist (walkthrough, report, commit/file scan,
+`architecture.html`, decisions-log delta check, CLAUDE.md self-update check,
+`/pre-pr` review gate) follows next, before the CHECKPOINT commit.
