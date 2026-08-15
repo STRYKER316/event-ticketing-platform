@@ -72,11 +72,29 @@ drift out of sync — a real, tested security-boundary bug class. Building it
 once as a shared dependency makes correctness (or a fix to it) apply
 uniformly across every service that imports it.
 
-**Status:** Implemented, Tested. 10 pytest unit tests (valid token, expired
-token, tampered token, wrong audience, wrong issuer, unknown signing key,
-missing required role, present required role, JWKS-URI override behavior),
-all against a mocked JWKS endpoint with a real generated RSA keypair — no
-live Keycloak required to run the suite. Also verified live, end-to-end,
+**Status:** Implemented, Tested. 28 pytest unit tests: the original 10
+(valid token, expired token, tampered token, wrong audience, wrong issuer,
+unknown signing key, missing required role, present required role,
+JWKS-URI override behavior) against a mocked JWKS endpoint with a real
+generated RSA keypair, plus 18 added during a retroactive review-gate pass
+(2026-08-15, see `docs/build-log.md`) that hardened the package past its
+Phase 0 walking-skeleton state: a genuine algorithm-confusion attack (a
+hand-constructed forged HS256-signed token using the RSA public key as the
+HMAC secret — PyJWT's own `encode()` refuses to build this via its normal
+API, so the forged JWS is built by hand, the way a real attacker would),
+missing-required-claim rejection, malformed-claims fail-closed behavior,
+and a full suite against the real `JWKSCache` (TTL expiry, unknown-kid
+refresh, key rotation, fetch-failure handling) via `httpx.MockTransport` —
+the original suite fully stubbed out `get_key()`, so this logic had zero
+real coverage until then. The same pass added: an `asyncio.Lock` around
+JWKS refresh (was vulnerable to a thundering-herd re-fetch and a racy
+double-client-creation window under concurrent requests), a minimum-
+refetch-interval throttle (an unauthenticated client sending garbage `kid`s
+could previously drive unbounded 1:1 request-to-Keycloak-fetch traffic),
+and a proper error boundary around JWKS fetch/parse failures (an IdP
+outage or malformed JWKS response previously crashed with an uncaught
+500 instead of a clean 503). No live Keycloak required to run the suite —
+also verified live, end-to-end,
 against a running Keycloak instance.
 
 ## FastAPI + `prometheus-fastapi-instrumentator` + `structlog`
