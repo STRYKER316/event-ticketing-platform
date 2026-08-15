@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Walking Skeleton — event-ticketing-platform</title>
+<title>Event Service — event-ticketing-platform</title>
 <style>
   :root {
     --bg: #f6f7f9;
@@ -235,22 +235,23 @@
 
 <header>
   <p class="eyebrow">event-ticketing-platform — capstone</p>
-  <h1>Walking Skeleton</h1>
-  <p>What Phase 0 actually built: the request path an authenticated call takes through this system, verified live — not inferred from the checklist. Traced 2026-08-14.</p>
+  <h1>Event Service</h1>
+  <p>What Phase 1 actually built: Event Service is now the source of truth for events, venues, performers, and seat maps — with organizer writes ownership-scoped, not just role-checked. Verified live, not inferred from the checklist. Traced 2026-08-15.</p>
   <div class="badges">
     <span class="badge ok">Phase 0 complete</span>
-    <span class="badge">7 tasks · P0.T1–T7</span>
+    <span class="badge ok">Phase 1 complete</span>
+    <span class="badge">14 tasks · P0.T1–T7, P1.T1–T7</span>
     <span class="badge">9 containers</span>
   </div>
 </header>
 
 <section>
   <h2><span class="num">01</span> — Topology</h2>
-  <h3>One entrypoint, one service so far</h3>
-  <p class="lede">Traefik is the only thing exposed on the host. It discovers <code>event-service</code> by reading Docker labels — through a small proxy, not the raw socket (see note below). Everything else is provisioned for later phases but nothing talks to it yet.</p>
+  <h3>One entrypoint, one service — now with two databases behind it</h3>
+  <p class="lede">Traefik is still the only thing exposed on the host, still routing to <code>event-service</code> by Docker labels. What changed this phase: <code>event-service</code> now writes to Postgres <em>and</em> MongoDB — relational event/venue/performer data in one, seat-map documents in the other. Redis, Elasticsearch, and Kafka are still provisioned but idle.</p>
 
   <figure>
-    <svg viewBox="0 0 900 460" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service; event-service queries Postgres and validates tokens against Keycloak; a docker-socket-proxy feeds Traefik container discovery; MongoDB, Redis, Elasticsearch and Kafka are provisioned but not yet wired to any service.">
+    <svg viewBox="0 0 900 460" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service; event-service queries Postgres for events/venues/performers, queries MongoDB for seat-map documents, and validates tokens against Keycloak; a docker-socket-proxy feeds Traefik container discovery; Redis, Elasticsearch and Kafka are provisioned but not yet wired to any service.">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -281,15 +282,23 @@
       <rect x="460" y="44" width="160" height="84" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
       <text x="540" y="76" text-anchor="middle" font-family="var(--mono)" font-size="13" font-weight="600" fill="currentColor">event-service</text>
       <text x="540" y="94" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">FastAPI</text>
-      <text x="540" y="110" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">/healthz /demo/*</text>
+      <text x="540" y="110" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">/events /venues</text>
 
       <!-- event-service down to postgres -->
-      <line x1="540" y1="128" x2="540" y2="196" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
-      <text x="608" y="166" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">SELECT 1</text>
+      <line x1="510" y1="128" x2="470" y2="196" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="440" y="166" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">events, venues</text>
 
-      <rect x="460" y="200" width="160" height="52" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
-      <text x="540" y="222" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">postgres</text>
-      <text x="540" y="238" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">event_db</text>
+      <rect x="400" y="200" width="140" height="52" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="470" y="222" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">postgres</text>
+      <text x="470" y="238" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">event_db</text>
+
+      <!-- event-service down to mongodb -->
+      <line x1="570" y1="128" x2="620" y2="196" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="650" y="166" text-anchor="middle" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">seat maps</text>
+
+      <rect x="560" y="200" width="140" height="52" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="630" y="222" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">mongodb</text>
+      <text x="630" y="238" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">event_service</text>
 
       <!-- event-service right to keycloak -->
       <line x1="620" y1="70" x2="716" y2="70" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -311,32 +320,29 @@
       <text x="24" y="342" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">PROVISIONED — NOT WIRED TO A SERVICE YET</text>
 
       <g fill="none" stroke="var(--idle)" stroke-width="1.3">
-        <rect x="24" y="360" width="128" height="52" rx="8"/>
-        <rect x="176" y="360" width="128" height="52" rx="8"/>
-        <rect x="328" y="360" width="128" height="52" rx="8"/>
-        <rect x="480" y="360" width="128" height="52" rx="8"/>
+        <rect x="120" y="360" width="150" height="52" rx="8"/>
+        <rect x="330" y="360" width="150" height="52" rx="8"/>
+        <rect x="540" y="360" width="150" height="52" rx="8"/>
       </g>
       <g font-family="var(--mono)" font-size="12" fill="var(--idle)" text-anchor="middle">
-        <text x="88" y="390">mongodb</text>
-        <text x="240" y="390">redis</text>
-        <text x="392" y="390">elasticsearch</text>
-        <text x="544" y="390">kafka</text>
+        <text x="195" y="390">redis</text>
+        <text x="405" y="390">elasticsearch</text>
+        <text x="615" y="390">kafka</text>
       </g>
       <g font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)" text-anchor="middle">
-        <text x="88" y="404">seat maps, P1</text>
-        <text x="240" y="404">holds, P3</text>
-        <text x="392" y="404">index, P2</text>
-        <text x="544" y="404">round-trip proven, §P0.T6</text>
+        <text x="195" y="404">holds, P3</text>
+        <text x="405" y="404">index, P2</text>
+        <text x="615" y="404">round-trip proven, §P0.T6</text>
       </g>
     </svg>
   </figure>
-  <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · one docker-compose network, host port 80 only.</figcaption>
+  <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · mongo:7 · one docker-compose network, host port 80 only.</figcaption>
 </section>
 
 <section>
   <h2><span class="num">02</span> — Auth flow</h2>
-  <h3>Same token, two outcomes</h3>
-  <p class="lede">This is the actual sequence from the walkthrough above: <code>alice</code> (role <code>user</code>) gets turned away from the organizer route; <code>bob</code> (roles <code>user</code>+<code>organizer</code>) gets through. Nothing about the request differs except whose token it carries.</p>
+  <h3>Same token, two outcomes — now on a real write route</h3>
+  <p class="lede">This is the actual sequence from the walkthrough above, now run against <code>POST /events</code> instead of the Phase 0 demo route: <code>alice</code> (role <code>user</code>) gets turned away; <code>bob</code> (roles <code>user</code>+<code>organizer</code>) gets through and creates an event. Role alone isn't the whole story this phase — see the ownership note below the diagram.</p>
 
   <figure>
     <svg viewBox="0 0 900 520" role="img" aria-label="Sequence diagram: a client requests a token from Keycloak via password grant, receives a JWT with issuer, audience, expiry and role claims, then sends that token to Traefik which forwards to event-service; event-service fetches Keycloak's public keys once and caches them, verifies the token, and checks the organizer role — alice's token is rejected with 403, bob's token is accepted with 200.">
@@ -367,7 +373,7 @@
 
       <!-- step 2: request with token -->
       <line x1="80" y1="150" x2="512" y2="150" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"/>
-      <text x="300" y="142" text-anchor="middle" font-family="var(--mono)" font-size="11">GET /demo/organizer-only  Bearer &lt;JWT&gt;</text>
+      <text x="300" y="142" text-anchor="middle" font-family="var(--mono)" font-size="11">POST /events  Bearer &lt;JWT&gt;</text>
 
       <line x1="520" y1="172" x2="752" y2="172" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"/>
       <text x="640" y="164" text-anchor="middle" font-family="var(--mono)" font-size="11">forward</text>
@@ -397,7 +403,7 @@
       <!-- ok branch: bob -->
       <line x1="780" y1="308" x2="800" y2="360" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
       <rect x="700" y="368" width="180" height="56" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.3"/>
-      <text x="790" y="390" text-anchor="middle" font-family="var(--mono)" font-size="12" font-weight="600" fill="var(--ok)">200 bob</text>
+      <text x="790" y="390" text-anchor="middle" font-family="var(--mono)" font-size="12" font-weight="600" fill="var(--ok)">201 bob</text>
       <text x="790" y="406" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ok)">roles=[user,</text>
       <text x="790" y="417" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ok)">organizer]</text>
 
@@ -407,7 +413,9 @@
       <text x="185" y="452" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">response, either way, back through traefik</text>
     </svg>
   </figure>
-  <figcaption>Verified live: alice → 403 {"detail":"Requires role: organizer"} · bob → 200 {"message":"organizer access granted"}.</figcaption>
+  <figcaption>Verified live: alice → 403 {"detail":"Requires role: organizer"} · bob → 201, event created with organizer_id = bob's JWT subject.</figcaption>
+
+  <p class="lede" style="margin-top:24px;">Role alone stops here — it doesn't answer "whose event is this?" That's a second, explicit check in <code>EventManager</code>: on <code>PATCH</code>/<code>DELETE /events/{id}</code>, the stored <code>organizer_id</code> is compared against the caller's JWT subject before any mutation. Verified live: <code>carol</code> (organizer role, different subject) → 403 on both bob's event; bob → 200/204 on his own.</p>
 </section>
 
 <section>
@@ -417,20 +425,25 @@
       <h4><span class="dot ok"></span>proven, live, this phase</h4>
       <ul>
         <li><span class="check">✓</span> gateway routes by Docker labels, no manual config</li>
-        <li><span class="check">✓</span> real Postgres round-trip on /healthz</li>
+        <li><span class="check">✓</span> real Postgres <em>and</em> MongoDB round-trips on /healthz</li>
         <li><span class="check">✓</span> Keycloak-issued JWT validated end-to-end (sig/iss/aud/exp)</li>
-        <li><span class="check">✓</span> role claim gates a route (403 vs 200, same code path)</li>
-        <li><span class="check">✓</span> every log line is JSON, including uvicorn's own</li>
-        <li><span class="check">✓</span> /metrics scrapes</li>
-        <li><span class="check">✓</span> Kafka produce → consume round-trip</li>
+        <li><span class="check">✓</span> role claim gates a route (403 vs 201, same code path)</li>
+        <li><span class="check">✓</span> ownership scoping — organizer role is necessary but not sufficient</li>
+        <li><span class="check">✓</span> events/venues/performers in Postgres via Alembic-managed schema</li>
+        <li><span class="check">✓</span> seat-map documents in MongoDB, fetched by event ID</li>
+        <li><span class="check">✓</span> public read APIs: list (paged, sorted), detail, seat map, venue</li>
+        <li><span class="check">✓</span> DTO validation boundary rejects blank titles and past start times (422)</li>
+        <li><span class="check">✓</span> unit + testcontainers integration tests, both green</li>
+        <li><span class="check">✓</span> <code>make seed</code> populates baseline demo data, idempotently</li>
         <li><span class="check">✓</span> one command (<code>make up</code>) boots all 9 containers</li>
       </ul>
     </div>
     <div class="col">
       <h4><span class="dot idle"></span>provisioned, not built yet</h4>
       <ul>
-        <li><span class="dash">–</span> no event/booking/payment logic — only a demo route</li>
-        <li><span class="dash">–</span> MongoDB seat maps unused (Phase 1)</li>
+        <li><span class="dash">–</span> no booking/payment/notification logic yet</li>
+        <li><span class="dash">–</span> event-service doesn't publish to Kafka yet (Phase 2)</li>
+        <li><span class="dash">–</span> delete-if-zero-bookings is a stub — real check lands with Booking (Phase 3)</li>
         <li><span class="dash">–</span> Redis holds unused (Phase 3)</li>
         <li><span class="dash">–</span> Elasticsearch index unused (Phase 2)</li>
         <li><span class="dash">–</span> Kafka not wired to any service yet, only smoke-tested</li>
@@ -447,24 +460,26 @@
   <p class="lede">Every command below is real — this is exactly what was run to trace the diagrams above. Takes about a minute.</p>
   <pre><span class="c"># from repo root</span>
 make up                                    <span class="c"># boots all 9 containers</span>
+make seed                                  <span class="c"># baseline venues/performers/events + one seat map</span>
 
-<span class="c"># public route — hits real postgres</span>
-curl localhost/healthz
-<span class="out">{"status":"ok"}</span>
+<span class="c"># public read — hits real postgres, paged + sorted</span>
+curl "localhost/events?limit=2&sort_order=desc"
+<span class="out">{"items":[...], "total":3, "limit":2, "offset":0}</span>   <span class="ok">200</span>
 
-<span class="c"># no token</span>
-curl localhost/demo/protected
-<span class="out">{"detail":"Not authenticated"}</span>                    <span class="fail">401</span>
-
-<span class="c"># alice: user only</span>
+<span class="c"># alice: user only — cannot create</span>
 TOKEN=$(./get-token.sh alice)
-curl -H "Authorization: Bearer $TOKEN" localhost/demo/organizer-only
+curl -X POST localhost/events -H "Authorization: Bearer $TOKEN" ...
 <span class="out">{"detail":"Requires role: organizer"}</span>              <span class="fail">403</span>
 
-<span class="c"># bob: user + organizer</span>
+<span class="c"># bob: user + organizer — creates an event he owns</span>
 TOKEN=$(./get-token.sh bob)
-curl -H "Authorization: Bearer $TOKEN" localhost/demo/organizer-only
-<span class="out">{"message":"organizer access granted", ...}</span>        <span class="ok">200</span>
+curl -X POST localhost/events -H "Authorization: Bearer $TOKEN" ...
+<span class="out">{"id":"...", "organizer_id":"&lt;bob's sub&gt;", ...}</span>  <span class="ok">201</span>
+
+<span class="c"># carol: organizer, but not the owner — blocked from bob's event</span>
+TOKEN=$(./get-token.sh carol)
+curl -X PATCH localhost/events/&lt;bob's event id&gt; -H "Authorization: Bearer $TOKEN" ...
+<span class="out">{"detail":"not the owning organizer"}</span>             <span class="fail">403</span>
 
 make down                                  <span class="c"># tear down</span></pre>
 </section>

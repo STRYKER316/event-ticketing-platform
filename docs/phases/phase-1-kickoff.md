@@ -127,16 +127,16 @@ testing-chapter material (what's unit- vs. integration-covered and why).
 
 ## Phase 1 exit checklist (all must pass before P2)
 
-- [ ] Event Service healthy behind Traefik, both Postgres and Mongo connected.
-- [ ] `alembic upgrade head` clean; ER diagram captured.
-- [ ] Seat-map documents storable/fetchable by event ID.
-- [ ] Read APIs return seeded data with working pagination/sorting.
-- [ ] Organizer write APIs enforce both role **and** ownership scoping.
-- [ ] Full unit + integration test suite green.
-- [ ] `make seed` works from a clean checkout.
-- [ ] Live walkthrough done at CHECKPOINT (per `CLAUDE.md` cadence); `docs/architecture.html`
+- [x] Event Service healthy behind Traefik, both Postgres and Mongo connected.
+- [x] `alembic upgrade head` clean; ER diagram captured.
+- [x] Seat-map documents storable/fetchable by event ID.
+- [x] Read APIs return seeded data with working pagination/sorting.
+- [x] Organizer write APIs enforce both role **and** ownership scoping.
+- [x] Full unit + integration test suite green.
+- [x] `make seed` works from a clean checkout.
+- [x] Live walkthrough done at CHECKPOINT (per `CLAUDE.md` cadence); `docs/architecture.html`
       updated to current state; `docs/build-log.md` entry appended; decisions-log
-      delta logged if any.
+      delta logged if any (none this phase — no architectural decisions changed).
 
 **Report evidence captured this phase (§16):** ER diagram + textual schema, sample
 seat-map JSON figure, Event Service class diagram, roles/permissions table, testing-

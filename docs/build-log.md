@@ -433,3 +433,87 @@ message sounding doc-only when it wasn't. This closes out Phase 0 — every
 task verified live, every doc cross-referenced and current, commit history
 clean against the rules established this session. Next: Phase 1 (Event
 Service).
+
+
+---
+
+## 2026-08-15 — Phase 1: Event Service
+
+Generated `docs/phases/phase-1-kickoff.md` from the master plan's Phase 1
+section (the pattern established at the end of Phase 0), then ran all seven
+tasks in order, verifying each live before moving on.
+
+**P1.T1** — extended the P0 template with a Motor client (`get_mongo_db()` in
+`core.py`), wired `mongodb` into the compose entry, removed the now-obsolete
+`/demo/*` routes and `DemoResponse` schema, and folded a Mongo `ping` into
+`/healthz`. Verified: `/healthz` returns 200 with both DBs reachable; `/demo/*`
+now 404s.
+
+**P1.T2** — Postgres schema (`Event`, `Venue`, `Performer`, plus the
+`event_performers` association table) as async SQLAlchemy models, first
+Alembic migration, and a thin Repository layer per feature. Hit one real bug:
+`migrations/env.py`'s autogenerate scaffold unconditionally overwrote
+`sqlalchemy.url` from `get_settings()` on every load — harmless for the plain
+CLI case but silently clobbered any URL a caller passed in explicitly. Fixed
+by preferring `config.attributes["sqlalchemy_url"]` when a caller sets it,
+falling back to `get_settings()` otherwise. This turned out to matter later
+in P1.T6 (see below) — worth being explicit about now rather than
+rediscovering blind.
+
+**P1.T3** — MongoDB seat-map documents: sections → rows → seats, validated at
+the boundary via Pydantic (`SeatMap`/`SeatMapSection`/`SeatMapRow`/`Seat` in
+`api/schemas.py`) before ever touching Mongo. `SeatMapRepository` stores/reads
+whole documents keyed by `event_id`. Verified live: store, fetch, delete
+round-trip against the real `mongodb` container.
+
+**P1.T4** — public read APIs (`EventManager`, `VenueManager`): list with
+pagination + sortable by `start_time`/`title` in either order, event detail
+(with venue + performers eagerly loaded, not lazy — no N+1), seat-map fetch,
+venue detail. Verified live against five seeded events: paging, both sort
+orders, 404 on a missing seat map.
+
+**P1.T5** — organizer write APIs (`POST`/`PATCH`/`DELETE /events`) with
+ownership scoping per §15: `require_role("organizer")` at the route plus an
+explicit `event.organizer_id == user.subject` check inside `EventManager`
+before any mutation. DTOs (`EventCreate`/`EventUpdate`) reject blank titles
+and past `start_time` via Pydantic validators — a 422, not a downstream
+failure. `DELETE` has the "zero bookings" guard clause structured as its own
+private step (`_check_no_bookings`) but is a no-op for now since Booking
+Service doesn't exist until Phase 3 — real check lands there, not tracked as
+a code TODO. Verified live end-to-end with real Keycloak tokens for
+alice/bob/carol: non-organizer 403, cross-owner 403 on both update and
+delete, owning organizer succeeds; also verified the DTO validators reject a
+past `start_time` and a whitespace-only title with 422.
+
+**P1.T6** — unit tests mock the Repository layer to exercise
+`EventManager`'s ownership branch in isolation (owner succeeds, non-owner
+403, both update and delete); integration tests spin up real Postgres +
+MongoDB via `testcontainers-python` (`driver="asyncpg"` on `PostgresContainer`
+so the same async engine code path runs against the container as against
+compose) and exercise the full create → fetch → seat-map flow plus the
+DB-backed ownership check. This is where the `migrations/env.py` bug from
+P1.T2 actually bit — without the fix, the container's Alembic run silently
+connected to whatever `.env` happened to have sourced into the shell instead
+of the container's own generated URL. First case in this repo of
+testcontainers-python; established the pattern (session-scoped container
+fixtures, migration run once per session, table truncation between tests)
+for Phases 2+ to reuse. 7/7 tests green.
+
+**P1.T7** — seed script (`app/seed.py`, `make seed`) populates two venues,
+three performers, three events (one past, two future) and one seat map;
+checks for existing data first so re-running is a no-op. Verified live
+through the running API, including the idempotency check.
+
+**Process note:** no dedicated `/code-review` pass this phase — that's
+reserved for P3 and P8 per the decision logged 2026-08-14. Self-verification
+via live testing (real tokens, real containers, real HTTP calls) was used
+throughout, consistent with every phase so far.
+
+Updated `docs/architecture.html` to current state: `event-service` now shows
+both Postgres and MongoDB wired (not just Postgres), the auth-flow diagram
+runs against the real `POST /events` route instead of the Phase 0 demo
+route, and a new note covers ownership scoping (carol blocked from bob's
+event) since role-only gating was the whole story last phase and isn't
+anymore. Reproduce-yourself commands updated to the real API. This closes
+out Phase 1 — every task verified live, tests green, seed data browsable
+end to end. Next: Phase 2 (Search Service + Kafka #1).
