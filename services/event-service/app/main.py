@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import health
+from app.api import events, health
 from app.core import close_mongo_client, configure_logging, dispose_engine
 
 
@@ -19,6 +19,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="event-service", lifespan=lifespan)
     app.include_router(health.router)
+    app.include_router(events.router)
     Instrumentator().instrument(app).expose(app)
 
     return app
