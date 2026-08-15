@@ -46,8 +46,11 @@ class EventConsumer:
     async def _handle(self, raw: bytes) -> None:
         try:
             payload = json.loads(raw)
+            # payload.get() assumes a JSON object; valid JSON that isn't one
+            # (a bare list/string/number/null) raises AttributeError here,
+            # which must not escape and kill the background consumer task.
             action = KafkaAction(payload.get("action"))
-        except (json.JSONDecodeError, ValueError) as exc:
+        except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as exc:
             logger.error("search_consumer_message_unparseable", error=str(exc), raw=raw[:500])
             return
 

@@ -89,6 +89,38 @@ async def test_publish_notifies_producer_and_republishes_on_update(
     producer.publish_deleted.assert_awaited_once_with(created.id)
 
 
+async def test_republish_on_venue_change_reflects_the_new_venue(
+    db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
+):
+    original_venue = await _seed_venue(db_session)
+    new_venue = Venue(name="New Venue", address="2 Test Way", capacity=500)
+    db_session.add(new_venue)
+    await db_session.commit()
+
+    producer = AsyncMock()
+    manager = EventManager(db_session, mongo_db, producer=producer)
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+
+    created = await manager.create_event(
+        ORGANIZER,
+        EventCreate(
+            title="Venue Change Concert", start_time=start, end_time=start + timedelta(hours=2), venue_id=original_venue.id
+        ),
+    )
+    await SeatMapRepository(mongo_db).upsert(
+        SeatMap(
+            event_id=created.id,
+            sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
+        )
+    )
+    await manager.publish_event(ORGANIZER, created.id)
+
+    await manager.update_event(ORGANIZER, created.id, EventUpdate(venue_id=new_venue.id))
+
+    republished_event = producer.publish_upserted.await_args.args[0]
+    assert republished_event.venue.name == "New Venue"
+
+
 async def test_deleting_a_draft_event_does_not_notify_producer(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
     venue = await _seed_venue(db_session)
     producer = AsyncMock()

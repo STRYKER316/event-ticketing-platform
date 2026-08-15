@@ -110,20 +110,21 @@ eventual-consistency talking point (§26) with the test as its concrete backing.
 
 ## Phase 2 exit checklist (all must pass before P3)
 
-- [ ] Event Service publishes exactly one Kafka message per create/update/delete,
+- [x] Event Service publishes exactly one Kafka message per create/update/delete,
       keyed for idempotency, carrying full event-carried state (seat list included).
-- [ ] Search Service healthy behind Traefik; ES index created on boot.
-- [ ] Search Service consumer upserts/deletes ES docs; redelivery is a proven no-op.
-- [ ] `GET /search` returns indexed events with working pagination/sorting.
-- [ ] Full unit + integration test suite green, including the eventual-consistency
+      (Amended: publish/update-while-published/delete, not raw create — see §15 delta.)
+- [x] Search Service healthy behind Traefik; ES index created on boot.
+- [x] Search Service consumer upserts/deletes ES docs; redelivery is a proven no-op.
+- [x] `GET /search` returns indexed events with working pagination/sorting.
+- [x] Full unit + integration test suite green, including the eventual-consistency
       and redelivery tests.
-- [ ] Validation checkpoint done live: create an event → appears in search within the
+- [x] Validation checkpoint done live: create an event → appears in search within the
       consistency window; delete → disappears; duplicate Kafka delivery changes
       nothing.
-- [ ] Live walkthrough done at CHECKPOINT (per `CLAUDE.md` cadence);
+- [x] Live walkthrough done at CHECKPOINT (per `CLAUDE.md` cadence);
       `docs/architecture.html` updated to current state; `docs/build-log.md` entry
       appended; decisions-log delta logged if any.
-- [ ] Phase-end checklist item 7 (`/pre-pr` — simplify → code-review → verify) run
+- [x] Phase-end checklist item 7 (`/pre-pr` — simplify → code-review → verify) run
       against the diff since Phase 1's checkpoint commit, findings self-applied.
 
 **Report evidence captured this phase (§16):** integration-point #1 sequence diagram,

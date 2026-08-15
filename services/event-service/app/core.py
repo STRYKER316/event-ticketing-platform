@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import sys
 from collections.abc import AsyncIterator
@@ -144,14 +145,19 @@ def close_mongo_client() -> None:
 
 
 _kafka_producer: AIOKafkaProducer | None = None
+_kafka_producer_lock = asyncio.Lock()
 
 
 async def get_kafka_producer() -> AIOKafkaProducer:
     global _kafka_producer
-    if _kafka_producer is None:
-        producer = AIOKafkaProducer(bootstrap_servers=get_settings().kafka_bootstrap_servers)
-        await producer.start()
-        _kafka_producer = producer
+    # Unlike get_engine()/get_mongo_client(), this has an `await` between the
+    # check and the assignment, so two concurrent first callers can otherwise
+    # both start a producer — the loser's connection is then never stopped.
+    async with _kafka_producer_lock:
+        if _kafka_producer is None:
+            producer = AIOKafkaProducer(bootstrap_servers=get_settings().kafka_bootstrap_servers)
+            await producer.start()
+            _kafka_producer = producer
     return _kafka_producer
 
 

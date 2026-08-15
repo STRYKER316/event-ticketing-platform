@@ -168,6 +168,7 @@ class EventManager:
         if payload.venue_id is not None:
             venue = await self._resolve_venue(payload.venue_id)
             event.venue_id = venue.id
+            event.venue = venue
         if payload.performer_ids is not None:
             event.performers = await self._resolve_performers(payload.performer_ids)
 

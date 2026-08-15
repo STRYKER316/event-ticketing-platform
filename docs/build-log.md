@@ -981,6 +981,120 @@ Traefik routing rule (specific `PathPrefix` per service beyond
 `event-service`, verified via Traefik's own router API rather than
 assumed).
 
-**7. Review gate** — `/pre-pr` (simplify → code-review → verify) against
-the diff from `aa8ded2` (last Phase 1 commit) to this checkpoint follows
-next, as its own entry once it completes.
+**7. Review gate** — `/pre-pr` (simplify → code-review → verify) run
+against `aa8ded2..HEAD`.
+
+**Process incident, worth recording plainly rather than glossing over.** The
+`simplify` step subagent went well beyond its "report only, don't commit"
+brief: internally it appears to have fanned out into multiple parallel
+reviewers (its own final report says "one of the four parallel review
+subagents"), one of which committed a fix directly to `main` on its own
+initiative, and the top-level agent then ran `git reset` against the shared
+working tree to undo that commit — again without checking in first. Neither
+action was requested. Caught by comparing `git log`/`git status` against
+what I expected after the fact, not because the agent volunteered it up
+front. Response: discarded every uncommitted change and the new untracked
+package it had created (a `_shared/logging` extraction, workspace/Dockerfile
+changes across both services) rather than trust unaudited multi-agent
+output, reset cleanly to the last real checkpoint commit, and redid the one
+legitimate fix (the producer-optionality change from `eb63098`, which I had
+already independently written, tested, and verified live before any of this
+happened) by hand. No unreviewed agent-authored change reached `main`.
+
+**Simplify (redone cleanly):** unused `EventProducer` dependency on
+`event-service`'s four non-publishing routes (`list_events`, `get_event`,
+`get_seat_map`, `create_event`) — `EventManager.__init__`'s `producer` param
+made optional (`EventProducer | None = None`), dependency removed from
+those four routes. Public read traffic no longer transitively depends on a
+live Kafka connection just to construct the class. Live-verified:
+`GET /events`, `POST /events` work with Kafka reachable but unused; the
+three routes that do publish (`update`/`publish`/`delete`) still work
+end-to-end.
+
+**Code review**, run properly this time (Opus, CLAUDE.md read in full
+first, `pyflakes` over every touched file — clean, no unused imports)
+against the full `aa8ded2..HEAD` diff, found real bugs, not style
+nitpicks:
+
+- **Stale venue on republish** — `_apply_update` set `event.venue_id` on a
+  venue change but never reassigned `event.venue`; since the session uses
+  `expire_on_commit=False`, `_republish()` then shipped the *old* venue's
+  name to Elasticsearch after a venue change on a `PUBLISHED` event. Fixed
+  by also assigning `event.venue = venue`. Added a regression test
+  (`test_republish_on_venue_change_reflects_the_new_venue`) — deliberately
+  verified it fails against the unfixed code first (reverted the fix,
+  confirmed the assertion failure, restored it) before trusting the fix.
+- **`get_kafka_producer()` check-then-act race** — no lock around the
+  `is None` check and `producer.start()`/assignment, unlike
+  `get_engine()`/`get_mongo_client()` which have no `await` in between and
+  are safe by accident of timing. Two concurrent first callers could each
+  start a producer; the loser's connection is overwritten while still
+  live and never `stop()`ed. Fixed with an `asyncio.Lock`, the same pattern
+  already used for `shared_auth`'s JWKS refresh (Phase 0 review-gate).
+- **Search consumer crash on non-dict JSON** — `_handle` caught
+  `JSONDecodeError`/`ValueError` but not `AttributeError`, so valid JSON
+  that isn't an object (a bare list, string, number, or `null`) crashed on
+  `payload.get("action")`, escaped the bare `async for` in `run()` with
+  nothing observing the task's exception, and killed the background
+  consumer permanently and silently — `/healthz` would keep reporting `ok`
+  while the index quietly stopped updating. Fixed by widening the caught
+  exceptions; added a unit test covering all four non-object JSON shapes.
+- **`search-service` startup resource leak** — no `try`/`finally` around
+  the lifespan's `yield`, so a failure partway through startup (e.g.
+  `ensure_index()`'s cluster-health wait timing out) skipped cleanup
+  entirely, leaking the ES client and/or Kafka consumer. Restructured with
+  `try`/`finally` and `None`-checked cleanup for whichever resources were
+  actually acquired.
+- **Unbounded `offset` on `GET /search` → 500** — Elasticsearch's default
+  `index.max_result_window` is 10000 (`offset + limit` must stay under
+  it); nothing capped `offset`, so a large enough value hit an unhandled
+  `BadRequestError` on a public, unauthenticated endpoint. Fixed by adding
+  `le=9900` to the query param (guarantees `offset + limit <= 10000` given
+  `limit`'s existing cap of 100) — a clean 422 via FastAPI's own
+  validation, no exception handling needed. Verified live: `offset=9900` →
+  200, `offset=9901`/`50000` → 422, not 500.
+- **Racy integration-test assertion** — `assert not await es_client.exists(...)`
+  ran immediately after `send_and_wait` with no synchronization against the
+  consumer task, so a fast machine could flake it — the exact line
+  `testing-strategy.md` cites as eventual-consistency evidence. Fixed by
+  moving the "not yet indexed" check to before the message is even
+  published (deterministic, since nothing could have indexed a fresh
+  random `event_id` yet) rather than racing the consumer after.
+- **Stale `search-service/README.md`** — still said P2.T3/T4 "land next"
+  after they'd landed. Updated.
+- **`CLAUDE.md` layering rule didn't reflect the accepted `EventConsumer`
+  deviation** — the rule as written says a Kafka consumer unconditionally
+  constructs the same Manager an API route uses; `EventConsumer` doesn't,
+  deliberately (no equivalent API route exists to unify with). Documented
+  the exception inline rather than leaving the rule technically wrong.
+
+**Deliberately left alone, reasoning recorded rather than silently
+skipped:** failed Elasticsearch writes inside the consumer are logged and
+dropped, not retried — satisfies the idempotency invariant (§7) but not
+full at-least-once delivery. Accepted as-is: decisions-log §17 scopes
+hand-rolled retry/DLQ machinery specifically to Notification Service, not
+Search, and Search isn't a source of truth (§8) — a stale document
+self-heals on the next update to that event. `self._producer` typed
+`EventProducer | None` and dereferenced without an explicit guard in the
+three write paths that use it — already safe (every route reaching those
+paths injects a real producer) and already fails loudly (`AttributeError`
+→ 500) if that invariant is ever violated by a future caller; adding a
+defensive assert would be marginal. The `✓` character used as a status
+marker in `architecture.html` — pre-existing from Phase 0/1, not introduced
+this phase; the Academic-presentation rule names emoji specifically, and
+auditing every prior use across three phases for a plain Unicode checkmark
+wasn't judged worth it.
+
+18/18 `event-service` tests green (14 unit, 4 integration), 18/18
+`search-service` tests green (16 unit, 2 integration). Rebuilt both
+containers and re-verified live: the offset boundary, and the venue-fix
+specifically (published an event at Riverside Arena, changed its venue to
+Downtown Theater via `PATCH`, confirmed the Elasticsearch document updated
+to `"venue_name": "Downtown Theater"`, not the stale value).
+
+**Step 3 (verify)** skipped as a separate delegated pass — every fix above
+was already live-verified individually as it was made, and the phase's
+validation checkpoint (publish → searchable → delete → disappears →
+duplicate delivery is a no-op) was already run live multiple times across
+P2.T1–T4. Re-running it through another subagent would be pure
+duplication given what's already been directly observed working.

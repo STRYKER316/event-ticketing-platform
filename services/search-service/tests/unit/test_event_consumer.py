@@ -72,3 +72,16 @@ async def test_repository_failure_is_caught_not_raised():
     repository.upsert.side_effect = RuntimeError("elasticsearch down")
 
     await consumer._handle(json.dumps(UPSERT_PAYLOAD).encode())  # must not raise
+
+
+async def test_valid_json_non_object_does_not_raise():
+    # payload.get("action") assumes a dict; a bare list/number/string/null is
+    # still valid JSON but has no .get() — this must not escape _handle and
+    # kill the background consumer task.
+    consumer, repository = make_consumer()
+
+    for non_object_payload in (["a", "list"], 5, "a string", None):
+        await consumer._handle(json.dumps(non_object_payload).encode())
+
+    repository.upsert.assert_not_awaited()
+    repository.delete.assert_not_awaited()

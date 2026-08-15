@@ -12,7 +12,10 @@ router = APIRouter()
 async def search_events(
     q: str = Query(default="", description="Free-text query across title/description/venue/performers"),
     limit: int = Query(default=20, ge=1, le=100),
-    offset: int = Query(default=0, ge=0),
+    # Elasticsearch's default index.max_result_window is 10000 and requires
+    # offset + limit <= that; capping offset here turns an out-of-range page
+    # into a clean 422 instead of an unhandled BadRequestError -> 500.
+    offset: int = Query(default=0, ge=0, le=9900),
     sort_field: SearchSortField = Query(default=SearchSortField.RELEVANCE),
     sort_order: SortOrder = Query(default=SortOrder.DESC),
     client: AsyncElasticsearch = Depends(get_es_client),

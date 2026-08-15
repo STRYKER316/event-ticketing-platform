@@ -328,7 +328,12 @@ chapter.
   kafka/
     producers.py
     consumers.py                      # handlers construct the same {Feature}Manager the
-                                        # API routes use — one business-logic path, two entry points
+                                        # API routes use — one business-logic path, two entry points.
+                                        # Exception: a consumer with no equivalent API route (e.g.
+                                        # search-service's EventConsumer — nothing else writes to
+                                        # its index) calls the Repository directly; there's no second
+                                        # entry point to unify with, so the rule's rationale doesn't
+                                        # apply. Still exactly one place that talks to the datastore.
   core.py                              # settings, structured logging setup, async session
                                         # factory usable both via FastAPI Depends() and
                                         # directly inside Kafka consumer handlers

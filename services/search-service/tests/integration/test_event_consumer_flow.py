@@ -61,11 +61,14 @@ async def test_publish_makes_event_searchable_and_redelivery_is_a_noop(
         "seats": [{"section": "A", "row": "1", "label": "A1"}],
     }
 
-    # Eventual consistency (§7): not indexed the instant it's published — only
-    # once the consumer has actually processed the message.
-    await kafka_producer.send_and_wait(EVENTS_TOPIC, key=event_id.encode(), value=json.dumps(message).encode())
+    # Eventual consistency (§7): nothing has indexed this fresh event_id yet
+    # (checked before publishing, deterministically — checking immediately
+    # after send_and_wait would race the consumer and could flake on a fast
+    # machine). It only becomes searchable once the consumer actually
+    # processes the message below.
     assert not await es_client.exists(index="events", id=event_id)
 
+    await kafka_producer.send_and_wait(EVENTS_TOPIC, key=event_id.encode(), value=json.dumps(message).encode())
     await _wait_until(lambda: es_client.exists(index="events", id=event_id))
     doc = await es_client.get(index="events", id=event_id)
     assert doc["_source"]["title"] == "Integration Event"
