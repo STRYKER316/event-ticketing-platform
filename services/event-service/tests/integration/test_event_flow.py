@@ -50,9 +50,7 @@ async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_d
     assert seat_map.sections[0].name == "A"
 
     await manager.delete_event(ORGANIZER, created.id)
-    with pytest.raises(HTTPException) as exc_info:
-        await manager.get_seat_map(created.id)
-    assert exc_info.value.status_code == 404
+    assert await SeatMapRepository(mongo_db).get_by_event_id(created.id) is None
 
 
 async def test_cross_organizer_update_is_rejected(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
