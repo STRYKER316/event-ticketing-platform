@@ -23,7 +23,7 @@ def _sig_key(kid: str) -> dict:
     return _public_key_to_jwk(_TEST_PUBLIC_KEY, kid)
 
 
-async def test_fetches_and_caches_key(monkeypatch):
+async def test_fetches_and_caches_key():
     calls = {"count": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -102,6 +102,30 @@ async def test_non_signing_key_excluded():
 async def test_fetch_failure_raises_jwks_fetch_error():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(503)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    cache = JWKSCache(_settings(), client=client)
+
+    with pytest.raises(JWKSFetchError):
+        await cache.get_key("any-kid")
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"keys": [{"kty": "RSA", "n": "abc", "e": "AQAB"}]},  # missing kid
+        {"keys": [{"kty": "RSA", "kid": "x", "n": "!!!", "e": "AQAB"}]},  # unparseable key material
+        {"keys": "notalist"},  # keys isn't a list
+    ],
+    ids=["missing_kid", "unparseable_key", "keys_not_a_list"],
+)
+async def test_malformed_key_material_raises_jwks_fetch_error_not_a_crash(body):
+    """A 200 response with a malformed body must still surface as
+    JWKSFetchError (-> 503 at the dependency layer), not an uncaught
+    KeyError/ValueError/AttributeError (-> 500)."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=body)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     cache = JWKSCache(_settings(), client=client)

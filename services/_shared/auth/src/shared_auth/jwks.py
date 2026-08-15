@@ -3,6 +3,7 @@ import time
 
 import httpx
 from jwt import PyJWK
+from jwt.exceptions import PyJWKError
 
 from .config import AuthSettings
 
@@ -35,16 +36,17 @@ class JWKSCache:
             response = await self._client.get(self._settings.jwks_uri, timeout=5.0)
             response.raise_for_status()
             keys = response.json()["keys"]
-        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            parsed_keys = {
+                key["kid"]: PyJWK.from_dict(key)
+                for key in keys
+                # "use" is optional per RFC 7517 — only exclude keys explicitly
+                # marked for a different purpose (e.g. encryption), don't require it.
+                if key.get("use") in (None, "sig")
+            }
+        except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError, PyJWKError) as exc:
             raise JWKSFetchError(f"failed to fetch JWKS from {self._settings.jwks_uri}") from exc
 
-        self._keys = {
-            key["kid"]: PyJWK.from_dict(key)
-            for key in keys
-            # "use" is optional per RFC 7517 — only exclude keys explicitly
-            # marked for a different purpose (e.g. encryption), don't require it.
-            if key.get("use") in (None, "sig")
-        }
+        self._keys = parsed_keys
         self._fetched_at = time.monotonic()
 
     async def get_key(self, kid: str) -> PyJWK:
