@@ -1,10 +1,20 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from shared_auth import Principal, require_role
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import EventListResponse, EventResponse, EventSortField, SeatMap, SortOrder, VenueResponse
+from app.api.schemas import (
+    EventCreate,
+    EventListResponse,
+    EventResponse,
+    EventSortField,
+    EventUpdate,
+    SeatMap,
+    SortOrder,
+    VenueResponse,
+)
 from app.core import get_mongo_db, get_session
 from app.logic.event_manager import EventManager
 from app.logic.venue_manager import VenueManager
@@ -49,3 +59,37 @@ async def get_seat_map(
 async def get_venue(venue_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> VenueResponse:
     """Public — no auth required."""
     return await VenueManager(session).get_venue(venue_id)
+
+
+@router.post("/events", response_model=EventResponse, status_code=status.HTTP_201_CREATED)
+async def create_event(
+    payload: EventCreate,
+    user: Principal = Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_session),
+    mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+) -> EventResponse:
+    """Organizer-only."""
+    return await EventManager(session, mongo_db).create_event(user, payload)
+
+
+@router.patch("/events/{event_id}", response_model=EventResponse)
+async def update_event(
+    event_id: uuid.UUID,
+    payload: EventUpdate,
+    user: Principal = Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_session),
+    mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+) -> EventResponse:
+    """Organizer-only, ownership-scoped: must own the event being updated."""
+    return await EventManager(session, mongo_db).update_event(user, event_id, payload)
+
+
+@router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_event(
+    event_id: uuid.UUID,
+    user: Principal = Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_session),
+    mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+) -> None:
+    """Organizer-only, ownership-scoped: must own the event being deleted."""
+    await EventManager(session, mongo_db).delete_event(user, event_id)

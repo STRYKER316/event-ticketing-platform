@@ -1,10 +1,13 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from app.db.models import EventStatus
+
+NonBlankStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class HealthResponse(BaseModel):
@@ -57,6 +60,50 @@ class EventListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class EventCreate(BaseModel):
+    title: NonBlankStr
+    description: str | None = None
+    start_time: datetime
+    end_time: datetime
+    venue_id: uuid.UUID
+    performer_ids: list[uuid.UUID] = []
+
+    @field_validator("start_time")
+    @classmethod
+    def start_time_not_in_past(cls, value: datetime) -> datetime:
+        if value <= datetime.now(timezone.utc):
+            raise ValueError("start_time must be in the future")
+        return value
+
+    @model_validator(mode="after")
+    def end_after_start(self) -> "EventCreate":
+        if self.end_time <= self.start_time:
+            raise ValueError("end_time must be after start_time")
+        return self
+
+
+class EventUpdate(BaseModel):
+    title: NonBlankStr | None = None
+    description: str | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    venue_id: uuid.UUID | None = None
+    performer_ids: list[uuid.UUID] | None = None
+
+    @field_validator("start_time")
+    @classmethod
+    def start_time_not_in_past(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value <= datetime.now(timezone.utc):
+            raise ValueError("start_time must be in the future")
+        return value
+
+    @model_validator(mode="after")
+    def end_after_start(self) -> "EventUpdate":
+        if self.start_time is not None and self.end_time is not None and self.end_time <= self.start_time:
+            raise ValueError("end_time must be after start_time")
+        return self
 
 
 class Seat(BaseModel):
