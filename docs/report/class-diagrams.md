@@ -35,6 +35,15 @@ classDiagram
         +get_venue(venue_id) VenueResponse
     }
 
+    class BaseRepository~ModelT~ {
+        -_session: AsyncSession
+        -_model: type[ModelT]
+        +create(instance) ModelT
+        +get_by_id(instance_id) ModelT
+        +get_many_by_id(instance_ids) ModelT[]
+        +delete(instance) void
+    }
+
     class EventRepository {
         -_session: AsyncSession
         +create(event) Event
@@ -45,20 +54,10 @@ classDiagram
     }
 
     class VenueRepository {
-        -_session: AsyncSession
-        +create(venue) Venue
-        +get_by_id(venue_id) Venue
         +list(limit, offset) Venue[]
-        +delete(venue) void
     }
 
-    class PerformerRepository {
-        -_session: AsyncSession
-        +create(performer) Performer
-        +get_by_id(performer_id) Performer
-        +get_many_by_id(performer_ids) Performer[]
-        +delete(performer) void
-    }
+    class PerformerRepository
 
     class SeatMapRepository {
         -_collection: MotorCollection
@@ -66,6 +65,9 @@ classDiagram
         +get_by_event_id(event_id) SeatMap
         +delete(event_id) void
     }
+
+    BaseRepository <|-- VenueRepository
+    BaseRepository <|-- PerformerRepository
 
     EventManager --> EventRepository
     EventManager --> VenueRepository
@@ -96,6 +98,18 @@ are logically part of the event-detail use case even though the data
 lives in a different database. Repositories stay single-datastore,
 single-model, and business-rule-free by design — `EventRepository` doesn't
 know what "ownership" means, `EventManager` does.
+
+`VenueRepository` and `PerformerRepository` inherit shared create/
+get_by_id/get_many_by_id/delete boilerplate from a generic
+`BaseRepository[ModelT]` — both models needed identical CRUD with nothing
+model-specific beyond their SQLAlchemy type, so the duplication was
+extracted once it showed up in two places (a Phase 1 review-gate
+simplification, not part of the original per-feature design).
+`EventRepository` deliberately does **not** inherit it: it always
+eager-loads `venue`/`performers` via `selectinload` on every fetch, which
+is model-specific enough that forcing it through the generic base would
+either weaken the base or special-case it — not worth it for one
+repository.
 
 **Status:** Implemented, Tested — reflects the actual class structure
 under `services/event-service/app/logic/` and `app/db/` as of Phase 1, not
