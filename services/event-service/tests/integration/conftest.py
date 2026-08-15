@@ -4,11 +4,10 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.community.mongodb import MongoDbContainer
 from testcontainers.community.postgres import PostgresContainer
-
-SERVICE_ROOT = "/workspace/event-service"
 
 
 @pytest.fixture(scope="session")
@@ -40,8 +39,6 @@ async def db_session(_migrated_database_url: str) -> AsyncIterator[AsyncSession]
     async with session_factory() as session:
         yield session
     async with engine.begin() as conn:
-        from sqlalchemy import text
-
         for table in ("event_performers", "events", "venues", "performers"):
             await conn.execute(text(f"DELETE FROM {table}"))
     await engine.dispose()
