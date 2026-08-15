@@ -1098,3 +1098,58 @@ validation checkpoint (publish → searchable → delete → disappears →
 duplicate delivery is a no-op) was already run live multiple times across
 P2.T1–T4. Re-running it through another subagent would be pure
 duplication given what's already been directly observed working.
+
+---
+
+## 2026-08-15 — P1 addendum: venue and seat-map write API
+
+Asked "anything remaining from Phase 0-2 before Phase 3" ahead of starting
+Booking Service. An audit against decisions-log.md and
+master-development-plan.md turned up one real gap: §15 explicitly promises
+Event Service write endpoints for "`POST /events`, venue/seat-map
+management," but only the event endpoints were ever built — `master-
+development-plan.md`'s actual P1.T5 task never included venue or seat-map
+writes, so the gap went unnoticed through two phase checkpoints. Every
+seat map used in testing so far (the seed script, and every manual
+verification step across Phase 2) went in via `SeatMapRepository.upsert()`
+called directly or a raw `mongosh` insert — an organizer had no way to do
+this through the API at all. Flagged as worth closing before Phase 3, since
+provisioning (P3.T2) needs real published events with seat maps and
+"manually write to Mongo" isn't a workflow that scales to that phase's
+testing.
+
+Closed it: `POST /venues` (organizer role only — venues have no
+`organizer_id`, they're a shared catalog, not a per-organizer resource, so
+there's nothing to ownership-scope against) and `PUT /events/{id}/seat-map`
+(ownership-scoped like every other event mutation; upsert semantics,
+matching the existing Mongo repository method's already-upsert shape).
+`VenueCreate` validates `capacity > 0` at the DTO boundary per convention;
+`SeatMapUpsert` requires at least one section (an empty seat map is
+meaningless under the reserved-seating invariant). The seat-map write
+reuses the exact republish-if-`PUBLISHED` pattern `update_event` already
+uses for title/venue/performer changes — a seat-map change after publish
+needed the same treatment or the Kafka payload's seat list would silently
+drift from what an organizer most recently set.
+
+12 new tests (5 DTO validation, 3 unit ownership/republish-on-`PUBLISHED`,
+4 integration against real Postgres+Mongo) — 30/30 `event-service` tests
+green. Live-verified the full loop end to end with zero manual Mongo
+access, for the first time this project: created a venue via `POST
+/venues`, created an event against it, attached a seat map via `PUT
+.../seat-map`, published, confirmed it searchable with the right seats in
+the Kafka-derived Elasticsearch document, changed the seat map again on the
+now-`PUBLISHED` event and confirmed the index updated to the new seats (not
+stale), and confirmed a non-owning organizer gets 403 on the seat-map
+write. Also verified `capacity <= 0` and a blank venue name both 422
+cleanly, and a `user`-only token gets 403 on `POST /venues`.
+
+Updated `docs/architecture.html` (moved the seat-map-write gap from "not
+built yet" to "proven," added a P1-addendum badge and a `PUT .../seat-map`
+step to the reproduce-yourself commands, fixed a stale "9 containers"
+comment left over from Phase 1) and `docs/report/requirement-gathering.md`
+(two new roles-table rows, a paragraph explaining the gap and the fix,
+matching the existing "Phase 2 addition" paragraph's style). No
+decisions-log delta — this closes an existing §15 commitment rather than
+changing one. No CLAUDE.md update needed — both new endpoints follow the
+already-documented organizer-write-endpoint pattern exactly, nothing new to
+document.

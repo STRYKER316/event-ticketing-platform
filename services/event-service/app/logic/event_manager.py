@@ -13,6 +13,7 @@ from app.api.schemas import (
     EventSortField,
     EventUpdate,
     SeatMap,
+    SeatMapUpsert,
     SortOrder,
 )
 from app.db.event_repository import EventRepository
@@ -71,6 +72,14 @@ class EventManager:
         seat_map = await self._seat_maps.get_by_event_id(event_id)
         if seat_map is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "seat map not found")
+        return seat_map
+
+    async def upsert_seat_map(self, user: Principal, event_id: uuid.UUID, payload: SeatMapUpsert) -> SeatMap:
+        event = await self._fetch_owned_event(user, event_id)
+        seat_map = SeatMap(event_id=event_id, sections=payload.sections)
+        await self._seat_maps.upsert(seat_map)
+        if event.status is EventStatus.PUBLISHED:
+            await self._republish(event)
         return seat_map
 
     async def create_event(self, user: Principal, payload: EventCreate) -> EventResponse:

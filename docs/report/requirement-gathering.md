@@ -18,8 +18,10 @@ omission (Conventions, `CLAUDE.md`):
   plus (from Phase 3 onward) hold a seat, book, pay, and cancel their own
   booking.
 - **`organizer`** — everything `user` can do, plus create, update, and
-  delete events they own. A user can hold both roles simultaneously (the
-  seed realm's `bob` does); `organizer` is additive, not exclusive.
+  delete events they own, add venues to the shared catalog, and attach or
+  update the seat map for events they own. A user can hold both roles
+  simultaneously (the seed realm's `bob` does); `organizer` is additive,
+  not exclusive.
 
 ## Roles/permissions table — Event Service (Phase 1)
 
@@ -28,7 +30,9 @@ omission (Conventions, `CLAUDE.md`):
 | `GET /events`, `GET /events/{id}` | Allow | Allow | Allow | Allow |
 | `GET /events/{id}/seat-map` | Allow | Allow | Allow | Allow |
 | `GET /venues/{id}` | Allow | Allow | Allow | Allow |
+| `POST /venues` | 401 | 403 | Allow (no ownership — shared catalog) | Allow |
 | `POST /events` | 401 | 403 | Allow (becomes owner, `DRAFT`) | — |
+| `PUT /events/{id}/seat-map` | 401 | 403 | **403** | Allow (upsert) |
 | `POST /events/{id}/publish` | 401 | 403 | **403** | Allow (`DRAFT`→`PUBLISHED`) |
 | `PATCH /events/{id}` | 401 | 403 | **403** | Allow |
 | `DELETE /events/{id}` | 401 | 403 | **403** | Allow |
@@ -48,6 +52,22 @@ exercised live against a running Keycloak instance with real seed users
 (`alice`: `user` only: `bob`, `carol`: both `user` and `organizer`, distinct
 subjects) during Phase 1 — not inferred from reading the route
 declarations. See `docs/architecture.html` §2 for the traced sequence.
+
+**P1 addendum — closing the venue/seat-map write gap.** Decisions-log §15
+originally described Event Service's write scope as "`POST /events`,
+venue/seat-map management," but only the event endpoints were ever built in
+Phase 1 — `master-development-plan.md` never scheduled a task for the other
+two, so it went unnoticed until an audit ahead of Phase 3 surfaced it: an
+organizer had no way to create a venue or attach a seat map through the API
+at all, only via the seed script or a direct Mongo write. `POST /venues`
+needs the `organizer` role but no ownership check — venues are a shared
+catalog (no `organizer_id` on the model), unlike events. `PUT /events/{id}/seat-map`
+is ownership-scoped like every other event mutation, upserts (create or
+replace), and — since a seat map can change after an event is already
+`PUBLISHED` — re-publishes to Kafka/Search on that path exactly like
+`PATCH /events/{id}` already does for title/venue/performer changes, so the
+search index and the Kafka payload's seat list never go stale relative to
+what an organizer most recently set.
 
 **Phase 2 addition — publish as its own step.** Event Service originally
 shipped `POST /events` creating an event directly in a `PUBLISHED` state

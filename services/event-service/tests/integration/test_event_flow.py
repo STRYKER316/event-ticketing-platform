@@ -7,10 +7,20 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from shared_auth import Principal
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import EventCreate, EventUpdate, Seat, SeatMap, SeatMapRow, SeatMapSection
+from app.api.schemas import (
+    EventCreate,
+    EventUpdate,
+    Seat,
+    SeatMap,
+    SeatMapRow,
+    SeatMapSection,
+    SeatMapUpsert,
+    VenueCreate,
+)
 from app.db.models import Venue
 from app.db.seat_map_repository import SeatMapRepository
 from app.logic.event_manager import EventManager
+from app.logic.venue_manager import VenueManager
 
 pytestmark = pytest.mark.asyncio
 
@@ -23,6 +33,85 @@ async def _seed_venue(session: AsyncSession) -> Venue:
     session.add(venue)
     await session.commit()
     return venue
+
+
+async def test_create_and_fetch_venue(db_session: AsyncSession):
+    manager = VenueManager(db_session)
+
+    created = await manager.create_venue(VenueCreate(name="New Arena", address="9 New St", capacity=500))
+    fetched = await manager.get_venue(created.id)
+
+    assert fetched.name == "New Arena"
+    assert fetched.capacity == 500
+
+
+async def test_owning_organizer_can_upsert_seat_map_via_api_path(
+    db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
+):
+    venue = await _seed_venue(db_session)
+    manager = EventManager(db_session, mongo_db, producer=AsyncMock())
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+
+    created = await manager.create_event(
+        ORGANIZER,
+        EventCreate(title="Needs Seats", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+    )
+
+    payload = SeatMapUpsert(
+        sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+    )
+    result = await manager.upsert_seat_map(ORGANIZER, created.id, payload)
+    assert result.sections[0].name == "A"
+
+    fetched = await manager.get_seat_map(created.id)
+    assert fetched.sections[0].rows[0].seats[0].label == "A1"
+
+
+async def test_cross_organizer_cannot_upsert_seat_map(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
+    venue = await _seed_venue(db_session)
+    manager = EventManager(db_session, mongo_db, producer=AsyncMock())
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+
+    created = await manager.create_event(
+        ORGANIZER,
+        EventCreate(title="Owned Seats", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+    )
+
+    payload = SeatMapUpsert(
+        sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+    )
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.upsert_seat_map(OTHER_ORGANIZER, created.id, payload)
+    assert exc_info.value.status_code == 403
+
+
+async def test_seat_map_upsert_republishes_when_event_is_published(
+    db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
+):
+    venue = await _seed_venue(db_session)
+    producer = AsyncMock()
+    manager = EventManager(db_session, mongo_db, producer=producer)
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+
+    created = await manager.create_event(
+        ORGANIZER,
+        EventCreate(title="Republish on Seat Change", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+    )
+    initial_payload = SeatMapUpsert(
+        sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+    )
+    await manager.upsert_seat_map(ORGANIZER, created.id, initial_payload)
+    await manager.publish_event(ORGANIZER, created.id)
+    producer.publish_upserted.assert_awaited_once()
+
+    updated_payload = SeatMapUpsert(
+        sections=[SeatMapSection(name="B", rows=[SeatMapRow(name="1", seats=[Seat(label="B1", x=0, y=0)])])]
+    )
+    await manager.upsert_seat_map(ORGANIZER, created.id, updated_payload)
+
+    assert producer.publish_upserted.await_count == 2
+    republished_seat_map = producer.publish_upserted.await_args.args[1]
+    assert republished_seat_map.sections[0].name == "B"
 
 
 async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):

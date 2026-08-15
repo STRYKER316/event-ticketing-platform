@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 from shared_auth import Principal
 
-from app.api.schemas import EventUpdate
+from app.api.schemas import EventUpdate, Seat, SeatMapRow, SeatMapSection, SeatMapUpsert
 from app.db.models import Event, EventStatus, Venue
 from app.logic.event_manager import EventManager
 
@@ -41,7 +41,13 @@ def make_manager(event: Event) -> EventManager:
     manager._seat_maps = MagicMock()
     manager._seat_maps.delete = AsyncMock()
     manager._seat_maps.get_by_event_id = AsyncMock(return_value=None)
+    manager._seat_maps.upsert = AsyncMock()
     return manager
+
+
+SEAT_MAP_PAYLOAD = SeatMapUpsert(
+    sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+)
 
 
 async def test_owning_organizer_can_update():
@@ -86,6 +92,42 @@ async def test_non_owning_organizer_cannot_delete():
 
     assert exc_info.value.status_code == 403
     manager._events.delete.assert_not_awaited()
+
+
+async def test_owning_organizer_can_upsert_seat_map():
+    event = make_event()
+    manager = make_manager(event)
+    user = Principal(subject=OWNER_SUBJECT, roles=["organizer"])
+
+    result = await manager.upsert_seat_map(user, event.id, SEAT_MAP_PAYLOAD)
+
+    assert result.sections[0].name == "A"
+    manager._seat_maps.upsert.assert_awaited_once()
+    manager._producer.publish_upserted.assert_not_awaited()  # DRAFT event: no republish
+
+
+async def test_non_owning_organizer_cannot_upsert_seat_map():
+    event = make_event()
+    manager = make_manager(event)
+    user = Principal(subject=OTHER_ORGANIZER_SUBJECT, roles=["organizer"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.upsert_seat_map(user, event.id, SEAT_MAP_PAYLOAD)
+
+    assert exc_info.value.status_code == 403
+    manager._seat_maps.upsert.assert_not_awaited()
+
+
+async def test_seat_map_upsert_republishes_a_published_event():
+    event = make_event()
+    event.status = EventStatus.PUBLISHED
+    manager = make_manager(event)
+    manager._seat_maps.get_by_event_id = AsyncMock(return_value=SEAT_MAP_PAYLOAD)
+    user = Principal(subject=OWNER_SUBJECT, roles=["organizer"])
+
+    await manager.upsert_seat_map(user, event.id, SEAT_MAP_PAYLOAD)
+
+    manager._producer.publish_upserted.assert_awaited_once()
 
 
 async def test_update_rejects_end_time_before_existing_start_time():

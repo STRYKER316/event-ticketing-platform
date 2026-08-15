@@ -12,7 +12,9 @@ from app.api.schemas import (
     EventSortField,
     EventUpdate,
     SeatMap,
+    SeatMapUpsert,
     SortOrder,
+    VenueCreate,
     VenueResponse,
 )
 from app.core import get_mongo_db, get_session
@@ -56,10 +58,36 @@ async def get_seat_map(
     return await EventManager(session, mongo_db).get_seat_map(event_id)
 
 
+@router.put("/events/{event_id}/seat-map", response_model=SeatMap)
+async def upsert_seat_map(
+    event_id: uuid.UUID,
+    payload: SeatMapUpsert,
+    user: Principal = Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_session),
+    mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    producer: EventProducer = Depends(get_event_producer),
+) -> SeatMap:
+    """Organizer-only, ownership-scoped: must own the event the seat map belongs to.
+    Upsert semantics (§15 delta). If the event is already PUBLISHED, re-publishes so
+    Kafka/Search stay in sync with the new seat list."""
+    return await EventManager(session, mongo_db, producer).upsert_seat_map(user, event_id, payload)
+
+
 @router.get("/venues/{venue_id}", response_model=VenueResponse)
 async def get_venue(venue_id: uuid.UUID, session: AsyncSession = Depends(get_session)) -> VenueResponse:
     """Public — no auth required."""
     return await VenueManager(session).get_venue(venue_id)
+
+
+@router.post("/venues", response_model=VenueResponse, status_code=status.HTTP_201_CREATED)
+async def create_venue(
+    payload: VenueCreate,
+    user: Principal = Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_session),
+) -> VenueResponse:
+    """Organizer-only. No ownership scoping — venues are a shared catalog, not owned
+    by the organizer who happens to add one (§15)."""
+    return await VenueManager(session).create_venue(payload)
 
 
 @router.post("/events", response_model=EventResponse, status_code=status.HTTP_201_CREATED)

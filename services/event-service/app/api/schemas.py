@@ -33,6 +33,19 @@ class VenueResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class VenueCreate(BaseModel):
+    name: NonBlankStr
+    address: NonBlankStr
+    capacity: int
+
+    @field_validator("capacity")
+    @classmethod
+    def capacity_must_be_positive(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("capacity must be positive")
+        return value
+
+
 class PerformerResponse(BaseModel):
     id: uuid.UUID
     name: str
@@ -125,3 +138,7 @@ class SeatMapSection(BaseModel):
 class SeatMap(BaseModel):
     event_id: uuid.UUID
     sections: list[SeatMapSection]
+
+
+class SeatMapUpsert(BaseModel):
+    sections: list[SeatMapSection] = Field(min_length=1)

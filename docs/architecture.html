@@ -236,12 +236,13 @@
 <header>
   <p class="eyebrow">event-ticketing-platform — capstone</p>
   <h1>Event &amp; Search Services</h1>
-  <p>What Phase 2 actually built: the first real Kafka integration point. Event Service now publishes a keyed message when an event is published, updated while published, or deleted; Search Service consumes it into Elasticsearch, idempotently, and serves it back over a public <code>GET /search</code>. Verified live — a hand-replayed duplicate Kafka message, not just a passing test. Traced 2026-08-15.</p>
+  <p>What Phase 2 actually built: the first real Kafka integration point. Event Service now publishes a keyed message when an event is published, updated while published, or deleted; Search Service consumes it into Elasticsearch, idempotently, and serves it back over a public <code>GET /search</code>. Verified live — a hand-replayed duplicate Kafka message, not just a passing test. Also closed a gap decisions-log §15 had left open since Phase 1: organizers can now create venues and attach/update seat maps over HTTP — no more seeding or manual Mongo writes to get a publishable event. Traced 2026-08-15.</p>
   <div class="badges">
     <span class="badge ok">Phase 0 complete</span>
     <span class="badge ok">Phase 1 complete</span>
     <span class="badge ok">Phase 2 complete</span>
     <span class="badge">19 tasks · P0.T1–T7, P1.T1–T7, P2.T1–T5</span>
+    <span class="badge">+ P1 addendum: venue/seat-map write API</span>
     <span class="badge">10 containers</span>
   </div>
 </header>
@@ -545,6 +546,7 @@
         <li><span class="check">✓</span> eventual-consistency window captured by a real, passing test</li>
         <li><span class="check">✓</span> <code>GET /search</code> — free text, paginated, sorted, tiebreaker-stable</li>
         <li><span class="check">✓</span> a second service (search-service) coexists behind Traefik correctly</li>
+        <li><span class="check">✓</span> organizer write APIs for venues and seat maps (§15 gap closed) — ownership-scoped, republishes a <code>PUBLISHED</code> event's seat-map change to Kafka/Search</li>
       </ul>
     </div>
     <div class="col">
@@ -553,7 +555,6 @@
         <li><span class="dash">–</span> no booking/payment/notification logic yet</li>
         <li><span class="dash">–</span> delete-if-zero-bookings is a stub — real check lands with Booking (Phase 3)</li>
         <li><span class="dash">–</span> Redis holds unused (Phase 3)</li>
-        <li><span class="dash">–</span> no seat-map write API yet — organizers can't attach one via HTTP; the seed script and manual testing both write directly to Mongo (tracked as a gap, not silently worked around)</li>
         <li><span class="dash">–</span> only two of five services exist</li>
         <li><span class="dash">–</span> no frontend</li>
         <li><span class="dash">–</span> nothing deployed to AWS (Phase 10)</li>
@@ -566,7 +567,7 @@
   <h2><span class="num">05</span> — Reproduce this yourself</h2>
   <p class="lede">Every command below is real — this is exactly what was run to trace the diagrams above. Takes about a minute.</p>
   <pre><span class="c"># from repo root</span>
-make up                                    <span class="c"># boots all 9 containers</span>
+make up                                    <span class="c"># boots all 10 containers</span>
 make seed                                  <span class="c"># baseline venues/performers/events + one seat map</span>
 
 <span class="c"># public read — hits real postgres, paged + sorted</span>
@@ -587,6 +588,11 @@ curl -X POST localhost/events -H "Authorization: Bearer $TOKEN" ...
 TOKEN=$(./get-token.sh carol)
 curl -X PATCH localhost/events/&lt;bob's event id&gt; -H "Authorization: Bearer $TOKEN" ...
 <span class="out">{"detail":"not the owning organizer"}</span>             <span class="fail">403</span>
+
+<span class="c"># bob attaches a seat map over HTTP — no seed script, no manual Mongo write</span>
+curl -X PUT localhost/events/&lt;bob's event id&gt;/seat-map -H "Authorization: Bearer $TOKEN" \
+  -d '{"sections":[{"name":"A","rows":[{"name":"1","seats":[{"label":"A1","x":0,"y":0}]}]}]}'
+<span class="out">{"event_id":"...", "sections":[...]}</span>               <span class="ok">200</span>
 
 <span class="c"># bob publishes his event — this is what triggers the Kafka message</span>
 curl -X POST localhost/events/&lt;bob's event id&gt;/publish -H "Authorization: Bearer $TOKEN"

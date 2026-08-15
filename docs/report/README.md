@@ -20,7 +20,7 @@ repo, never an aspirational one.
 | Chapter | Status | Fed by | File |
 |---|---|---|---|
 | Project Description | Draft (partial) | P0 topology figure, architecture recap | `project-description.md` |
-| Requirement Gathering | Draft (partial — Event/Search Service roles only) | P1.T5 (roles table), P2.T1 (publish-step amendment); booking/payment/refund flows still to come | `requirement-gathering.md` |
+| Requirement Gathering | Draft (partial — Event/Search Service roles only) | P1.T5 (roles table), P2.T1 (publish-step amendment), P1 addendum (venue/seat-map write API); booking/payment/refund flows still to come | `requirement-gathering.md` |
 | Class Diagrams | Draft (partial — Event Service + Search Service) | P1.T4, P2.T2–T4; Booking (P3.T1) and Payment (P4.T1) diagrams still to come | `class-diagrams.md` |
 | Database Schema Design | Draft (partial — `event_db`, seat-map docs, ES index) | P1.T2 (ER + textual), P2.T2 (ES mapping); `booking_db`/`payment_db` still to come | `database-schema-design.md` |
 | Feature Development Process | Not started — blocked on P8 | P8 benchmark (measured), P3 hold-strategy design | — |
