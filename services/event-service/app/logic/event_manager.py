@@ -119,7 +119,7 @@ class EventManager:
         if payload.end_time is not None:
             event.end_time = payload.end_time
         if event.end_time <= event.start_time:
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "end_time must be after start_time")
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "end_time must be after start_time")
         if payload.venue_id is not None:
             venue = await self._resolve_venue(payload.venue_id)
             event.venue_id = venue.id

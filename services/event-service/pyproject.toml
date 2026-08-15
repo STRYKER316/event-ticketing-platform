@@ -24,6 +24,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "httpx>=0.27",
+    "testcontainers[postgres,mongodb]>=4.9",
 ]
 
 [tool.uv.sources]
