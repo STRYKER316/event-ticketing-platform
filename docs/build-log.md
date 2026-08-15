@@ -517,3 +517,82 @@ event) since role-only gating was the whole story last phase and isn't
 anymore. Reproduce-yourself commands updated to the real API. This closes
 out Phase 1 — every task verified live, tests green, seed data browsable
 end to end. Next: Phase 2 (Search Service + Kafka #1).
+
+
+---
+
+## 2026-08-15 — Standing phase-end checklist, and closing the review gap on Phase 1
+
+User asked where PR review fits into the workflow, since nothing had been
+discussed — the honest answer was: nowhere, routine phases relied on
+self-verification alone, with `/code-review` reserved for P3/P8 only. Rather
+than leave that as an open gap, added a **Phase-end checklist** to
+`CLAUDE.md`'s Workflow & cadence section: seven items to run through before
+every CHECKPOINT (end-to-end testing, report writing, commit/file rule
+scanning, `architecture.html` currency, decisions-log delta check, CLAUDE.md
+self-update check, and — item 7 — a `/pre-pr` review gate: simplify →
+code-review → verify run against the phase's accumulated diff, since there's
+no branch/PR workflow here to hang a review off of). This runs in addition
+to, not instead of, the dedicated P3/P8 adversarial review.
+
+Since item 7 didn't exist when Phase 1 checkpointed, ran it retroactively
+against the full Phase 1 diff (`45d6597..5adc087`) to close the gap rather
+than starting clean only from Phase 2:
+
+**Simplify pass** (two rounds — the first was interrupted mid-run and picked
+back up): extracted a shared `BaseRepository[ModelT]` (create/get_by_id/
+get_many_by_id/delete) that `VenueRepository` and `PerformerRepository` now
+inherit, deduplicating identical CRUD boilerplate; `EventRepository` stayed
+separate on purpose since it always eager-loads relationships. Also removed
+a couple of unused imports and hoisted one inline import.
+
+**Code-review pass** (Opus, against CLAUDE.md's actual conventions, not a
+generic pass) surfaced real findings, not just style: a timezone-comparison
+bug where a naive `start_time`/`end_time` in a request body crashed with an
+uncaught `TypeError` (500) instead of a clean 422, since Pydantic only
+auto-converts `ValueError`/`AssertionError` to a validation error and the
+comparison against `datetime.now(timezone.utc)` raised neither; an orphaned-
+MongoDB-document bug where `delete_event` removed the Postgres row but never
+called `SeatMapRepository.delete`, so a recycled `event_id` could resurrect
+a stale seat map; unstable pagination (`list()` sorted by `start_time`/
+`title` alone with no tiebreaker, so rows sharing a sort value could
+duplicate or vanish across pages); `SeatMap.event_id` typed as bare `str`
+for a UUID-valued field, violating the DTO-strictness convention; `seed.py`
+using `print()` instead of structlog; no `warning`-level logging on
+`EventManager`'s rejection paths; and `docs/report/class-diagrams.md` left
+stale by the simplify commit. One design question (public reads return
+`DRAFT` events since no publish path exists yet — is that acceptable for
+Phase 1, or does it need gating now) was surfaced but deliberately left
+for a scope decision rather than silently fixed.
+
+Fixed everything except the scope question and the two commit-message nits
+(a stray "Phase 1" in one subject line, one commit that arguably should've
+been folded into its predecessor) — decided to leave git history alone
+rather than rewrite already-settled commits for a process gap that didn't
+exist yet when they were made. Six commits: naive-datetime rejection (with
+a new regression test proving the fix — deliberately reproduces the exact
+crash first, to confirm the test would have caught it), the seat-map-delete
+fix bundled with the UUID retyping and the new warning logs (all three
+landed in the same `EventManager` methods, splitting further wasn't worth
+the git surgery), the pagination tiebreaker, the conftest cleanup, and the
+class-diagrams doc update.
+
+**Re-review** (a second Opus pass, checking the fixes against the original
+findings rather than re-reviewing from scratch) confirmed all five fixed
+correctly, flagged one real miss: the integration test asserting seat-map
+deletion was actually passing for the wrong reason — `get_seat_map` 404s on
+the *event* lookup first (already gone), before ever reaching the seat-map
+check, so the test never actually proved the Mongo document was deleted.
+Fixed by asserting directly against `SeatMapRepository.get_by_event_id`
+instead of routing through the manager. The re-review also named a residual
+risk worth stating plainly rather than hiding: the Mongo delete runs after
+the Postgres commit, so a Mongo-side failure between the two still leaves an
+orphan — narrower than before, not eliminated, and an accepted trade-off of
+the no-distributed-transactions architecture invariant rather than a bug to
+chase further.
+
+10/10 tests green throughout (7 original + 3 new). Live-verified the two
+behavioral fixes (naive-datetime 422, seat-map deletion) against the running
+stack with real curl calls, not just the test suite. This is the first time
+the Phase-end checklist's item 7 has run — establishes the pattern for
+Phase 2 onward.
