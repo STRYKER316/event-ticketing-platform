@@ -11,7 +11,11 @@ class HealthRepository:
         self._mongo_db = mongo_db
 
     async def ping(self) -> None:
-        await asyncio.gather(
+        results = await asyncio.gather(
             self._session.execute(text("SELECT 1")),
             self._mongo_db.command("ping"),
+            return_exceptions=True,
         )
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
