@@ -118,6 +118,70 @@ for this project's single-node topology, plus blocking on cluster health
 before returning) rather than only a test workaround — see
 `docs/build-log.md`, P2.T3 entry, for the full diagnosis.
 
-**Status:** Implemented, Tested. 17/17 `event-service` tests green (13 unit,
-4 integration), 17/17 `search-service` tests green (15 unit, 2 integration)
-as of Phase 2: `cd services/<service> && uv run pytest`.
+## A third tier: adversarial testing against the live stack
+
+The two tiers above test what the code was *written* to do. Neither
+`testcontainers` unit/integration suite is adversarial by construction — the
+inputs are the developer's own idea of what a caller sends. Before Phase 3
+(Booking Service) started building on this surface, a separate pass tested
+what happens when a caller doesn't cooperate: malformed input, forged auth,
+races, and infrastructure outages, run live against the running
+`docker compose` stack (real Keycloak tokens for three seeded users, real
+Postgres/MongoDB/Elasticsearch/Kafka — no mocks) rather than through pytest.
+
+Eight rounds, roughly 130 individual checks, covering: JWT/auth forgery
+(`alg: none`, tampered-payload role escalation with the stale original
+signature, unknown `kid`, truncated tokens, real-time token expiry — 19/19
+clean, `algorithms=["RS256"]` pinning specifically blocks the RS256→HS256
+confusion attack); DTO boundary fuzzing (oversized strings, NUL bytes,
+integer overflow, malformed JSON, NaN/Infinity floats); search-query safety
+(Lucene/injection-style strings against `multi_match`); Kafka behavior under
+redelivery, malformed messages, and a real broker outage; concurrent-request
+races (publish, patch, seat-map upsert, delete); and a Postgres-outage
+comparison. Five real bugs surfaced, all in `event-service`, none in the
+Kafka/search integration point this project treats as its highest-risk
+surface (§7):
+
+- Three DTOs (`VenueCreate.name`/`address`, `EventCreate.title`, `.capacity`)
+  had no upper bound, so an over-length or over-large value crashed as an
+  unhandled `asyncpg` error (a bare 500) instead of the 422 CLAUDE.md's own
+  "DTO layer is a strict validation boundary" rule promises.
+- `DELETE /events/{id}` wasn't safe under concurrent duplicate requests: ten
+  concurrent deletes against one event returned five 204s, not one — the
+  repository used `session.delete()+flush()`, which can't distinguish "I
+  deleted it" from "it was already gone."
+- The Kafka producer had no request timeout, so a broker outage produced a
+  ~40-second hang before failing, not a fast, clean error — on top of the
+  already-documented commit-then-publish consistency risk, this made the
+  *failure mode itself* worse than expected under load.
+
+Postgres-outage behavior was tested as a comparison point and came back
+clean by contrast: a stopped Postgres container fails every dependent
+request in 10-20ms (TCP refusal, not a slow timeout), and `pool_pre_ping`
+recovers transparently on the next request with no restart needed — the
+asymmetry between the two outage modes is itself a finding worth having on
+record before Booking Service adds a third datastore (Redis) to reason
+about.
+
+All five fixes shipped with regression tests in the real suite (not just the
+adversarial scripts) and were re-verified live against the rebuilt
+containers, not just the automated suite passing.
+
+## The review pass finding a bug in its own fix
+
+The `/pre-pr` gate run on that fix commit (simplify → code-review, scoped to
+the commit's own diff rather than re-reviewing already-checkpointed history)
+is itself worth citing as evidence for why a dedicated review step earns its
+place separately from self-verification: fixing the NaN/Infinity gap above
+(`Field(allow_inf_nan=False)`) introduced a *new*, worse bug live — FastAPI's
+default validation-error handler echoes the rejected value back in the 422
+body, and Starlette's JSON encoder can't serialize `NaN`, so the rejection
+itself crashed into a 500. The review agent's own first-pass finding
+(misattributing the fix to a nonexistent aiokafka parameter) was also caught
+and retracted on its own self-verification pass before reaching this report
+— a review process that checks its own output, not just the code's.
+
+**Status:** Implemented, Tested, Verified (live, against the running stack —
+not just the pytest suite). 54/54 `event-service` tests green (43 unit, 11
+integration), 18/18 `search-service` tests green, as of the pre-Phase-3
+checkpoint: `cd services/<service> && uv run pytest`.

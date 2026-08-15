@@ -1385,3 +1385,42 @@ and the simplify pass on top of it:
 11 more regression tests followed the new bounds (seat-count limit at/over
 20,000, `performer_ids` at/over 1000, NaN/Infinity rejection, whitespace
 preserved on `description`). 53/53 `event-service` tests green.
+
+---
+
+## 2026-08-15 — Pre-Phase-3 prep
+
+Four small tasks before starting Phase 3, done while the adversarial-testing
+findings were still fresh.
+
+**`BaseRepository.delete()` had the same race as the `EventRepository` bug
+fixed above** — `session.delete()+flush()`, unable to tell "deleted" from
+"already gone." Currently unreachable (no venue/performer delete route), but
+`VenueRepository`/`PerformerRepository` inherit it, and "new service = copy
+the event-service template" means Booking Service would inherit it too.
+Fixed with the same rowcount-checked Core-level `DELETE`, signature now
+takes `instance_id` not the full ORM object. New integration test
+(`test_base_repository.py`, since this is cross-cutting, not event-flow-
+specific). 54/54 `event-service` tests green.
+
+**Verified `make seed` is unaffected** by today's new DTO bounds — it builds
+`Venue`/`Event` as raw ORM objects, bypassing `VenueCreate`/`EventCreate`
+entirely, so only the shared `Seat`/`SeatMapRow`/`SeatMapSection` field
+constraints apply, and the seed data (200-seat map, short strings) is well
+within them. Confirmed by direct schema validation rather than wiping and
+re-seeding a populated dev DB.
+
+**Updated `docs/report/testing-strategy.md`** with a third tier — the
+adversarial pass documented above — while it's fresh: methodology, the five
+bugs, the Postgres-vs-Kafka outage-mode contrast, and the pre-pr review
+catching a bug in its own fix (the NaN/422-crash regression). Chapter status
+table in `docs/report/README.md` updated to match.
+
+**Drafted `docs/phases/phase-3-kickoff.md`** from `master-development-plan.md`
+§Phase 3, following the same task-prompt format as Phases 0-2. Flagged
+explicitly in the doc: P3.T3-T5 (hold strategies) and P3.T7 (race tests) are
+test-first per `CLAUDE.md`, and P3 gets its own dedicated adversarial
+`/code-review` pass at CHECKPOINT. Cross-referenced the delete-race fix above
+as the same TOCTOU class P3.T6/T7's seat-hold race tests have to defeat.
+
+No decisions-log delta. No CLAUDE.md update needed.

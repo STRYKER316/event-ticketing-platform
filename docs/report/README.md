@@ -24,7 +24,7 @@ repo, never an aspirational one.
 | Class Diagrams | Draft (partial — Event Service + Search Service) | P1.T4, P2.T2–T4; Booking (P3.T1) and Payment (P4.T1) diagrams still to come | `class-diagrams.md` |
 | Database Schema Design | Draft (partial — `event_db`, seat-map docs, ES index) | P1.T2 (ER + textual), P2.T2 (ES mapping); `booking_db`/`payment_db` still to come | `database-schema-design.md` |
 | Feature Development Process | Not started — blocked on P8 | P8 benchmark (measured), P3 hold-strategy design | — |
-| Testing Strategy | Draft (partial — pattern extended to Kafka+ES) | P1.T6 (`testcontainers` first use), P2.T3/T5 (Kafka consumer redelivery + eventual-consistency testing); every later phase's suite | `testing-strategy.md` |
+| Testing Strategy | Draft (partial — 3 tiers: unit/integration, Kafka+ES, adversarial) | P1.T6 (`testcontainers` first use), P2.T3/T5 (Kafka consumer redelivery + eventual-consistency testing), pre-Phase-3 adversarial pass (8 rounds, 5 bugs found+fixed); every later phase's suite | `testing-strategy.md` |
 | Deployment Flow | Not started — blocked on P10 | P10.T1–T4 | — |
 | Technologies Used | Draft (partial, running list) | every phase's tech, incl. P2's Kafka integration + Elasticsearch | `technologies-used.md` |
 | Conclusion (Limitations/Future Work) | Not started — drafted last, P11.T3 | decisions-log §26 pull-list | — |

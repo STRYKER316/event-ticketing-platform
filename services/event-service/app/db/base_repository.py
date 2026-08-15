@@ -1,6 +1,7 @@
 import uuid
 from typing import Generic, TypeVar
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +29,8 @@ class BaseRepository(Generic[ModelT]):
         result = await self._session.execute(select(self._model).where(self._model.id.in_(instance_ids)))
         return list(result.scalars().all())
 
-    async def delete(self, instance: ModelT) -> None:
-        await self._session.delete(instance)
-        await self._session.flush()
+    async def delete(self, instance_id: uuid.UUID) -> bool:
+        # Core-level DELETE so rowcount is available: a concurrent duplicate delete
+        # matches zero rows once the winner has already committed.
+        result = await self._session.execute(sa_delete(self._model).where(self._model.id == instance_id))
+        return result.rowcount > 0
