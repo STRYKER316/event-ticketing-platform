@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from functools import lru_cache
 
 import structlog
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
@@ -18,11 +19,24 @@ class Settings(BaseSettings):
     event_db_password: str = "changeme"
     event_service_port: int = 8001
 
+    mongo_host: str = "localhost"
+    mongo_port: int = 27017
+    mongo_user: str = "root"
+    mongo_password: str = "changeme"
+    mongo_event_db_name: str = "event_service"
+
     @property
     def database_url(self) -> str:
         return (
             f"postgresql+asyncpg://{self.event_db_user}:{self.event_db_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.event_db_name}"
+        )
+
+    @property
+    def mongo_url(self) -> str:
+        return (
+            f"mongodb://{self.mongo_user}:{self.mongo_password}"
+            f"@{self.mongo_host}:{self.mongo_port}/?authSource=admin"
         )
 
 
@@ -96,3 +110,24 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 async def dispose_engine() -> None:
     if _engine is not None:
         await _engine.dispose()
+
+
+_mongo_client: AsyncIOMotorClient | None = None
+
+
+def get_mongo_client() -> AsyncIOMotorClient:
+    global _mongo_client
+    if _mongo_client is None:
+        _mongo_client = AsyncIOMotorClient(get_settings().mongo_url)
+    return _mongo_client
+
+
+def get_mongo_db() -> AsyncIOMotorDatabase:
+    return get_mongo_client()[get_settings().mongo_event_db_name]
+
+
+def close_mongo_client() -> None:
+    global _mongo_client
+    if _mongo_client is not None:
+        _mongo_client.close()
+        _mongo_client = None

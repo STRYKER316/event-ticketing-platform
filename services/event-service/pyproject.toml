@@ -11,6 +11,7 @@ dependencies = [
     "asyncpg>=0.29",
     "structlog>=24.4",
     "prometheus-fastapi-instrumentator>=7.0",
+    "motor>=3.6",
     "shared-auth",
 ]
 
