@@ -596,3 +596,88 @@ behavioral fixes (naive-datetime 422, seat-map deletion) against the running
 stack with real curl calls, not just the test suite. This is the first time
 the Phase-end checklist's item 7 has run — establishes the pattern for
 Phase 2 onward.
+
+
+---
+
+## 2026-08-15 — Closing the review-gate gap on Phase 0 (shared_auth, service template)
+
+User asked whether Phase 0 needed the same retroactive treatment as Phase 1
+since it also predated the `/pre-pr` checklist item. Recommended scoping it
+tighter than Phase 1's pass — most of Phase 0 is infra/config
+(docker-compose, Keycloak realm export, Makefile), not code-review
+territory — and focusing on `shared_auth`, the JWT-validation dependency
+every service imports, since a bug there is a security bug system-wide, not
+local. User agreed and asked to tackle findings "as it fits best" rather
+than pre-negotiating scope item by item.
+
+**Simplify pass**: reused the JWKS `httpx.AsyncClient` instead of creating
+one per refresh (was paying a full handshake on every TTL expiry or unknown-
+kid lookup), parallelized the Postgres+Mongo `/healthz` pings via
+`asyncio.gather`. Two findings deliberately skipped with reasoning recorded:
+narrowing `health_manager.py`'s broad `except Exception` (a health check
+should stay broad — narrowing risks an unusual driver exception escaping
+instead of correctly reporting 503), and unifying `core.py`'s two singleton
+patterns (`lru_cache` for settings vs. manual `global`/`is None` for
+engine/mongo — they solve genuinely different lifecycle needs).
+
+**Code-review pass**, run with an explicit security/attacker lens (not just
+a style pass) against `shared_auth`, found 16 real findings. The two that
+mattered most: `_fetch()` failures (Keycloak down, malformed JWKS body) were
+completely uncaught, surfacing as a 500 with a stack trace instead of a
+clean 401/503 — the auth path had zero resilience to its own dependency
+being unavailable; and the newly-long-lived JWKS `httpx.AsyncClient` (from
+the simplify pass) was never closed anywhere, a real leak inconsistent with
+this codebase's explicit-cleanup discipline elsewhere. Also found: no lock
+around JWKS refresh (thundering herd + a racy double-client-creation
+window), an unknown-`kid` DoS amplifier (unbounded 1:1 request-to-Keycloak-
+fetch), zero `warning`-level logging anywhere in the auth path, a raw PyJWT
+exception string leaking into the 401 response body, a malformed
+`realm_access` claim crashing instead of failing closed to no roles, JWKs
+missing the optional `use` field silently dropped, bare `str` config fields
+where the DTO-strictness convention calls for constrained types, and —
+notably — `jwks.py` (the trickiest logic in the package: TTL, refresh,
+rotation) had *zero* real test coverage, since the existing test stub fully
+overrode `get_key()` rather than exercising the real cache.
+
+Fixed all 16: added a `JWKSFetchError` boundary around the fetch (initially
+incomplete — see below), an `asyncio.Lock` around refresh with double-check
+after acquire, a 1-second minimum-refetch-interval throttle for the DoS
+case, `aclose()` wired through to `event-service`'s shutdown lifespan,
+`warning`-level logging on every rejection path, fixed 401 messages instead
+of leaked exception text, defensive `realm_access`/`roles` parsing that
+fails closed, the `use`-field fix, `NonBlankStr` constraints plus trailing-
+slash normalization on `AuthSettings`, and two rounds of new tests: a real
+`jwks.py` suite via `httpx.MockTransport` (fetch/cache, TTL, unknown-kid,
+`use` field, fetch failure, the DoS throttle, `aclose`), and negative auth
+tests including a genuine algorithm-confusion attack — hand-constructing a
+forged HS256-signed JWS using the RSA public key as the HMAC secret, since
+PyJWT's own `encode()` refuses to build that token via its normal API (a
+real attacker wouldn't go through PyJWT's guard rails either). Also fixed
+three smaller `event-service` findings: `dispose_engine()` not nulling
+`_engine`/`_session_factory` (asymmetric with `close_mongo_client()`), log
+level hardcoded to `INFO` with no way to get `debug` output, and
+`asyncio.gather` on the health pings without `return_exceptions=True`
+(leaving a sibling task un-awaited on failure). 7 commits, each scoped to
+one coherent fix.
+
+**Re-review** caught one real remaining gap: the fetch-error `try` block
+wrapped the HTTP call but not the key-parsing comprehension right after it —
+a 200 response with a malformed body (missing `kid`, unparseable key
+material, `keys` not a list) still crashed with a raw `KeyError`/
+`ValueError`/`AttributeError` instead of becoming the intended
+`JWKSFetchError` → 503. Fixed by moving the parsing inside the `try` and
+broadening the caught exception types; verified against all three failure
+modes directly before adding them as permanent regression tests. Two other
+re-review notes deliberately left as-is: `aclose()` isn't lock-guarded and
+doesn't null `_client` (shutdown-only, not exploitable), and a `"/"` issuer
+value normalizes to an empty string past the trailing-slash strip before
+the non-blank check re-runs (degenerate input, cosmetic).
+
+28/28 `shared_auth` tests green (12 new), 8/8 `event-service` unit tests
+green. Live-verified against the real Keycloak instance: valid tokens still
+authenticate, role denial still 403s, a malformed token now 401s with the
+real error visible only in the structured JSON log (`auth_token_malformed`,
+`warning` level) — not leaked to the client. This closes the review-gate
+gap on both Phase 0 and Phase 1; Phase 2 onward gets the check live from
+the start.
