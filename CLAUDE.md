@@ -108,7 +108,7 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   history lives). Same file every phase, redeployed in place, not a new file per
   phase. Commit it as part of the phase's checkpoint. This is also the report's
   §16 topology/flow evidence, produced once, not redone later for the report.
-- **Phase-end checklist.** Before tagging CHECKPOINT, run through all six — most are
+- **Phase-end checklist.** Before tagging CHECKPOINT, run through all seven — most are
   already required by the bullets above, this is the standing list so none get
   skipped by accident:
   1. **End-to-end testing** — live walkthrough against the real stack (see
@@ -129,6 +129,14 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   6. **`CLAUDE.md` self-update check** — it says to update itself when conventions,
      commands, or structure shift; explicitly check rather than only checking new
      code against what's already written here.
+  7. **Review gate on the phase's accumulated diff** — no branch/PR workflow exists
+     here (commits land straight on `main`, deliberately, per the commit-granularity
+     rule below), so there's no PR to raise; instead run `/pre-pr` (simplify →
+     code-review → verify, each as a subagent) against the diff between `main` and
+     the commit the phase started from, and self-apply anything real, before the
+     CHECKPOINT commit. This is the routine-work review pass; it's in addition to,
+     not instead of, the dedicated adversarial `/code-review` pass P3 and P8 get on
+     top of it for their higher-stakes correctness paths.
 
   Lower-priority, worth doing before a real external-facing moment (public repo, demo,
   submission) rather than every phase: verify `main` boots from a genuinely clean
