@@ -123,5 +123,5 @@ class SeatMapSection(BaseModel):
 
 
 class SeatMap(BaseModel):
-    event_id: str
+    event_id: uuid.UUID
     sections: list[SeatMapSection]

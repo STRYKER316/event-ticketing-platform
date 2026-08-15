@@ -1,16 +1,21 @@
 import asyncio
+import uuid
 from datetime import datetime, timedelta, timezone
 
+import structlog
+
 from app.api.schemas import Seat, SeatMap, SeatMapRow, SeatMapSection
-from app.core import get_mongo_db, get_session_factory
+from app.core import configure_logging, get_mongo_db, get_session_factory
 from app.db.event_repository import EventRepository
 from app.db.models import Event, EventStatus, Performer, Venue
 from app.db.seat_map_repository import SeatMapRepository
 
+logger = structlog.get_logger()
+
 SEED_ORGANIZER_ID = "seed-organizer"
 
 
-def _rectangular_seat_map(rows: int, seats_per_row: int) -> SeatMap:
+def _rectangular_seat_map(event_id: uuid.UUID, rows: int, seats_per_row: int) -> SeatMap:
     sections = [
         SeatMapSection(
             name="General",
@@ -23,14 +28,14 @@ def _rectangular_seat_map(rows: int, seats_per_row: int) -> SeatMap:
             ],
         )
     ]
-    return SeatMap(event_id="", sections=sections)
+    return SeatMap(event_id=event_id, sections=sections)
 
 
 async def seed(session_factory, mongo_db) -> None:
     async with session_factory() as session:
         events = await EventRepository(session).list(limit=1, offset=0, sort_field="start_time", sort_desc=False)
         if events:
-            print("Seed data already present, skipping.")
+            logger.info("seed_skipped_data_already_present")
             return
 
         venues = [
@@ -82,14 +87,20 @@ async def seed(session_factory, mongo_db) -> None:
         await session.commit()
 
         seat_map_repo = SeatMapRepository(mongo_db)
-        seat_map = _rectangular_seat_map(rows=10, seats_per_row=20)
-        seat_map.event_id = str(events[0].id)
+        seat_map = _rectangular_seat_map(events[0].id, rows=10, seats_per_row=20)
         await seat_map_repo.upsert(seat_map)
 
-        print(f"Seeded {len(venues)} venues, {len(performers)} performers, {len(events)} events, 1 seat map.")
+        logger.info(
+            "seed_completed",
+            venues=len(venues),
+            performers=len(performers),
+            events=len(events),
+            seat_maps=1,
+        )
 
 
 async def main() -> None:
+    configure_logging()
     await seed(get_session_factory(), get_mongo_db())
 
 

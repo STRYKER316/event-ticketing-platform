@@ -1,5 +1,6 @@
 import uuid
 
+import structlog
 from fastapi import HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from shared_auth import Principal
@@ -19,6 +20,8 @@ from app.db.models import Event, EventStatus, Performer, Venue
 from app.db.performer_repository import PerformerRepository
 from app.db.seat_map_repository import SeatMapRepository
 from app.db.venue_repository import VenueRepository
+
+logger = structlog.get_logger()
 
 
 class EventManager:
@@ -55,7 +58,7 @@ class EventManager:
         event = await self._events.get_by_id(event_id)
         if event is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
-        seat_map = await self._seat_maps.get_by_event_id(str(event_id))
+        seat_map = await self._seat_maps.get_by_event_id(event_id)
         if seat_map is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "seat map not found")
         return seat_map
@@ -88,24 +91,29 @@ class EventManager:
         self._check_no_bookings(event)
         await self._events.delete(event)
         await self._session.commit()
+        await self._seat_maps.delete(event_id)
 
     async def _fetch_owned_event(self, user: Principal, event_id: uuid.UUID) -> Event:
         event = await self._events.get_by_id(event_id)
         if event is None:
+            logger.warning("event_not_found", event_id=str(event_id))
             raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
         if event.organizer_id != user.subject:
+            logger.warning("event_ownership_check_failed", event_id=str(event_id), subject=user.subject)
             raise HTTPException(status.HTTP_403_FORBIDDEN, "not the owning organizer")
         return event
 
     async def _resolve_venue(self, venue_id: uuid.UUID) -> Venue:
         venue = await self._venues.get_by_id(venue_id)
         if venue is None:
+            logger.warning("venue_not_found", venue_id=str(venue_id))
             raise HTTPException(status.HTTP_404_NOT_FOUND, "venue not found")
         return venue
 
     async def _resolve_performers(self, performer_ids: list[uuid.UUID]) -> list[Performer]:
         performers = await self._performers.get_many_by_id(performer_ids)
         if len(performers) != len(set(performer_ids)):
+            logger.warning("performers_not_found", performer_ids=[str(p) for p in performer_ids])
             raise HTTPException(status.HTTP_404_NOT_FOUND, "one or more performers not found")
         return performers
 
@@ -119,6 +127,7 @@ class EventManager:
         if payload.end_time is not None:
             event.end_time = payload.end_time
         if event.end_time <= event.start_time:
+            logger.warning("event_update_invalid_time_range", event_id=str(event.id))
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "end_time must be after start_time")
         if payload.venue_id is not None:
             venue = await self._resolve_venue(payload.venue_id)

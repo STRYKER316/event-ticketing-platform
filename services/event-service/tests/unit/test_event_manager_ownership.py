@@ -38,6 +38,8 @@ def make_manager(event: Event) -> EventManager:
     manager._events = MagicMock()
     manager._events.get_by_id = AsyncMock(return_value=event)
     manager._events.delete = AsyncMock()
+    manager._seat_maps = MagicMock()
+    manager._seat_maps.delete = AsyncMock()
     return manager
 
 
@@ -70,6 +72,7 @@ async def test_owning_organizer_can_delete():
     await manager.delete_event(user, event.id)
 
     manager._events.delete.assert_awaited_once_with(event)
+    manager._seat_maps.delete.assert_awaited_once_with(event.id)
 
 
 async def test_non_owning_organizer_cannot_delete():

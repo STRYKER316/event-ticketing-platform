@@ -1,3 +1,5 @@
+import uuid
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.schemas import SeatMap
@@ -11,14 +13,14 @@ class SeatMapRepository:
 
     async def upsert(self, seat_map: SeatMap) -> None:
         await self._collection.update_one(
-            {"event_id": seat_map.event_id},
-            {"$set": seat_map.model_dump()},
+            {"event_id": str(seat_map.event_id)},
+            {"$set": seat_map.model_dump(mode="json")},
             upsert=True,
         )
 
-    async def get_by_event_id(self, event_id: str) -> SeatMap | None:
-        document = await self._collection.find_one({"event_id": event_id}, {"_id": 0})
+    async def get_by_event_id(self, event_id: uuid.UUID) -> SeatMap | None:
+        document = await self._collection.find_one({"event_id": str(event_id)}, {"_id": 0})
         return SeatMap.model_validate(document) if document else None
 
-    async def delete(self, event_id: str) -> None:
-        await self._collection.delete_one({"event_id": event_id})
+    async def delete(self, event_id: uuid.UUID) -> None:
+        await self._collection.delete_one({"event_id": str(event_id)})

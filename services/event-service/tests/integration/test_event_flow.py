@@ -41,13 +41,18 @@ async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_d
 
     await SeatMapRepository(mongo_db).upsert(
         SeatMap(
-            event_id=str(created.id),
+            event_id=created.id,
             sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
         )
     )
     seat_map = await manager.get_seat_map(created.id)
-    assert seat_map.event_id == str(created.id)
+    assert seat_map.event_id == created.id
     assert seat_map.sections[0].name == "A"
+
+    await manager.delete_event(ORGANIZER, created.id)
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.get_seat_map(created.id)
+    assert exc_info.value.status_code == 404
 
 
 async def test_cross_organizer_update_is_rejected(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
