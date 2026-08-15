@@ -1,8 +1,8 @@
 # infra
 
-Shared local infrastructure (§20, §24) — data/broker/gateway layer, plus
-`event-service` as the first app service wired in behind Traefik (Phase 0). More
-app services get added here as later phases build them.
+Shared local infrastructure (§20, §24) — data/broker/gateway layer, plus the
+app services wired in behind Traefik as each phase builds them: `event-service`
+(Phase 0-1) and `search-service` (Phase 2) so far.
 
 Copy `../.env.example` to `../.env` and fill in values before running.
 
@@ -23,8 +23,9 @@ docker compose ps
 | Elasticsearch | `elasticsearch` | `ELASTICSEARCH_PORT` (9200) | single-node, security disabled, heap capped at 512m (§24) |
 | Kafka | `kafka` | `KAFKA_PORT` (9092) | KRaft mode, single broker, no Zookeeper (§7, §24) |
 | Keycloak | `keycloak` | `KEYCLOAK_PORT` (8081) | dev mode, embedded DB, imports `keycloak/realm-export.json` on startup (§5, §12, §15) |
-| event-service | `event-service` | routed via Traefik only (no direct host port) | FastAPI walking skeleton (§20); `/healthz`, `/metrics`, `/demo/protected`, `/demo/organizer-only` |
-| Traefik | `traefik` | 80 (entrypoint), `TRAEFIK_DASHBOARD_PORT` (8080, dashboard) | Docker-labels provider; routes to `event-service` |
+| event-service | `event-service` | routed via Traefik only (no direct host port) | events/venues/seat-maps API (§8, §15); `/healthz`, `/metrics`, `/events`, `/venues`, `/events/{id}/seat-map`, `/events/{id}/publish` |
+| search-service | `search-service` | routed via Traefik only (no direct host port) | public `GET /search` over Elasticsearch, populated via Kafka (§7.1, §8); `/healthz`, `/metrics` |
+| Traefik | `traefik` | 80 (entrypoint), `TRAEFIK_DASHBOARD_PORT` (8080, dashboard) | Docker-labels provider; `event-service` on `PathPrefix('/')`, `search-service` on `PathPrefix('/search')` |
 | docker-socket-proxy | `docker-socket-proxy` | internal only | nginx proxy in front of the Docker socket — see note below |
 
 All images are arm64-native (§24) — no Rosetta emulation expected on Apple Silicon.

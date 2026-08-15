@@ -108,7 +108,7 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   history lives). Same file every phase, redeployed in place, not a new file per
   phase. Commit it as part of the phase's checkpoint. This is also the report's
   §16 topology/flow evidence, produced once, not redone later for the report.
-- **Phase-end checklist.** Before tagging CHECKPOINT, run through all seven — most are
+- **Phase-end checklist.** Before tagging CHECKPOINT, run through all eight — most are
   already required by the bullets above, this is the standing list so none get
   skipped by accident:
   1. **End-to-end testing** — live walkthrough against the real stack (see
@@ -137,6 +137,21 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
      CHECKPOINT commit. This is the routine-work review pass; it's in addition to,
      not instead of, the dedicated adversarial `/code-review` pass P3 and P8 get on
      top of it for their higher-stakes correctness paths.
+  8. **Cross-doc staleness sweep** — list what this phase's diff actually changed
+     (renamed/added method signatures, new class dependencies, removed routes, an
+     amended decision), then grep `docs/` and `infra/` for other places describing
+     those same symbols or behaviors and verify each is still accurate. This is what
+     catches a report chapter documenting a now-stale method signature, an
+     `infra/README.md` that never learned a new service exists, or a
+     `master-development-plan.md` task-table row a later decisions-log amendment
+     quietly outdated but never came back to fix — none of which item 4
+     (`architecture.html`) or item 5 (decisions-log delta) catches, since both only
+     look at what this phase *produced*, not what it *invalidated*. Not a full-repo
+     re-read every phase — scoped to what the diff actually touched. Applies to any
+     checkpoint-worthy session, not just a numbered phase — an addendum like the P1
+     seat-map gap-closing session needs it too. Goal: every phase doc, report chapter,
+     and other current-state doc stays in sync with the code, not just
+     `architecture.html`.
 
   Lower-priority, worth doing before a real external-facing moment (public repo, demo,
   submission) rather than every phase: verify `main` boots from a genuinely clean
@@ -256,6 +271,12 @@ issues worth locking in against:
   strings via a constrained type, not bare `str`. Any field with a logical constraint
   beyond its raw type (a date that can't be in the future, an amount that can't be
   negative) gets a validator at the DTO layer, not a downstream check several calls deep.
+- **A float field rejecting `NaN`/`Infinity` (`Field(allow_inf_nan=False)`) needs the
+  app-level `RequestValidationError` handler from `event-service/app/main.py` copied
+  too, not just the field constraint.** FastAPI's default handler echoes the rejected
+  value back in the 422 body, and Starlette's JSON encoder can't serialize `NaN`, so
+  the rejection itself 500s. Any service with a money/measurement float field (Payment
+  Service's `amount`, most likely) needs this.
 - **Every endpoint's auth requirement is explicit, never implicit.** Each route is one of:
   public, authenticated-only, `require_role("organizer")`, or ownership-scoped (role +
   owner-ID comparison, §15). Deciding "no guard needed" is fine; leaving it unstated by

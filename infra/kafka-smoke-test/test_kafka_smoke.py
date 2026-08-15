@@ -15,7 +15,7 @@ import uuid
 import pytest
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
-KAFKA_BROKER = os.environ.get("KAFKA_BROKER", "localhost:9092")
+KAFKA_BROKER = os.environ.get("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 
 
 @pytest.mark.asyncio

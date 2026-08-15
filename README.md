@@ -30,8 +30,11 @@ architectural or scope decision.
 
 ```sh
 make up             # copies .env.example -> .env if missing, boots the compose stack
+make seed            # populates baseline demo events/venues/seat maps
 ./get-token.sh       # prints an access token for seed user alice (pass a different user/pass as args)
-curl -H "Authorization: Bearer $(./get-token.sh)" http://localhost/demo/protected
+curl "localhost/events"                                              # public read
+curl "localhost/search?q=concert"                                    # public search
+curl -X POST localhost/events -H "Authorization: Bearer $(./get-token.sh bob changeme)" -d '...'  # organizer write
 make logs            # tail all container logs
 make down            # stop the stack
 make test            # run suites that don't need live infra (currently: shared-auth)
@@ -50,7 +53,10 @@ Seed users (see `infra/keycloak/realm-export.json`), all password `changeme`:
 
 ## Status
 
-Phase 0 (Foundation & Walking Skeleton) — complete. Phase 1 (Event Service) is
-next; see `/docs/phases/` for task checklists and `/docs/architecture.html` for
-current system state.
+Phases 0-2 complete (walking skeleton, Event Service, Search Service +
+Kafka #1), plus a P1 addendum (venue/seat-map write API) and a pre-Phase-3
+hardening pass (adversarial testing, 5 bugs found and fixed — see
+`docs/build-log.md`). Phase 3 (Booking Service + dual hold strategy) is
+next; see `/docs/phases/` for task checklists and `/docs/architecture.html`
+for current system state.
 

@@ -12,17 +12,21 @@ every feature in each is single-path.*
 ```mermaid
 classDiagram
     class EventManager {
-        -session: AsyncSession
+        -_session: AsyncSession
         -_events: EventRepository
         -_venues: VenueRepository
         -_performers: PerformerRepository
         -_seat_maps: SeatMapRepository
+        -_producer: EventProducer
         +list_events(limit, offset, sort_field, sort_order) EventListResponse
         +get_event(event_id) EventResponse
         +get_seat_map(event_id) SeatMap
+        +upsert_seat_map(user, event_id, payload) SeatMap
         +create_event(user, payload) EventResponse
         +update_event(user, event_id, payload) EventResponse
+        +publish_event(user, event_id) EventResponse
         +delete_event(user, event_id) void
+        -_republish(event, seat_map) void
         -_fetch_owned_event(user, event_id) Event
         -_resolve_venue(venue_id) Venue
         -_resolve_performers(performer_ids) Performer[]
@@ -33,6 +37,7 @@ classDiagram
     class VenueManager {
         -_venues: VenueRepository
         +get_venue(venue_id) VenueResponse
+        +create_venue(payload) VenueResponse
     }
 
     class BaseRepository~ModelT~ {
@@ -41,7 +46,7 @@ classDiagram
         +create(instance) ModelT
         +get_by_id(instance_id) ModelT
         +get_many_by_id(instance_ids) ModelT[]
-        +delete(instance) void
+        +delete(instance_id) bool
     }
 
     class EventRepository {
@@ -50,7 +55,7 @@ classDiagram
         +get_by_id(event_id) Event
         +list(limit, offset, sort_field, sort_desc) Event[]
         +count() int
-        +delete(event) void
+        +delete(event_id) bool
     }
 
     class VenueRepository {
@@ -66,6 +71,13 @@ classDiagram
         +delete(event_id) void
     }
 
+    class EventProducer {
+        -_producer: AIOKafkaProducer
+        -_topic: str
+        +publish_upserted(event, seat_map) void
+        +publish_deleted(event_id) void
+    }
+
     BaseRepository <|-- VenueRepository
     BaseRepository <|-- PerformerRepository
 
@@ -73,6 +85,7 @@ classDiagram
     EventManager --> VenueRepository
     EventManager --> PerformerRepository
     EventManager --> SeatMapRepository
+    EventManager --> EventProducer
     VenueManager --> VenueRepository
 ```
 
@@ -91,13 +104,18 @@ sequenced private steps (`_fetch_owned_event` → mutate → commit) rather
 than one unstructured block, even without a separate class boundary for
 it.
 
-`EventManager` depends on four repositories, not one — it is the one
-Event Service class that talks to both datastores (Postgres via three
-repositories, MongoDB via `SeatMapRepository`), because seat-map fetches
-are logically part of the event-detail use case even though the data
-lives in a different database. Repositories stay single-datastore,
-single-model, and business-rule-free by design — `EventRepository` doesn't
-know what "ownership" means, `EventManager` does.
+`EventManager` depends on four repositories and one producer, not one
+repository — it is the one Event Service class that talks to both
+datastores (Postgres via three repositories, MongoDB via
+`SeatMapRepository`) and to Kafka (via `EventProducer`), because seat-map
+fetches are logically part of the event-detail use case even though the
+data lives in a different database, and publishing is a side effect of
+the same mutations the repositories already commit. Repositories stay
+single-datastore, single-model, and business-rule-free by design —
+`EventRepository` doesn't know what "ownership" means, `EventManager` does.
+`_producer` is typed `EventProducer | None` — `None` for the read-only and
+plain-`create_event` paths that never publish, a real instance injected
+into every route that does (§7.1).
 
 `VenueRepository` and `PerformerRepository` inherit shared create/
 get_by_id/get_many_by_id/delete boilerplate from a generic
@@ -111,9 +129,10 @@ is model-specific enough that forcing it through the generic base would
 either weaken the base or special-case it — not worth it for one
 repository.
 
-**Status:** Implemented, Tested — reflects the actual class structure
-under `services/event-service/app/logic/` and `app/db/` as of Phase 1, not
-a target design.
+**Status:** Implemented, Tested — reflects the actual class structure under
+`services/event-service/app/logic/` and `app/db/` as of the pre-Phase-3
+checkpoint (Phase 1 base + the P1 addendum's `upsert_seat_map`/
+`create_venue` + Phase 2's `EventProducer` wiring), not a target design.
 
 ## Search Service — Manager + Repository, adapted for a non-SQL store
 

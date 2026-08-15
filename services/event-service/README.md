@@ -1,13 +1,18 @@
 # event-service
 
 Owns event and venue data (Postgres `event_db`) plus seat maps (MongoDB). Source of
-truth for event catalog and organizer-managed inventory; will publish changes for
-`search-service` to index via Kafka starting Phase 2.
+truth for event catalog and organizer-managed inventory; publishes changes for
+`search-service` to index via Kafka on publish/update-while-published/delete (§7.1,
+§15 delta).
 
-Phase 1 complete: events/venues/performers in Postgres via Alembic-managed migrations,
-seat-map documents in MongoDB, public read APIs (list/detail/seat-map/venue), and
-organizer write APIs (`POST`/`PATCH`/`DELETE /events`) with both role and ownership
-scoping (§15).
+Phase 1 + P1 addendum + Phase 2 integration complete: events/venues/performers in
+Postgres via Alembic-managed migrations, seat-map documents in MongoDB, public read
+APIs (list/detail/seat-map/venue), organizer write APIs (`POST`/`PATCH`/`DELETE
+/events`, `POST /venues`, `PUT /events/{id}/seat-map`, `POST /events/{id}/publish`)
+with both role and ownership scoping (§15), and a Kafka producer publishing the
+event-carried seat list on every visibility-affecting mutation. Hardened via a
+pre-Phase-3 adversarial testing pass (DTO bounds, a concurrent-delete race, a Kafka
+producer timeout — see `docs/build-log.md`).
 
 ## Run locally
 

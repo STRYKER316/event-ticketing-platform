@@ -1424,3 +1424,176 @@ test-first per `CLAUDE.md`, and P3 gets its own dedicated adversarial
 as the same TOCTOU class P3.T6/T7's seat-hold race tests have to defeat.
 
 No decisions-log delta. No CLAUDE.md update needed.
+
+---
+
+## 2026-08-15 — Doc-consistency review (no test rounds, static only)
+
+Asked to check docs/code for issues directly rather than more adversarial
+testing. Full-repo scan for emoji/TODO/casual-language: clean (the handful
+of grep matches were all meta-references to the rule itself, not
+violations). Grepped for the two bug patterns fixed tonight
+(`session.delete()+flush()`, an `AIOKafkaProducer` missing a timeout)
+elsewhere in the codebase — none found; the two already fixed were the only
+instances.
+
+Found and fixed three stale-documentation issues:
+
+- `infra/README.md` hadn't been touched since ~Phase 0: missing
+  `search-service` from the ports table entirely, and still listed
+  event-service's now-deleted `/demo/protected`/`/demo/organizer-only`
+  routes (removed in `cabcd2d`, early Phase 1) instead of its real API.
+  Updated both.
+- `master-development-plan.md`'s Phase 2 row (P2.T1) still read "on
+  create/update/delete publish full event payload," contradicting decisions-
+  log §15's already-recorded 2026-08-15 amendment (publishing gated on
+  `status == PUBLISHED`) and `phase-2-kickoff.md`'s own correcting
+  parenthetical for this exact row. The authoritative doc had the fix; the
+  plan's own table didn't. Corrected with a note pointing at the amendment.
+- `CLAUDE.md`'s "copy the event-service template" convention didn't mention
+  tonight's `RequestValidationError` handler (the NaN-safe-422 fix) as part
+  of what needs to travel with a new service. Added a bullet: any future
+  service with a float field rejecting `NaN`/`Infinity` needs the same
+  handler, not just the field constraint, or it reintroduces the identical
+  bug — flagged specifically for Payment Service's `amount` field.
+
+No code changed this pass — docs only.
+
+---
+
+## 2026-08-15 — Doc-consistency review, round 2 (report chapters)
+
+Continued the static review into `docs/report/`. `requirement-gathering.md`
+checked out fully accurate against everything tested tonight — no changes.
+Found and fixed three more:
+
+- `class-diagrams.md` documented the *pre-fix* signatures for both
+  `delete()` bugs fixed tonight (`delete(instance) void` /
+  `delete(event) void`, should be `delete(instance_id) bool` /
+  `delete(event_id) bool`), and had never absorbed the P1 addendum or Phase
+  2's Kafka wiring: `EventManager` was missing its `_producer` field and
+  the `upsert_seat_map`/`publish_event`/`_republish` methods entirely;
+  `VenueManager` was missing `create_venue`. Added an `EventProducer` class
+  node and corrected the prose describing `EventManager`'s dependencies
+  (four repositories *and* a producer, not four repositories alone).
+- `technologies-used.md`: the opening line said entries were "limited to
+  Phase 0 and Phase 1" while the file demonstrably includes Phase 2 content
+  below it; Traefik's status note still cited the removed `/demo/*` routes.
+  Both corrected.
+- `project-description.md` was the significant one — still explicitly said
+  "Phase 0 evidence only... Revisit after P1/P2," never revisited despite
+  both being complete for a while. Wrote the actual Phase 1-2 content: what
+  Event Service and Search Service now do (venue/event/seat-map creation,
+  publish-gates-visibility, ownership scoping, browse/search), not just
+  Phase 0's plumbing. Updated the chapter status table in
+  `docs/report/README.md` to match.
+
+No decisions-log delta. No CLAUDE.md update needed.
+
+---
+
+## 2026-08-15 — Doc-consistency review, round 3 (infra config) + new process rule
+
+Round 3 checked `.env.example`/`docker-compose.yml`/`Settings()` classes
+against each other. All `docker-compose.yml` `${VAR}` references resolve;
+`POSTGRES_HOST`/`MONGO_HOST`-style vars are correctly used for host-side
+script runs (`make seed`) with compose overriding them in-container, not a
+bug. Two real dead-config issues found and fixed:
+
+- `KAFKA_BROKER=localhost:9092` didn't match what any service or compose
+  actually reads (`KAFKA_BOOTSTRAP_SERVERS`) — renamed.
+- `EVENT_SERVICE_PORT`/`SEARCH_SERVICE_PORT` were dead: the port is
+  hardcoded in three places for each service (Dockerfile `CMD`, compose's
+  `environment` block, the Traefik label) and never actually reads the env
+  var. Never exposed to the host either, so there's no real need for it to
+  be configurable. Removed both from `.env.example` and `.env`; left the
+  three not-yet-applicable `*_SERVICE_PORT` vars for unbuilt services alone
+  — not provably dead yet, and touching them isn't this session's call to
+  make.
+
+**New process rule, requested directly.** Three rounds tonight (this one
+included) found five stale docs — `infra/README.md`, a
+`master-development-plan.md` task-table row, `class-diagrams.md`,
+`technologies-used.md`, `project-description.md` — none caught by the
+existing phase-end checklist, because only `docs/architecture.html` (item
+4) has a forced per-phase update step. Items 5/6 (decisions-log delta,
+CLAUDE.md self-update) only look forward at what a phase *produced*;
+nothing looked backward at what a phase's changes might have *invalidated*
+elsewhere. Added item 8, "Cross-doc staleness sweep," to `CLAUDE.md`'s
+phase-end checklist: list what the diff actually changed, grep `docs/` and
+`infra/` for other places describing those same symbols/behaviors, verify
+each still holds. Explicitly scoped to what the diff touched, not a
+full-repo re-read, and explicitly applies to any checkpoint-worthy session
+(addendums included), not just numbered phases.
+
+Decisions-log delta: none — this is a workflow/process addition, not an
+architectural decision. CLAUDE.md updated (the point of this entry).
+
+---
+
+## 2026-08-15 — Correcting a miss from the previous round
+
+Continued the doc/code review into files not yet checked: health endpoints,
+the one Alembic migration, `shared_auth`'s `config.py`/`models.py`, Docker
+healthchecks, `infra/kafka-smoke-test/`. All clean except one real
+self-inflicted issue: the earlier "`KAFKA_BROKER` is dead" conclusion was
+wrong. It only checked `docker-compose.yml` and the services' `Settings`
+classes — `infra/kafka-smoke-test/test_kafka_smoke.py` reads
+`os.environ.get("KAFKA_BROKER", "localhost:9092")` directly, a standalone
+script outside both of those. Renaming the env var without grepping for raw
+`os.environ`/`os.getenv` reads first meant the smoke test would have quietly
+started ignoring `.env` (falling back to its hardcoded default) the moment
+someone actually needed to override the broker address. Fixed to read
+`KAFKA_BOOTSTRAP_SERVERS`, the same canonical name everything else now
+uses; verified by running the smoke test against the live stack (still
+passes). Grepped the rest of the repo for the same `os.environ`/`os.getenv`
+pattern — this was the only instance.
+
+No decisions-log delta. No CLAUDE.md update needed.
+
+---
+
+## 2026-08-15 — Doc-consistency review, round 4 (root README.md)
+
+Checked remaining unreviewed surface: uv workspace `pyproject.toml`
+consistency (clean — `search-service` correctly omits `shared-auth` since
+it has no authenticated routes; booking/payment/notification-service are
+correctly bare placeholders, not workspace members), `docs/architecture.html`
+read in full (clean, no stale claims), the three placeholder service
+READMEs (clean, honestly labeled). Root `README.md` was the significant
+miss: still had the removed `/demo/protected` route in its quickstart, and
+its **Status** section said "Phase 0 complete, Phase 1 is next" — the most
+out-of-date claim found across every round tonight, given Phases 0-2, the
+P1 addendum, and this whole hardening pass are done. This is the first file
+anyone reading the repo sees. Rewrote the quickstart to use real current
+endpoints and updated Status to reflect where the project actually is.
+
+No decisions-log delta. No CLAUDE.md update needed.
+
+---
+
+## 2026-08-15 — Doc-consistency review, round 5 (comprehensive final sweep)
+
+Requested explicitly: verify every doc, md file, Makefile, shell script, env
+file, `.gitignore`, and infra file for staleness — full inventory, not spot
+checks. Enumerated every tracked file matching those categories (`git ls-files`)
+and checked whatever hadn't already been covered in rounds 1-4:
+`docs/phases/phase-0-kickoff.md` and `phase-1-kickoff.md` (read in full —
+these are historical checklist records, every item `[x]`/"— Verified",
+correctly treated as point-in-time snapshots rather than current-state docs,
+same category as `build-log.md` itself; no fix needed), `services/_shared/auth/README.md`
+(accurate — its `AUTH_*` env var list and audience-mapper claim both verified
+directly against `AuthSettings` and `realm-export.json`), `services/search-service/README.md`
+(accurate, correctly says "Phase 2 complete" since that's genuinely its whole
+scope), `infra/keycloak/realm-export.json` (the `ticketing-services-audience`
+`oidc-audience-mapper` claim verified present), `Makefile` and `.gitignore`
+(both clean).
+
+One real finding: `services/event-service/README.md` — future-tense "will
+publish... starting Phase 2" (Phase 2 is done) and "Phase 1 complete" as the
+terminal status, omitting the P1 addendum's venue/seat-map endpoints, Phase
+2's Kafka producer and `/publish` route, and tonight's hardening pass
+entirely. Rewrote both.
+
+This closes out the comprehensive sweep — every file in scope has now been
+checked at least once. No decisions-log delta. No CLAUDE.md update needed.

@@ -2,8 +2,8 @@
 
 *Status: draft, running list — appended each phase per the DOCUMENT step.
 "Real-world framing" polish pass happens at P11.T2; until then this is
-accurate but unpolished. Entries below are limited to what Phase 0 and
-Phase 1 actually introduced and verified running.*
+accurate but unpolished. Entries below cover what Phase 0-2 actually
+introduced and verified running.*
 
 Each entry: what it is, why it was chosen over the alternatives considered,
 and its status in this build.
@@ -23,9 +23,9 @@ eventual AWS deployment, which Kong (needing an extra datastore) and AWS API
 Gateway (no meaningful local equivalent) do not.
 
 **Status:** Implemented, Tested. Verified live: routes to `event-service`
-purely from Docker labels, no manual wiring; dashboard reachable; every
-`/demo/*` and `/healthz` route confirmed reachable only through Traefik, not
-by hitting the service directly.
+and, since Phase 2, `search-service` purely from Docker labels, no manual
+wiring; dashboard reachable; every route confirmed reachable only through
+Traefik, not by hitting a service directly on its container port.
 
 **Real-world caveat surfaced during the build:** on this development
 machine's Docker Desktop build, Traefik's embedded Docker client hardcodes

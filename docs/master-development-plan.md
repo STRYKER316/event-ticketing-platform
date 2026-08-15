@@ -193,7 +193,7 @@ A "Claude Code–sized task" here is one focused session (~half a day to ~1.5 da
 
 | ID | Task | Done when | Report evidence |
 |---|---|---|---|
-| P2.T1 | Event Service Kafka **producer**: on create/update/delete publish full event payload incl. seat list (event-carried state transfer §7.2); keyed for idempotency | Message observed on topic per mutation | Integration-point #1 sequence diagram |
+| P2.T1 | Event Service Kafka **producer**: on publish/update-while-published/delete publish full event payload incl. seat list (event-carried state transfer §7.2); keyed for idempotency. **Amended mid-task** (§15 delta, 2026-08-15): gated on `status == PUBLISHED`, not raw create — see decisions-log §15 | Message observed on topic per mutation | Integration-point #1 sequence diagram |
 | P2.T2 | Search Service scaffold + Elasticsearch client + index mapping | Index created on boot | — |
 | P2.T3 | Search Service Kafka **consumer** (aiokafka): upsert/delete ES docs; **idempotent** (duplicate message = no-op) (§7) | Redelivery test: no duplicate docs | Idempotency note |
 | P2.T4 | Search API: query + paging + sorting over ES | Search returns indexed events | Search feature writeup |
