@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     mongo_user: str = "root"
     mongo_password: str = "changeme"
     mongo_event_db_name: str = "event_service"
+    log_level: str = "INFO"
 
     @property
     def database_url(self) -> str:
@@ -74,9 +75,11 @@ def configure_logging() -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
 
+    level = logging.getLevelNamesMapping().get(get_settings().log_level.upper(), logging.INFO)
+
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(level)
 
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         uvicorn_logger = logging.getLogger(name)
@@ -108,8 +111,11 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def dispose_engine() -> None:
+    global _engine, _session_factory
     if _engine is not None:
         await _engine.dispose()
+        _engine = None
+        _session_factory = None
 
 
 _mongo_client: AsyncIOMotorClient | None = None
