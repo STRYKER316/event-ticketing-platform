@@ -26,12 +26,20 @@ logger = structlog.get_logger()
 
 
 class EventManager:
-    def __init__(self, session: AsyncSession, mongo_db: AsyncIOMotorDatabase, producer: EventProducer):
+    def __init__(
+        self,
+        session: AsyncSession,
+        mongo_db: AsyncIOMotorDatabase,
+        producer: EventProducer | None = None,
+    ):
         self._session = session
         self._events = EventRepository(session)
         self._venues = VenueRepository(session)
         self._performers = PerformerRepository(session)
         self._seat_maps = SeatMapRepository(mongo_db)
+        # Optional: only the write paths that publish (update/publish/delete)
+        # need it — reads and plain create() shouldn't require a live Kafka
+        # connection just to construct this class.
         self._producer = producer
 
     async def list_events(
