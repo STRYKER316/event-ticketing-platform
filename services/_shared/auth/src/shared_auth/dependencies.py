@@ -1,12 +1,15 @@
 from collections.abc import Callable
 
 import jwt
+import structlog
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .config import AuthSettings
-from .jwks import JWKSCache
+from .jwks import JWKSCache, JWKSFetchError
 from .models import Principal
+
+logger = structlog.get_logger()
 
 _bearer_scheme = HTTPBearer(auto_error=True)
 
@@ -37,20 +40,32 @@ def _get_jwks_cache() -> JWKSCache:
     return _jwks_cache
 
 
+async def aclose() -> None:
+    """Close the shared JWKS HTTP client — call from a service's shutdown hook."""
+    if _jwks_cache is not None:
+        await _jwks_cache.aclose()
+
+
 async def _decode_token(token: str) -> dict:
     try:
         header = jwt.get_unverified_header(token)
     except jwt.InvalidTokenError as exc:
+        logger.warning("auth_token_malformed", error=str(exc))
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from exc
 
     kid = header.get("kid")
     if not kid:
+        logger.warning("auth_token_missing_kid")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token: missing kid")
 
     try:
         signing_key = await _get_jwks_cache().get_key(kid)
     except KeyError as exc:
+        logger.warning("auth_token_unknown_kid", kid=kid)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token: unknown key") from exc
+    except JWKSFetchError as exc:
+        logger.warning("auth_jwks_unreachable", error=str(exc))
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Auth provider unreachable") from exc
 
     settings = _get_settings()
     try:
@@ -63,15 +78,18 @@ async def _decode_token(token: str) -> dict:
             options={"require": ["exp", "iat", "sub"]},
         )
     except jwt.InvalidTokenError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"Invalid token: {exc}") from exc
+        logger.warning("auth_token_rejected", error=str(exc))
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token") from exc
 
 
 def _principal_from_claims(claims: dict) -> Principal:
+    realm_access = claims.get("realm_access")
+    roles = realm_access.get("roles") if isinstance(realm_access, dict) else None
     return Principal(
         subject=claims["sub"],
         username=claims.get("preferred_username"),
         email=claims.get("email"),
-        roles=claims.get("realm_access", {}).get("roles", []),
+        roles=roles if isinstance(roles, list) else [],
     )
 
 
@@ -85,6 +103,7 @@ async def get_current_user(
 def require_role(role: str) -> Callable[[Principal], Principal]:
     async def _require_role(user: Principal = Depends(get_current_user)) -> Principal:
         if not user.has_role(role):
+            logger.warning("auth_role_denied", subject=user.subject, required_role=role)
             raise HTTPException(status.HTTP_403_FORBIDDEN, f"Requires role: {role}")
         return user
 
