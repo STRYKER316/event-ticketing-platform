@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 
+import shared_auth
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
@@ -12,6 +13,7 @@ async def lifespan(app: FastAPI):
     yield
     await dispose_engine()
     close_mongo_client()
+    await shared_auth.aclose()
 
 
 def create_app() -> FastAPI:
