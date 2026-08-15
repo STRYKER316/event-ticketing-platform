@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import EventCreate, EventUpdate, Seat, SeatMap, SeatMapRow, SeatMapSection
 from app.db.models import Venue
+from app.db.seat_map_repository import SeatMapRepository
 from app.logic.event_manager import EventManager
 
 pytestmark = pytest.mark.asyncio
@@ -37,8 +38,6 @@ async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_d
     assert fetched.title == "Integration Concert"
     assert fetched.organizer_id == ORGANIZER.subject
     assert fetched.venue.id == venue.id
-
-    from app.db.seat_map_repository import SeatMapRepository
 
     await SeatMapRepository(mongo_db).upsert(
         SeatMap(

@@ -5,9 +5,7 @@ from app.api.schemas import Seat, SeatMap, SeatMapRow, SeatMapSection
 from app.core import get_mongo_db, get_session_factory
 from app.db.event_repository import EventRepository
 from app.db.models import Event, EventStatus, Performer, Venue
-from app.db.performer_repository import PerformerRepository
 from app.db.seat_map_repository import SeatMapRepository
-from app.db.venue_repository import VenueRepository
 
 SEED_ORGANIZER_ID = "seed-organizer"
 
