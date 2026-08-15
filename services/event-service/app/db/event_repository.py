@@ -29,10 +29,11 @@ class EventRepository:
     async def list(self, limit: int, offset: int, sort_field: str, sort_desc: bool) -> list[Event]:
         column = _SORT_COLUMNS[sort_field]
         order = column.desc() if sort_desc else column.asc()
+        tiebreaker = Event.id.desc() if sort_desc else Event.id.asc()
         result = await self._session.execute(
             select(Event)
             .options(selectinload(Event.venue), selectinload(Event.performers))
-            .order_by(order)
+            .order_by(order, tiebreaker)
             .limit(limit)
             .offset(offset)
         )
