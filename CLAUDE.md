@@ -108,6 +108,32 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   history lives). Same file every phase, redeployed in place, not a new file per
   phase. Commit it as part of the phase's checkpoint. This is also the report's
   §16 topology/flow evidence, produced once, not redone later for the report.
+- **Phase-end checklist.** Before tagging CHECKPOINT, run through all six — most are
+  already required by the bullets above, this is the standing list so none get
+  skipped by accident:
+  1. **End-to-end testing** — live walkthrough against the real stack (see
+     "End-of-phase walkthrough" above), not just the unit/integration suite passing.
+  2. **Report writing** — the phase's `docs/report/` chapter(s) drafted/updated, and
+     the chapter-status table in `docs/report/README.md` updated to match.
+  3. **Commit history & file scanning for rule deviations** — this phase's commits
+     checked against the commit-granularity rule below, and any new/changed files
+     checked against the Academic-presentation hard rules (no emoji, no casual
+     language, no stray TODOs, etc.).
+  4. **`docs/architecture.html` updated** to current state — see "End-of-phase
+     walkthrough" above; this is a distinct deliverable from the report chapters,
+     easy to forget since nothing else forces it.
+  5. **`decisions-log.md` delta check** — explicitly ask "did anything decided this
+     phase change or extend a locked decision," don't just assume no. Distinct from
+     `build-log.md` (the diary of what happened) — decisions-log is the normative
+     record.
+  6. **`CLAUDE.md` self-update check** — it says to update itself when conventions,
+     commands, or structure shift; explicitly check rather than only checking new
+     code against what's already written here.
+
+  Lower-priority, worth doing before a real external-facing moment (public repo, demo,
+  submission) rather than every phase: verify `main` boots from a genuinely clean
+  checkout (fresh clone), not just `make down && make up` against an
+  already-migrated/seeded volume.
 - **`main` stays bootable at every commit.** If a session ends mid-task, the previous
   commit should still `docker compose up` cleanly. Config-gate anything half-finished
   rather than leaving `main` broken.
