@@ -142,6 +142,24 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   submission) rather than every phase: verify `main` boots from a genuinely clean
   checkout (fresh clone), not just `make down && make up` against an
   already-migrated/seeded volume.
+- **Before-push checklist.** Distinct from the phase-end checklist above and run on
+  its own cadence — commits land on `main` continuously (many per phase), but pushing
+  to `origin` is a separate, less frequent, and less reversible act (the first point
+  anything becomes visible outside this machine), so it gets its own gate rather than
+  being folded into CHECKPOINT:
+  1. **Working tree clean** — nothing uncommitted or stray left behind by mistake.
+  2. **Secret/credential scan across exactly the commits about to be pushed** —
+     `git log -p origin/main..HEAD` (or equivalent) checked for anything that
+     shouldn't be there, not just trusting `.gitignore`.
+  3. **Fast-forward check** — confirm `origin/main` hasn't diverged, so this is a
+     plain fast-forward, not a surprise merge/force-push situation.
+  4. **Academic-presentation full scan** — the Academic-presentation hard rules
+     section below already calls for re-running the full scan (commit history,
+     tracked-file content, secrets, LICENSE, tone) "before any major external-facing
+     moment"; a push to `origin` **is** that moment, concretely, not just whenever it
+     feels major — this is where that scan actually fires.
+  Pushing itself still always gets a confirmation from the user regardless of how
+  clean this checklist comes back — that's a standing rule, not specific to this repo.
 - **`main` stays bootable at every commit.** If a session ends mid-task, the previous
   commit should still `docker compose up` cleanly. Config-gate anything half-finished
   rather than leaving `main` broken.
