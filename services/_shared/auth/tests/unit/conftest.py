@@ -80,3 +80,9 @@ def make_token(rsa_keypair, *, roles=None, exp_delta=3600, aud=AUDIENCE, iss=ISS
         "realm_access": {"roles": roles or []},
     }
     return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": kid})
+
+
+def make_raw_token(claims: dict, *, key, algorithm: str = "RS256", kid: str = KID) -> str:
+    """Full control over claims/algorithm/key — for negative tests (missing
+    required claims, algorithm confusion) `make_token` can't express."""
+    return jwt.encode(claims, key, algorithm=algorithm, headers={"kid": kid})
