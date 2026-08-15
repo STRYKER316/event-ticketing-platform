@@ -57,6 +57,19 @@ def test_seat_map_upsert_rejects_empty_sections():
         SeatMapUpsert(sections=[])
 
 
+def test_seat_map_upsert_rejects_a_section_with_no_rows():
+    # A non-empty `sections` list satisfies SeatMapUpsert's own constraint
+    # while still describing zero actual seats if nothing stops an empty
+    # `rows` list nested inside it.
+    with pytest.raises(ValidationError):
+        SeatMapUpsert(sections=[SeatMapSection(name="A", rows=[])])
+
+
+def test_seat_map_upsert_rejects_a_row_with_no_seats():
+    with pytest.raises(ValidationError):
+        SeatMapUpsert(sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[])])])
+
+
 def test_seat_map_upsert_accepts_valid_payload():
     upsert = SeatMapUpsert(
         sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]

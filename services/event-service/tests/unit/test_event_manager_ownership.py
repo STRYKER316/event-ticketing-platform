@@ -122,12 +122,17 @@ async def test_seat_map_upsert_republishes_a_published_event():
     event = make_event()
     event.status = EventStatus.PUBLISHED
     manager = make_manager(event)
-    manager._seat_maps.get_by_event_id = AsyncMock(return_value=SEAT_MAP_PAYLOAD)
+    # No manager._seat_maps.get_by_event_id override needed: upsert_seat_map
+    # hands _republish the seat map it just upserted directly, so the
+    # republish path never re-fetches from Mongo.
     user = Principal(subject=OWNER_SUBJECT, roles=["organizer"])
 
     await manager.upsert_seat_map(user, event.id, SEAT_MAP_PAYLOAD)
 
     manager._producer.publish_upserted.assert_awaited_once()
+    published_event, published_seat_map = manager._producer.publish_upserted.await_args.args
+    assert published_event is event
+    assert published_seat_map.sections[0].name == "A"
 
 
 async def test_update_rejects_end_time_before_existing_start_time():

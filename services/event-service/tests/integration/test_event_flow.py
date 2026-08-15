@@ -5,7 +5,8 @@ import pytest
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from shared_auth import Principal
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.api.schemas import (
     EventCreate,
@@ -35,14 +36,25 @@ async def _seed_venue(session: AsyncSession) -> Venue:
     return venue
 
 
-async def test_create_and_fetch_venue(db_session: AsyncSession):
+async def test_create_venue_commits_visibly_to_a_second_connection(db_session: AsyncSession, _migrated_database_url: str):
     manager = VenueManager(db_session)
 
     created = await manager.create_venue(VenueCreate(name="New Arena", address="9 New St", capacity=500))
-    fetched = await manager.get_venue(created.id)
 
-    assert fetched.name == "New Arena"
-    assert fetched.capacity == 500
+    # A query against db_session itself would pass even if create_venue
+    # never committed: BaseRepository.create() already flush()es, and a
+    # flushed-but-uncommitted row is visible to further queries on the same
+    # open transaction (expire_on_commit=False keeps the in-memory object
+    # live too). Only a genuinely separate connection can tell "flushed"
+    # apart from "committed" — Postgres's default READ COMMITTED isolation
+    # hides db_session's write from here unless it was actually committed.
+    other_engine = create_async_engine(_migrated_database_url)
+    async with other_engine.connect() as conn:
+        row = (await conn.execute(text("SELECT name, capacity FROM venues WHERE id = :id"), {"id": str(created.id)})).one()
+    await other_engine.dispose()
+
+    assert row.name == "New Arena"
+    assert row.capacity == 500
 
 
 async def test_owning_organizer_can_upsert_seat_map_via_api_path(

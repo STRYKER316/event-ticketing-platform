@@ -127,12 +127,12 @@ class Seat(BaseModel):
 
 class SeatMapRow(BaseModel):
     name: str = Field(min_length=1)
-    seats: list[Seat]
+    seats: list[Seat] = Field(min_length=1)
 
 
 class SeatMapSection(BaseModel):
     name: str = Field(min_length=1)
-    rows: list[SeatMapRow]
+    rows: list[SeatMapRow] = Field(min_length=1)
 
 
 class SeatMap(BaseModel):

@@ -1153,3 +1153,67 @@ decisions-log delta — this closes an existing §15 commitment rather than
 changing one. No CLAUDE.md update needed — both new endpoints follow the
 already-documented organizer-write-endpoint pattern exactly, nothing new to
 document.
+
+**Review gate on the addendum itself.** Asked directly whether newly-written
+code needs its own `/pre-pr` pass before push, separate from Phase 2's
+already-completed one — yes: this addendum landed after Phase 2's
+checkpoint, so it had zero review coverage of its own. Ran simplify then
+code-review against `51c695e..HEAD`, both delegated with explicit, tightened
+instructions this time (no git state-changing commands, no new files
+outside the diff's own scope, no sub-fanout) given the process incident
+during Phase 2's review gate — both behaved correctly.
+
+**Simplify**: `upsert_seat_map` was re-fetching the seat map from Mongo
+inside `_republish()` immediately after upserting that exact document —
+redundant round-trip. `_republish()` now takes an optional `seat_map` param;
+`upsert_seat_map` passes the one it already has, `update_event` (the other
+caller) still omits it and falls through to the existing fetch path.
+
+**Code review** found three real issues, not style nitpicks:
+- `SeatMapUpsert` only constrained the outer `sections` list to be
+  non-empty; `SeatMapSection.rows` and `SeatMapRow.seats` had no such
+  constraint, so `{"sections": [{"name": "A", "rows": []}]}` validated
+  clean and would publish a "seat map" with zero actual seats — the "empty
+  seat map is meaningless" reasoning from the original implementation only
+  got applied one level deep. Fixed by adding `Field(min_length=1)` to both
+  nested list fields (they're shared by the read-side `SeatMap` schema too,
+  so the constraint is universal, not upsert-specific). Two new unit tests
+  cover both empty-rows and empty-seats; live-verified both reject 422
+  through the real API.
+- `test_create_and_fetch_venue` didn't prove `create_venue` actually
+  commits — same mocked-assertion failure mode a Phase 1 test hit before
+  (see the review-gate entry above). Root cause here was subtler:
+  `expunge_all()` alone doesn't fix it, because `BaseRepository.create()`
+  already `flush()`es, and a flushed-but-uncommitted row is visible to
+  further queries on the *same* open transaction regardless of the
+  session's Python-side identity map. Proving `commit()` specifically
+  happened needs a genuinely separate connection — Postgres's default READ
+  COMMITTED isolation hides an uncommitted write from any other connection.
+  Rewrote the test to open a second engine against the same testcontainer
+  URL and query the raw row from there. Verified both directions by hand:
+  removed the `commit()` call, confirmed the new test fails
+  (`NoResultFound`) where the old one wouldn't have, restored the fix,
+  confirmed it passes again.
+- A unit test's mock setup (`get_by_event_id` returning a value) went stale
+  and unreachable the moment the simplify fix above landed — `_republish`
+  no longer calls it when handed a seat map directly — and was asserting
+  only that `publish_upserted` was *awaited*, not *what* was published.
+  Removed the dead mock, added an assertion on the actual `(event,
+  seat_map)` args passed to the producer.
+
+**Deliberately left alone, reasoning recorded:** duplicate seat labels
+within one seat map aren't rejected — noted by the review as something that
+"becomes load-bearing when P3 provisions one Ticket per seat," which is
+exactly right, but it's Booking Service's uniqueness constraint (event +
+seat, per §7) that should be the enforcement point, not a second copy of
+that rule guessed at here. `Venue.capacity` is never cross-checked against
+seat count — decorative for now, and no decision requires it to be
+otherwise. `upsert_seat_map` on an already-`PUBLISHED` event with live
+bookings would orphan them once Booking Service exists — but
+`_check_no_bookings` is already a known, deliberately-placed stub per
+P1.T5's original task description ("P3 wires the real check"); this isn't
+a new gap, just the same one surfacing from a second angle.
+
+32/32 `event-service` tests green. Rebuilt and re-verified live: both new
+DTO rejections return 422 through the real running API, not just in the
+test suite.
