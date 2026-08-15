@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import health
+from app.api import health, search
 from app.core import close_es_client, configure_logging, get_es_client
 from app.db.event_index_repository import EventIndexRepository
 from app.kafka.consumers import EventConsumer, build_kafka_consumer
@@ -34,6 +34,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="search-service", lifespan=lifespan)
     app.include_router(health.router)
+    app.include_router(search.router)
     Instrumentator().instrument(app).expose(app)
 
     return app

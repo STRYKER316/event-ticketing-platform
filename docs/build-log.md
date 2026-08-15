@@ -847,3 +847,35 @@ directly — that container class's bootstrap scripts are Confluent-image-
 specific and the `apache/kafka` image exits immediately under it; not a
 concern for the real stack, which configures `apache/kafka` by hand in
 `docker-compose.yml` already and doesn't go through this test helper.
+
+---
+
+## 2026-08-15 — P2.T4: Search API
+
+`GET /search` (public, `SearchManager` + `EventIndexRepository.search()`)
+over free text (`q`, multi-match across `title`/`description`/`venue_name`/
+`performer_names`, `match_all` when blank — browse-all with no query typed),
+paginated (`limit`/`offset`), sortable by relevance (`_score`, the default)
+or `start_time`, both directions. Query construction lives in the
+Repository (it's still just "the query," same as `EventRepository.list()` in
+`event-service`); `SearchManager` shapes raw ES hits into `SearchResponse`
+DTOs — same split as every other service. Reused the Phase 1 pagination
+lesson directly this time instead of rediscovering it: every sort always
+carries `event_id` as an explicit tiebreaker, so ties (two events with
+identical relevance or identical `start_time`) can't duplicate or drop rows
+across pages.
+
+Live-verified end to end through the real stack, not just unit tests:
+created and published three events via `event-service` ("Jazz Night at
+Riverside", "Rock Festival Weekend", "Classical Jazz Trio"), queried
+`GET /search?q=jazz` through Traefik and got back exactly the two jazz
+events, not the rock one; verified `start_time` pagination returns distinct,
+correctly-ordered pages (`limit=2` then `limit=2&offset=2`) over the full
+3-event set; deleted all three afterward and confirmed the index emptied
+back out. 3 new unit tests for `SearchManager` (hit-to-DTO mapping,
+argument pass-through for pagination/sort, empty-result shape) — no new
+integration test needed here specifically, since P2.T3's redelivery
+integration test already exercises the exact "publish → becomes searchable"
+path P2.T5 calls for (same Kafka-to-Elasticsearch pipeline `/search`
+queries read from); noted for P2.T5 rather than duplicating it. 10/10
+`search-service` tests green.

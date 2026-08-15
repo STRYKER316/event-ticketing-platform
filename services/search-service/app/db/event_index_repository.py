@@ -57,3 +57,28 @@ class EventIndexRepository:
         except NotFoundError:
             # Already gone — a redelivered or out-of-order delete is a safe no-op.
             pass
+
+    async def search(
+        self, query: str, limit: int, offset: int, sort_field: str, sort_desc: bool
+    ) -> tuple[list[dict[str, Any]], int]:
+        es_query: dict[str, Any] = (
+            {"multi_match": {"query": query, "fields": ["title", "description", "venue_name", "performer_names"]}}
+            if query
+            else {"match_all": {}}
+        )
+        order = "desc" if sort_desc else "asc"
+        # event_id tiebreaker: a single-field sort (relevance or start_time
+        # alone) can tie across rows, which duplicates/drops results across
+        # pages — same pagination-stability lesson as event-service's list().
+        primary_sort = {"start_time": order} if sort_field == "start_time" else {"_score": order}
+        response = await self._client.search(
+            index=EVENTS_INDEX,
+            query=es_query,
+            sort=[primary_sort, {"event_id": "asc"}],
+            from_=offset,
+            size=limit,
+            track_total_hits=True,
+        )
+        hits = response["hits"]["hits"]
+        total = response["hits"]["total"]["value"]
+        return hits, total
