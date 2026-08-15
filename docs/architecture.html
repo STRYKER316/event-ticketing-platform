@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Event Service — event-ticketing-platform</title>
+<title>Event &amp; Search Services — event-ticketing-platform</title>
 <style>
   :root {
     --bg: #f6f7f9;
@@ -235,23 +235,24 @@
 
 <header>
   <p class="eyebrow">event-ticketing-platform — capstone</p>
-  <h1>Event Service</h1>
-  <p>What Phase 1 actually built: Event Service is now the source of truth for events, venues, performers, and seat maps — with organizer writes ownership-scoped, not just role-checked. Verified live, not inferred from the checklist. Traced 2026-08-15.</p>
+  <h1>Event &amp; Search Services</h1>
+  <p>What Phase 2 actually built: the first real Kafka integration point. Event Service now publishes a keyed message when an event is published, updated while published, or deleted; Search Service consumes it into Elasticsearch, idempotently, and serves it back over a public <code>GET /search</code>. Verified live — a hand-replayed duplicate Kafka message, not just a passing test. Traced 2026-08-15.</p>
   <div class="badges">
     <span class="badge ok">Phase 0 complete</span>
     <span class="badge ok">Phase 1 complete</span>
-    <span class="badge">14 tasks · P0.T1–T7, P1.T1–T7</span>
-    <span class="badge">9 containers</span>
+    <span class="badge ok">Phase 2 complete</span>
+    <span class="badge">19 tasks · P0.T1–T7, P1.T1–T7, P2.T1–T5</span>
+    <span class="badge">10 containers</span>
   </div>
 </header>
 
 <section>
   <h2><span class="num">01</span> — Topology</h2>
   <h3>One entrypoint, one service — now with two databases behind it</h3>
-  <p class="lede">Traefik is still the only thing exposed on the host, still routing to <code>event-service</code> by Docker labels. What changed this phase: <code>event-service</code> now writes to Postgres <em>and</em> MongoDB — relational event/venue/performer data in one, seat-map documents in the other. Redis, Elasticsearch, and Kafka are still provisioned but idle.</p>
+  <p class="lede">Traefik now routes to two services: <code>event-service</code> still on its original catch-all label, <code>search-service</code> on a specific <code>PathPrefix(/search)</code> that outranks it by rule length. What changed this phase: <code>event-service</code> publishes a keyed Kafka message when an event is published, updated while published, or deleted; <code>search-service</code> consumes it into Elasticsearch, idempotently, and serves <code>GET /search</code>. Redis is still provisioned but idle.</p>
 
   <figure>
-    <svg viewBox="0 0 900 460" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service; event-service queries Postgres for events/venues/performers, queries MongoDB for seat-map documents, and validates tokens against Keycloak; a docker-socket-proxy feeds Traefik container discovery; Redis, Elasticsearch and Kafka are provisioned but not yet wired to any service.">
+    <svg viewBox="0 0 900 600" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service by a catch-all rule and to search-service by a more specific /search rule; event-service queries Postgres and MongoDB and validates tokens against Keycloak, then publishes a keyed Kafka message on the event.events topic when an event is published, updated while published, or deleted; search-service consumes that topic, idempotently upserting or deleting documents in Elasticsearch, and serves GET /search back through Traefik; Redis is provisioned but not yet wired to any service.">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -315,28 +316,50 @@
       <line x1="302" y1="164" x2="302" y2="122" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3" marker-end="url(#arrowDim)"/>
       <text x="326" y="145" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--idle)">discovery</text>
 
+      <!-- event-service down to kafka: publish -->
+      <line x1="540" y1="128" x2="540" y2="298" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="548" y="270" text-anchor="start" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">publish (Kafka #1)</text>
+      <text x="548" y="284" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">keyed by event_id, on publish/update/delete while PUBLISHED</text>
+
+      <!-- kafka -->
+      <rect x="460" y="300" width="160" height="60" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="540" y="326" text-anchor="middle" font-family="var(--mono)" font-size="13" font-weight="600" fill="currentColor">kafka</text>
+      <text x="540" y="342" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">event.events (KRaft)</text>
+
+      <!-- kafka to search-service: consume -->
+      <line x1="620" y1="330" x2="676" y2="330" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="648" y="322" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)">consume</text>
+
+      <!-- search-service -->
+      <rect x="680" y="300" width="160" height="60" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="760" y="322" text-anchor="middle" font-family="var(--mono)" font-size="13" font-weight="600" fill="currentColor">search-service</text>
+      <text x="760" y="338" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">FastAPI /search</text>
+      <text x="760" y="351" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--accent)">also routed here via Traefik</text>
+
+      <!-- search-service down to elasticsearch -->
+      <line x1="760" y1="360" x2="760" y2="410" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="768" y="388" text-anchor="start" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">upsert/delete by ID, query</text>
+
+      <rect x="680" y="414" width="160" height="52" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="760" y="436" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">elasticsearch</text>
+      <text x="760" y="452" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">single-node, index: events</text>
+
       <!-- idle infra row -->
-      <line x1="24" y1="320" x2="876" y2="320" stroke="var(--border)" stroke-width="1"/>
-      <text x="24" y="342" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">PROVISIONED — NOT WIRED TO A SERVICE YET</text>
+      <line x1="24" y1="500" x2="876" y2="500" stroke="var(--border)" stroke-width="1"/>
+      <text x="24" y="522" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">PROVISIONED — NOT WIRED TO A SERVICE YET</text>
 
       <g fill="none" stroke="var(--idle)" stroke-width="1.3">
-        <rect x="120" y="360" width="150" height="52" rx="8"/>
-        <rect x="330" y="360" width="150" height="52" rx="8"/>
-        <rect x="540" y="360" width="150" height="52" rx="8"/>
+        <rect x="375" y="536" width="150" height="52" rx="8"/>
       </g>
       <g font-family="var(--mono)" font-size="12" fill="var(--idle)" text-anchor="middle">
-        <text x="195" y="390">redis</text>
-        <text x="405" y="390">elasticsearch</text>
-        <text x="615" y="390">kafka</text>
+        <text x="450" y="566">redis</text>
       </g>
       <g font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)" text-anchor="middle">
-        <text x="195" y="404">holds, P3</text>
-        <text x="405" y="404">index, P2</text>
-        <text x="615" y="404">round-trip proven, §P0.T6</text>
+        <text x="450" y="580">dual hold strategy, P3</text>
       </g>
     </svg>
   </figure>
-  <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · mongo:7 · one docker-compose network, host port 80 only.</figcaption>
+  <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · mongo:7 · apache/kafka:3.8.0 (KRaft) · elasticsearch:8.15.0 — 10 containers, one docker-compose network, host port 80 only.</figcaption>
 </section>
 
 <section>
@@ -415,11 +438,92 @@
   </figure>
   <figcaption>Verified live: alice → 403 {"detail":"Requires role: organizer"} · bob → 201, event created with organizer_id = bob's JWT subject.</figcaption>
 
-  <p class="lede" style="margin-top:24px;">Role alone stops here — it doesn't answer "whose event is this?" That's a second, explicit check in <code>EventManager</code>: on <code>PATCH</code>/<code>DELETE /events/{id}</code>, the stored <code>organizer_id</code> is compared against the caller's JWT subject before any mutation. Verified live: <code>carol</code> (organizer role, different subject) → 403 on both bob's event; bob → 200/204 on his own.</p>
+  <p class="lede" style="margin-top:24px;">Role alone stops here — it doesn't answer "whose event is this?" That's a second, explicit check in <code>EventManager</code>: on <code>PATCH</code>/<code>DELETE /events/{id}</code>, the stored <code>organizer_id</code> is compared against the caller's JWT subject before any mutation. Verified live: <code>carol</code> (organizer role, different subject) → 403 on both bob's event; bob → 200/204 on his own. The new <code>POST /events/{id}/publish</code> route this phase is guarded the identical way — organizer role plus ownership — not shown as a separate diagram since the mechanism is unchanged, only the route.</p>
 </section>
 
 <section>
-  <h2><span class="num">03</span> — What's proven vs. not yet built</h2>
+  <h2><span class="num">03</span> — Kafka integration point #1: publish → search</h2>
+  <h3>Event-carried state transfer, idempotent both ways</h3>
+  <p class="lede">The first of five locked Kafka integration points (§7). No synchronous call from either service into the other — Event Service publishes a self-contained message (full seat list included, not a venue reference), Search Service consumes it whenever it gets to it. The gap in between is the eventual-consistency window (§7/§26): real, bounded, and tested, not hidden.</p>
+
+  <figure>
+    <svg viewBox="0 0 900 500" role="img" aria-label="Sequence diagram: an organizer calls POST /events/id/publish on event-service, which sets status to PUBLISHED, commits, then sends a Kafka message keyed by event ID to the event.events topic containing the full event payload including the flattened seat list; search-service's consumer, in a separate background task, receives the message and upserts a document into Elasticsearch by event ID; a client calling GET /search after this point finds the event, but a client calling immediately after publish does not, illustrating the eventual consistency window; replaying the identical Kafka message a second time re-indexes the same document — Elasticsearch's version number increments but no duplicate document is created, and a redelivered delete against an already-removed document is caught and logged rather than raised.">
+      <g stroke="var(--border)" stroke-width="1.3">
+        <line x1="70" y1="70" x2="70" y2="480"/>
+        <line x1="270" y1="70" x2="270" y2="480"/>
+        <line x1="470" y1="70" x2="470" y2="480"/>
+        <line x1="670" y1="70" x2="670" y2="480"/>
+        <line x1="840" y1="70" x2="840" y2="480"/>
+      </g>
+      <g font-family="var(--mono)" font-size="12.5" font-weight="600" fill="currentColor" text-anchor="middle">
+        <text x="70" y="48">organizer</text>
+        <text x="270" y="48">event-service</text>
+        <text x="470" y="48">kafka</text>
+        <text x="670" y="48">search-service</text>
+        <text x="840" y="48">elasticsearch</text>
+      </g>
+      <g font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)" text-anchor="middle">
+        <text x="270" y="62">EventProducer</text>
+        <text x="670" y="62">EventConsumer</text>
+      </g>
+
+      <!-- publish call -->
+      <line x1="70" y1="86" x2="262" y2="86" stroke="currentColor" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="170" y="80" text-anchor="middle" font-family="var(--mono)" font-size="10.5">POST /events/{id}/publish</text>
+
+      <rect x="220" y="96" width="100" height="30" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+      <text x="270" y="115" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="currentColor">DRAFT→PUBLISHED</text>
+
+      <!-- publish to kafka -->
+      <line x1="270" y1="140" x2="462" y2="140" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="366" y="134" text-anchor="middle" font-family="var(--mono)" font-size="10">send(key=event_id, action=upserted, seats=[...])</text>
+
+      <!-- kafka to consumer -->
+      <line x1="470" y1="164" x2="662" y2="164" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="566" y="158" text-anchor="middle" font-family="var(--mono)" font-size="10">deliver (background asyncio.Task)</text>
+
+      <!-- consumer to es -->
+      <line x1="670" y1="188" x2="832" y2="188" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="751" y="182" text-anchor="middle" font-family="var(--mono)" font-size="10">index(id=event_id, doc) — upsert</text>
+
+      <!-- window marker -->
+      <line x1="30" y1="212" x2="30" y2="256" stroke="var(--fail)" stroke-width="1.3"/>
+      <text x="40" y="222" font-family="var(--mono)" font-size="9.5" fill="var(--fail)">eventual-</text>
+      <text x="40" y="234" font-family="var(--mono)" font-size="9.5" fill="var(--fail)">consistency</text>
+      <text x="40" y="246" font-family="var(--mono)" font-size="9.5" fill="var(--fail)">window</text>
+
+      <line x1="70" y1="228" x2="662" y2="228" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="2,3" marker-end="url(#arrow)"/>
+      <text x="366" y="220" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--fail)">GET /search?q=... right after publish — not found yet</text>
+
+      <line x1="70" y1="264" x2="662" y2="264" stroke="var(--ok)" stroke-width="1.2" stroke-dasharray="2,3" marker-end="url(#arrow)"/>
+      <text x="366" y="256" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ok)">GET /search?q=... after consumer catches up — found</text>
+
+      <!-- redelivery section -->
+      <line x1="30" y1="300" x2="870" y2="300" stroke="var(--border)" stroke-width="1"/>
+      <text x="30" y="320" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">REDELIVERY (hand-replayed identical message, kafka-console-producer)</text>
+
+      <line x1="470" y1="344" x2="662" y2="344" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="566" y="338" text-anchor="middle" font-family="var(--mono)" font-size="10">deliver (duplicate of the message above)</text>
+
+      <line x1="670" y1="368" x2="832" y2="368" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="751" y="362" text-anchor="middle" font-family="var(--mono)" font-size="10">index(id=event_id, doc) — same ID, overwrite</text>
+
+      <rect x="590" y="384" width="260" height="46" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.3"/>
+      <text x="720" y="404" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="600" fill="var(--ok)">doc count stays 1, _version 1→2</text>
+      <text x="720" y="418" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ok)">no duplicate — safe no-op</text>
+
+      <line x1="470" y1="446" x2="662" y2="446" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3" marker-end="url(#arrowDim)"/>
+      <text x="566" y="440" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--idle)">duplicate delete, already gone</text>
+
+      <rect x="600" y="456" width="240" height="20" rx="6" fill="var(--idle-soft)" stroke="var(--idle)" stroke-width="1.1"/>
+      <text x="720" y="470" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--idle)">NotFoundError caught, logged — no crash</text>
+    </svg>
+  </figure>
+  <figcaption>Verified live: real Kafka message read off <code>event.events</code> with <code>kafka-console-consumer</code> after a real publish; identical message hand-replayed via <code>kafka-console-producer</code> — document count stayed 1, <code>_version</code> incremented; duplicate delete against an already-gone document logged <code>search_index_deleted</code> with no error. Same pattern proven again in <code>testcontainers</code> integration tests (real Kafka + real Elasticsearch), not just this manual pass.</figcaption>
+</section>
+
+<section>
+  <h2><span class="num">04</span> — What's proven vs. not yet built</h2>
   <div class="two-col">
     <div class="col">
       <h4><span class="dot ok"></span>proven, live, this phase</h4>
@@ -435,19 +539,22 @@
         <li><span class="check">✓</span> DTO validation boundary rejects blank titles and past start times (422)</li>
         <li><span class="check">✓</span> unit + testcontainers integration tests, both green</li>
         <li><span class="check">✓</span> <code>make seed</code> populates baseline demo data, idempotently</li>
-        <li><span class="check">✓</span> one command (<code>make up</code>) boots all 9 containers</li>
+        <li><span class="check">✓</span> one command (<code>make up</code>) boots all 10 containers</li>
+        <li><span class="check">✓</span> event-service publishes a keyed Kafka message on publish/update/delete</li>
+        <li><span class="check">✓</span> search-service consumer is idempotent — redelivery proven a no-op, both ways</li>
+        <li><span class="check">✓</span> eventual-consistency window captured by a real, passing test</li>
+        <li><span class="check">✓</span> <code>GET /search</code> — free text, paginated, sorted, tiebreaker-stable</li>
+        <li><span class="check">✓</span> a second service (search-service) coexists behind Traefik correctly</li>
       </ul>
     </div>
     <div class="col">
       <h4><span class="dot idle"></span>provisioned, not built yet</h4>
       <ul>
         <li><span class="dash">–</span> no booking/payment/notification logic yet</li>
-        <li><span class="dash">–</span> event-service doesn't publish to Kafka yet (Phase 2)</li>
         <li><span class="dash">–</span> delete-if-zero-bookings is a stub — real check lands with Booking (Phase 3)</li>
         <li><span class="dash">–</span> Redis holds unused (Phase 3)</li>
-        <li><span class="dash">–</span> Elasticsearch index unused (Phase 2)</li>
-        <li><span class="dash">–</span> Kafka not wired to any service yet, only smoke-tested</li>
-        <li><span class="dash">–</span> only one of five services exists</li>
+        <li><span class="dash">–</span> no seat-map write API yet — organizers can't attach one via HTTP; the seed script and manual testing both write directly to Mongo (tracked as a gap, not silently worked around)</li>
+        <li><span class="dash">–</span> only two of five services exist</li>
         <li><span class="dash">–</span> no frontend</li>
         <li><span class="dash">–</span> nothing deployed to AWS (Phase 10)</li>
       </ul>
@@ -456,7 +563,7 @@
 </section>
 
 <section>
-  <h2><span class="num">04</span> — Reproduce this yourself</h2>
+  <h2><span class="num">05</span> — Reproduce this yourself</h2>
   <p class="lede">Every command below is real — this is exactly what was run to trace the diagrams above. Takes about a minute.</p>
   <pre><span class="c"># from repo root</span>
 make up                                    <span class="c"># boots all 9 containers</span>
@@ -480,6 +587,18 @@ curl -X POST localhost/events -H "Authorization: Bearer $TOKEN" ...
 TOKEN=$(./get-token.sh carol)
 curl -X PATCH localhost/events/&lt;bob's event id&gt; -H "Authorization: Bearer $TOKEN" ...
 <span class="out">{"detail":"not the owning organizer"}</span>             <span class="fail">403</span>
+
+<span class="c"># bob publishes his event — this is what triggers the Kafka message</span>
+curl -X POST localhost/events/&lt;bob's event id&gt;/publish -H "Authorization: Bearer $TOKEN"
+<span class="out">{"status":"published", ...}</span>                        <span class="ok">200</span>
+
+<span class="c"># eventual-consistency window: not there immediately...</span>
+curl "localhost/search?q=&lt;title words&gt;"
+<span class="out">{"items":[], "total":0, ...}</span>                       <span class="ok">200</span>
+
+<span class="c"># ...found once search-service's consumer catches up (sub-second locally)</span>
+curl "localhost/search?q=&lt;title words&gt;"
+<span class="out">{"items":[{...}], "total":1, ...}</span>                  <span class="ok">200</span>
 
 make down                                  <span class="c"># tear down</span></pre>
 </section>

@@ -915,3 +915,72 @@ Traefik, real Elasticsearch document counts), this closes out Phase 2's
 per-task work. Phase-end checklist (walkthrough, report, commit/file scan,
 `architecture.html`, decisions-log delta check, CLAUDE.md self-update check,
 `/pre-pr` review gate) follows next, before the CHECKPOINT commit.
+
+---
+
+## 2026-08-15 — Phase 2 checkpoint: phase-end checklist
+
+Ran the seven-item phase-end checklist from `CLAUDE.md` against Phase 2
+before tagging CHECKPOINT.
+
+**1. End-to-end testing** — no single walkthrough needed; per-task live
+verification already covered the full loop repeatedly across P2.T1–T4
+(publish → Kafka message read directly off the topic; hand-replayed
+duplicate messages; `GET /search` through Traefik against real published
+events; pagination/sorting over a real multi-event set). Re-confirmed the
+validation checkpoint explicitly one more time as a single pass: create →
+publish → appears in search within the consistency window → delete →
+disappears → duplicate Kafka delivery changes nothing. All held.
+
+**2. Report writing** — drafted this phase's evidence into five existing
+chapter files rather than leaving it only in `build-log.md`:
+`class-diagrams.md` (Search Service's Manager+Repository shape, and why a
+non-SQL-store Repository doesn't break the pattern), `testing-strategy.md`
+(the Kafka+ES `testcontainers` pattern, the eventual-consistency and
+redelivery tests as concrete proof rather than claims, and the Docker-disk
+incident as a citable "why the integration tier exists" example),
+`technologies-used.md` (Kafka's status upgraded from smoke-tested to
+Implemented/Tested; new Elasticsearch entry), `requirement-gathering.md`
+(the publish-endpoint roles/permissions row, and the §15 amendment
+explained in requirements terms), `database-schema-design.md` (the ES
+index mapping, alongside the existing Postgres/Mongo schemas). Chapter
+status table in `docs/report/README.md` updated to match all five.
+
+**3. Commit history & file scan** — six Phase 2 commits (`aa8ded2..HEAD`
+before this checkpoint), each a real, complete unit of work, none
+commit-spam. Full diff scanned for emoji, `TODO`/`FIXME`/`XXX`, and casual
+language — none found. `LICENSE` still absent, commit author identity
+unchanged.
+
+**4. `docs/architecture.html`** — retitled "Event & Search Services",
+badges updated (Phase 2 complete, 19 tasks, 10 containers). Topology
+diagram (§01) redrawn: `kafka`/`elasticsearch` moved from the idle row into
+an active publish → consume → index chain, `search-service` added, Redis
+is now the only idle box. New §03 sequence diagram traces the full publish
+→ Kafka → consumer → Elasticsearch flow including the eventual-consistency
+window and the redelivery/duplicate-delete cases side by side. Both
+diagrams rendered and visually checked via a local preview (`python3 -m
+http.server` + Playwright screenshots) before committing — caught and fixed
+one real overlap (a routing-priority label crossing straight through the
+Postgres/MongoDB boxes) rather than shipping it unchecked. "What's proven"
+checklist and the reproduce-yourself commands both updated for the new
+publish → search flow.
+
+**5. `decisions-log.md` delta check** — one real delta this phase, already
+logged inline under §15 at P2.T1 time (the `DRAFT`/`PUBLISHED` two-state
+model kept and a dedicated `publish` endpoint added, rather than the
+original single-step "creation = publishing" wording) rather than deferred
+to this checkpoint. Nothing else this phase changed a locked decision — the
+Traefik routing behavior and Kafka topic naming are implementation details
+within already-decided architecture, not decisions-log material.
+
+**6. `CLAUDE.md` self-update check** — added two convention notes: how a
+service with no SQL/Mongo of its own (Elasticsearch, not a source of
+truth) still fits the `db/`-holds-Repositories layering shape, and the new
+Traefik routing rule (specific `PathPrefix` per service beyond
+`event-service`, verified via Traefik's own router API rather than
+assumed).
+
+**7. Review gate** — `/pre-pr` (simplify → code-review → verify) against
+the diff from `aa8ded2` (last Phase 1 commit) to this checkpoint follows
+next, as its own entry once it completes.

@@ -145,10 +145,49 @@ specifically to keep the local resource footprint down (one fewer
 long-running process) without giving up anything this project actually
 needs from Kafka.
 
-**Status:** Tested (isolated smoke test only — no service depends on it
-yet). A throwaway `aiokafka` producer/consumer round-trip proves the broker
-itself works end-to-end: a message produced is consumed back and asserted
-equal. Real integration wiring begins in Phase 2 (search indexing).
+**Status:** Implemented, Tested (Phase 2 — first real integration point,
+event↔search, §7.1). Event Service's `aiokafka` producer publishes a keyed
+message (event ID as the partition/idempotency key) on the event's `publish`
+action and on any update/delete while `PUBLISHED`; Search Service's consumer
+processes it into Elasticsearch. Idempotency verified two ways: unit tests
+against a mocked repository, and live against the real stack by hand-
+replaying an identical Kafka message via `kafka-console-producer` and
+confirming the document count never grows past one (an upsert-by-ID
+overwrites; `_version` increments, no duplicate). A redelivered delete
+against an already-deleted document is caught and logged as a no-op rather
+than raising. `testcontainers`' `KafkaContainer` (Confluent image, KRaft
+mode) backs the integration suite — a different image than the compose
+stack's `apache/kafka`, since that container helper's bootstrap scripts are
+Confluent-specific; noted as a test-infrastructure detail, not a production
+concern.
+
+## Elasticsearch (search index)
+
+**What:** a document search engine, populated exclusively via the Kafka
+consumer above — never queried back into Event Service, and never treated
+as a source of truth (§8).
+
+**Why:** free-text search across title/description/venue/performers with
+relevance ranking is the kind of query a relational database handles
+poorly compared to a purpose-built search index; Elasticsearch was already
+the architecturally locked choice (decisions-log §8) specifically for this
+role. Populated asynchronously via Kafka rather than synchronously from
+Event Service writes, so a slow or unavailable search index can never block
+an organizer's write path — the same reasoning behind every other
+Kafka-mediated integration point in this system.
+
+**Status:** Implemented, Tested. Single-node local topology
+(`discovery.type=single-node`, per §12/§24); the index is created with
+`number_of_replicas: 0` since a replica could never be assigned to a
+second node that doesn't exist in this topology, and service startup
+blocks on `cluster.health(wait_for_status="yellow")` so nothing reports
+healthy before its shards are actually assigned — a real fix, not
+precautionary, after a Docker Desktop disk-space incident during test
+development surfaced that a fresh index can otherwise sit unready far
+longer than a caller might assume (see `docs/build-log.md`, P2.T3 entry).
+`GET /search` (free-text, paginated, sortable by relevance or `start_time`,
+every sort carrying an explicit tiebreaker to keep pagination stable)
+verified live end-to-end through Traefik against real published events.
 
 ## `uv` (Python tooling) and workspace structure
 

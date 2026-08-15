@@ -1,11 +1,11 @@
 # Class Diagrams
 
-*Status: draft, Event Service only — Phase 1 evidence. Booking Service's
-diagram (Phase 3) will additionally show the `TicketHoldStrategy` interface
-— the one place this codebase genuinely branches between alternate
-execution paths (see the Internal per-service layering decision in
-`CLAUDE.md`); Event Service has no equivalent, every feature here is
-single-path.*
+*Status: draft, Event Service (Phase 1) and Search Service (Phase 2)
+evidence so far. Booking Service's diagram (Phase 3) will additionally show
+the `TicketHoldStrategy` interface — the one place this codebase genuinely
+branches between alternate execution paths (see the Internal per-service
+layering decision in `CLAUDE.md`); neither service below has an equivalent,
+every feature in each is single-path.*
 
 ## Event Service — Manager + Repository per feature
 
@@ -114,3 +114,59 @@ repository.
 **Status:** Implemented, Tested — reflects the actual class structure
 under `services/event-service/app/logic/` and `app/db/` as of Phase 1, not
 a target design.
+
+## Search Service — Manager + Repository, adapted for a non-SQL store
+
+```mermaid
+classDiagram
+    class SearchManager {
+        -_index: EventIndexRepository
+        +search(query, limit, offset, sort_field, sort_order) SearchResponse
+        -_to_item(hit) SearchResultItem
+    }
+
+    class EventIndexRepository {
+        -_client: AsyncElasticsearch
+        +ensure_index() void
+        +upsert(event_id, document) void
+        +delete(event_id) void
+        +search(query, limit, offset, sort_field, sort_desc) tuple
+    }
+
+    class EventConsumer {
+        -_consumer: AIOKafkaConsumer
+        -_repository: EventIndexRepository
+        +run() void
+        -_handle(raw) void
+    }
+
+    SearchManager --> EventIndexRepository
+    EventConsumer --> EventIndexRepository
+```
+
+## Why this shape
+
+Search Service has no Postgres or MongoDB of its own — Elasticsearch is
+explicitly not a source of truth (§8) — so `EventIndexRepository` plays the
+same role `EventRepository` plays in Event Service (query/write methods
+only, no business rules) against a different kind of store: an ES index
+instead of a SQL table. The Manager + Repository shape doesn't change; only
+what's underneath the Repository does. This is the same pattern extension
+`CLAUDE.md`'s Conventions section now documents explicitly, so the next
+service without its own database (Notification Service, per decisions-log
+§4) doesn't have to rediscover it.
+
+`EventConsumer` has no Manager above it — deliberately. Per the per-service
+layering decision, a Manager exists to give a multi-step use case a
+structured, named-step shape; an ES upsert-or-delete by ID *is* the whole
+operation, with nothing to sequence above it. Both `SearchManager` (serving `GET /search`) and `EventConsumer` (serving
+the Kafka integration point) depend on the same `EventIndexRepository`, so
+there is exactly one place that knows how to talk to Elasticsearch, even
+though the two entry points (HTTP route, Kafka message) never share a
+Manager — matching the "handlers construct the same `{Feature}Manager` the
+API routes use" convention's spirit of one business-logic path per
+datastore, just without a Manager in the middle on the consumer side.
+
+**Status:** Implemented, Tested — reflects the actual class structure
+under `services/search-service/app/logic/`, `app/db/`, and `app/kafka/` as
+of Phase 2.

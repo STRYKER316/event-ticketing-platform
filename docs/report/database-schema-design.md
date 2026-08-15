@@ -1,8 +1,8 @@
 # Database Schema Design
 
-*Status: draft, Event Service only — Phase 1 evidence. `booking_db` and
-`payment_db` schemas are added in later phases and will extend this
-chapter, not replace it.*
+*Status: draft, Event Service (Phase 1) and Search Service's Elasticsearch
+index (Phase 2) evidence so far. `booking_db` and `payment_db` schemas are
+added in later phases and will extend this chapter, not replace it.*
 
 ## `event_db` (Postgres) — ER diagram
 
@@ -116,3 +116,49 @@ via Pydantic (`SeatMap`/`SeatMapSection`/`SeatMapRow`/`Seat` in
 `api/schemas.py`) before ever reaching MongoDB — malformed shapes are
 rejected before a write is attempted, not caught downstream. Store/fetch/
 delete round-trip verified live against a real MongoDB container.
+
+## Search Service's Elasticsearch index (Phase 2)
+
+Deliberately not a database in the schema sense above — no relations, no
+migrations, no source-of-truth claim (§8). Included in this chapter anyway
+because it's the third and final storage shape this system uses (relational
+Postgres, document Mongo, search-index Elasticsearch), and the report
+should show all three rather than silently dropping the one that isn't SQL.
+
+```json
+{
+  "mappings": {
+    "properties": {
+      "event_id": { "type": "keyword" },
+      "title": { "type": "text" },
+      "description": { "type": "text" },
+      "start_time": { "type": "date" },
+      "end_time": { "type": "date" },
+      "venue_name": { "type": "text" },
+      "performer_names": { "type": "text" },
+      "seats": {
+        "type": "nested",
+        "properties": {
+          "section": { "type": "keyword" },
+          "row": { "type": "keyword" },
+          "label": { "type": "keyword" }
+        }
+      }
+    }
+  },
+  "settings": { "number_of_replicas": 0 }
+}
+```
+
+One document per event, indexed by event ID, entirely reconstructed from
+the Kafka payload Event Service publishes (§7.2) — the mapping is a mirror
+of that message shape, not an independent schema design. `number_of_replicas: 0`
+is a deliberate consequence of the single-node local/demo topology (§12,
+§24): a replica could never be assigned to a second node that doesn't
+exist, so leaving the default of 1 would hold cluster health at `yellow`
+forever for no reason.
+
+**Status:** Implemented, Tested. Verified live: `GET /events/_mapping`
+against the running index matches the mapping above; index created
+idempotently on service boot (`HEAD` 404 → `PUT` 200 the first time,
+`HEAD` 200 and no-op every time after).

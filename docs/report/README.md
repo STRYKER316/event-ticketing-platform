@@ -20,13 +20,13 @@ repo, never an aspirational one.
 | Chapter | Status | Fed by | File |
 |---|---|---|---|
 | Project Description | Draft (partial) | P0 topology figure, architecture recap | `project-description.md` |
-| Requirement Gathering | Draft (partial — Event Service roles only) | P1.T5 (roles table); booking/payment/refund flows still to come | `requirement-gathering.md` |
-| Class Diagrams | Draft (partial — Event Service only) | P1.T4; Booking (P3.T1) and Payment (P4.T1) diagrams still to come | `class-diagrams.md` |
-| Database Schema Design | Draft (partial — `event_db` + seat-map docs only) | P1.T2 (ER + textual); `booking_db`/`payment_db` still to come | `database-schema-design.md` |
+| Requirement Gathering | Draft (partial — Event/Search Service roles only) | P1.T5 (roles table), P2.T1 (publish-step amendment); booking/payment/refund flows still to come | `requirement-gathering.md` |
+| Class Diagrams | Draft (partial — Event Service + Search Service) | P1.T4, P2.T2–T4; Booking (P3.T1) and Payment (P4.T1) diagrams still to come | `class-diagrams.md` |
+| Database Schema Design | Draft (partial — `event_db`, seat-map docs, ES index) | P1.T2 (ER + textual), P2.T2 (ES mapping); `booking_db`/`payment_db` still to come | `database-schema-design.md` |
 | Feature Development Process | Not started — blocked on P8 | P8 benchmark (measured), P3 hold-strategy design | — |
-| Testing Strategy | Draft (partial — pattern established, one suite) | P1.T6 (`testcontainers` first use); every later phase's suite | `testing-strategy.md` |
+| Testing Strategy | Draft (partial — pattern extended to Kafka+ES) | P1.T6 (`testcontainers` first use), P2.T3/T5 (Kafka consumer redelivery + eventual-consistency testing); every later phase's suite | `testing-strategy.md` |
 | Deployment Flow | Not started — blocked on P10 | P10.T1–T4 | — |
-| Technologies Used | Draft (partial, running list) | every phase's tech | `technologies-used.md` |
+| Technologies Used | Draft (partial, running list) | every phase's tech, incl. P2's Kafka integration + Elasticsearch | `technologies-used.md` |
 | Conclusion (Limitations/Future Work) | Not started — drafted last, P11.T3 | decisions-log §26 pull-list | — |
 | Abstract | Not started — written last, P11.T1 | whole report | — |
 

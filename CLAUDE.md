@@ -267,7 +267,21 @@ issues worth locking in against:
 - **Never query inside a loop.** Any endpoint assembling a response across multiple
   related records bulk-fetches first (`.in_()`-style filters), then assembles in memory.
 - New service = copy the `event-service` template (built in P0.T5 — app factory,
-  `core.py`, Manager+Repository layering), don't hand-roll a second pattern.
+  `core.py`, Manager+Repository layering), don't hand-roll a second pattern. For a
+  service with no SQL/Mongo of its own (e.g. `search-service` — Elasticsearch is not a
+  source of truth, §8), the `db/` folder still holds Repository classes with the same
+  query/write-only discipline, just against a different client (an ES `Repository`
+  instead of SQLAlchemy models) — the layering shape doesn't change, only what's
+  underneath it.
+- **Traefik routing: every new service after `event-service` gets a specific
+  `PathPrefix` matching its actual resource routes** (e.g. `search-service` →
+  `PathPrefix('/search')`), not a second catch-all. `event-service` itself keeps its
+  original `PathPrefix('/')` as the implicit fallback — left as-is on purpose rather
+  than retrofitted, since Traefik v3's default router priority scales with rule length,
+  so any more-specific rule automatically wins over it for the paths it actually covers
+  (no explicit `priority` label needed). Verify this via Traefik's own API
+  (`GET :8080/api/http/routers`) when adding a new service's route, not just by
+  assuming it works.
 - Update this file after each phase checkpoint if conventions, commands, or structure
   shift — treat it as living documentation, not a one-time snapshot.
 

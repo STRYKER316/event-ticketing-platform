@@ -28,9 +28,11 @@ omission (Conventions, `CLAUDE.md`):
 | `GET /events`, `GET /events/{id}` | Allow | Allow | Allow | Allow |
 | `GET /events/{id}/seat-map` | Allow | Allow | Allow | Allow |
 | `GET /venues/{id}` | Allow | Allow | Allow | Allow |
-| `POST /events` | 401 | 403 | Allow (becomes owner) | — |
+| `POST /events` | 401 | 403 | Allow (becomes owner, `DRAFT`) | — |
+| `POST /events/{id}/publish` | 401 | 403 | **403** | Allow (`DRAFT`→`PUBLISHED`) |
 | `PATCH /events/{id}` | 401 | 403 | **403** | Allow |
 | `DELETE /events/{id}` | 401 | 403 | **403** | Allow |
+| `GET /search` (Search Service) | Allow | Allow | Allow | Allow |
 
 The bolded cells are the requirement that role checking alone cannot
 satisfy: `organizer` is necessary but not sufficient (§15). A second,
@@ -46,6 +48,21 @@ exercised live against a running Keycloak instance with real seed users
 (`alice`: `user` only: `bob`, `carol`: both `user` and `organizer`, distinct
 subjects) during Phase 1 — not inferred from reading the route
 declarations. See `docs/architecture.html` §2 for the traced sequence.
+
+**Phase 2 addition — publish as its own step.** Event Service originally
+shipped `POST /events` creating an event directly in a `PUBLISHED` state
+per decisions-log §15's original "creation = publishing" wording, but the
+actual Phase 1 build used a `DRAFT`/`PUBLISHED` model with no way to reach
+`PUBLISHED` at all — an open scope question deliberately left at the Phase
+1 checkpoint. Resolved in Phase 2 once the Kafka producer needed a concrete
+answer for "when does an event become visible to Search": kept the two-
+state model and added `POST /events/{id}/publish` as the same
+role-plus-ownership-scoped write pattern as every other mutating endpoint,
+logged as an explicit amendment to §15 rather than a silent implementation
+detail (decisions-log is the normative record; see its §15 for the full
+amendment text). `GET /search` needs no role distinction at all — every
+actor sees the same published-event index, consistent with "browse/search"
+being explicitly anonymous-accessible scope (§2).
 
 ## What this chapter still needs
 
