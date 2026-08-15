@@ -1,0 +1,99 @@
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+from app.api.schemas import Seat, SeatMap, SeatMapRow, SeatMapSection
+from app.core import get_mongo_db, get_session_factory
+from app.db.event_repository import EventRepository
+from app.db.models import Event, EventStatus, Performer, Venue
+from app.db.performer_repository import PerformerRepository
+from app.db.seat_map_repository import SeatMapRepository
+from app.db.venue_repository import VenueRepository
+
+SEED_ORGANIZER_ID = "seed-organizer"
+
+
+def _rectangular_seat_map(rows: int, seats_per_row: int) -> SeatMap:
+    sections = [
+        SeatMapSection(
+            name="General",
+            rows=[
+                SeatMapRow(
+                    name=str(row),
+                    seats=[Seat(label=f"{row}-{seat}", x=float(seat), y=float(row)) for seat in range(1, seats_per_row + 1)],
+                )
+                for row in range(1, rows + 1)
+            ],
+        )
+    ]
+    return SeatMap(event_id="", sections=sections)
+
+
+async def seed(session_factory, mongo_db) -> None:
+    async with session_factory() as session:
+        events = await EventRepository(session).list(limit=1, offset=0, sort_field="start_time", sort_desc=False)
+        if events:
+            print("Seed data already present, skipping.")
+            return
+
+        venues = [
+            Venue(name="Riverside Arena", address="1 River Rd, Springfield", capacity=8000),
+            Venue(name="Downtown Theater", address="42 Main St, Springfield", capacity=1200),
+        ]
+        performers = [
+            Performer(name="The Wandering Notes", bio="Indie rock quartet"),
+            Performer(name="Springfield Philharmonic", bio="City orchestra"),
+            Performer(name="Comedy Night Live", bio="Stand-up showcase"),
+        ]
+        session.add_all(venues + performers)
+        await session.flush()
+
+        now = datetime.now(timezone.utc)
+        events = [
+            Event(
+                title="Wandering Notes: Reunion Tour",
+                description="First show in five years.",
+                start_time=now - timedelta(days=10),
+                end_time=now - timedelta(days=10) + timedelta(hours=3),
+                status=EventStatus.PUBLISHED,
+                organizer_id=SEED_ORGANIZER_ID,
+                venue_id=venues[0].id,
+            ),
+            Event(
+                title="Philharmonic: Spring Concert",
+                description="An evening of classical favorites.",
+                start_time=now + timedelta(days=14),
+                end_time=now + timedelta(days=14) + timedelta(hours=2),
+                status=EventStatus.PUBLISHED,
+                organizer_id=SEED_ORGANIZER_ID,
+                venue_id=venues[1].id,
+            ),
+            Event(
+                title="Comedy Night Live: Spring Showcase",
+                description="Five comedians, one stage.",
+                start_time=now + timedelta(days=30),
+                end_time=now + timedelta(days=30) + timedelta(hours=2),
+                status=EventStatus.PUBLISHED,
+                organizer_id=SEED_ORGANIZER_ID,
+                venue_id=venues[1].id,
+            ),
+        ]
+        events[0].performers = [performers[0]]
+        events[1].performers = [performers[1]]
+        events[2].performers = [performers[2]]
+        session.add_all(events)
+        await session.commit()
+
+        seat_map_repo = SeatMapRepository(mongo_db)
+        seat_map = _rectangular_seat_map(rows=10, seats_per_row=20)
+        seat_map.event_id = str(events[0].id)
+        await seat_map_repo.upsert(seat_map)
+
+        print(f"Seeded {len(venues)} venues, {len(performers)} performers, {len(events)} events, 1 seat map.")
+
+
+async def main() -> None:
+    await seed(get_session_factory(), get_mongo_db())
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
