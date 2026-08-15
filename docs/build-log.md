@@ -1217,3 +1217,90 @@ a new gap, just the same one surfacing from a second angle.
 32/32 `event-service` tests green. Rebuilt and re-verified live: both new
 DTO rejections return 422 through the real running API, not just in the
 test suite.
+
+---
+
+## 2026-08-15 — Adversarial testing pass on Phase 0-2
+
+Asked to stress-test the full current surface (`_shared/auth`, `event-service`,
+`search-service`) from a malformed-input/malicious-input/data-consistency angle
+before Phase 3 (Booking Service) starts building on top of it. Ran six scripted
+test rounds directly against the live `docker compose` stack — real Keycloak
+tokens for `alice`/`bob`/`carol`, real Postgres/Mongo/Elasticsearch/Kafka, no
+mocks — plus one manual Kafka-outage resilience check, roughly 110 individual
+checks total.
+
+**Clean, no findings:** the JWT layer (`shared_auth`) rejected every forgery
+attempt tried — `alg: none`, tampered-payload role escalation with the stale
+original signature, unknown `kid`, truncated tokens, wrong auth scheme, a role
+claimed in the request body instead of the token — and ownership scoping
+(organizer-but-not-owner) held on every event mutation route. Search-service's
+`multi_match`-based query held up against Lucene/query-string-injection-style
+input, unicode, and the `max_result_window` pagination boundary. The Kafka
+integration point proved genuinely idempotent under redelivery and survived a
+batch of malformed messages (garbage bytes, wrong JSON shape, invalid `action`,
+bad UUIDs) without dropping the consumer loop or leaving a bad document behind.
+`event-service`/`search-service` are not reachable directly, only through
+Traefik — the gateway boundary holds.
+
+**Five real bugs found and fixed**, all self-contained to `event-service`:
+
+1. **No upper bound on `VenueCreate`/`EventCreate` string fields.** `name`
+   (>255), `address` (>500), `title` (>255) all crashed with an unhandled
+   `asyncpg.exceptions.StringDataRightTruncationError` — a raw 500, not the
+   422 the DTO boundary is supposed to guarantee (per this file's own
+   convention). Fixed with `max_length` on each field matching its Postgres
+   column (`schemas.py`).
+2. **NUL bytes (`\x00`) in the same fields → 500**, an unhandled Postgres
+   rejection. Fixed with a shared `AfterValidator` applied to every bounded
+   string field.
+3. **No upper bound on `VenueCreate.capacity` → 500** once it exceeded
+   Postgres's `int4` range (`NumericValueOutOfRangeError`). Fixed with
+   `Field(le=2_147_483_647)`.
+4. **`DELETE /events/{id}` not safe under concurrent duplicate requests.**
+   Ten concurrent deletes against the same event returned five 204s and five
+   404s, not one 204 and nine 404s — `EventRepository.delete()` used
+   `session.delete(obj)` + `flush()`, which doesn't surface whether the row
+   actually still existed, so a delete that raced and lost still reported
+   success and still re-fired its Kafka `deleted` message and Mongo seat-map
+   cleanup. Downstream idempotency contained the actual damage (no duplicate
+   documents, no crash), but the 204 contract itself was being violated.
+   Fixed by switching to a Core-level `DELETE` and checking `rowcount`;
+   `EventManager.delete_event` now raises 404 when it comes back `False`.
+5. **No timeout on the Kafka producer → ~40s hang under a broker outage**,
+   then a bare 500. Verified live: stopped Kafka, called publish — Postgres
+   committed `status=published` immediately (the already-documented
+   "commit-first, side-effect-after" residual risk from the P2.T1 kickoff
+   prompt), but the HTTP call hung for exactly 40.06s (aiokafka's default
+   `request_timeout_ms`) before failing. The data-drift itself was already
+   accepted; the undocumented part was the 40s synchronous hang, an
+   availability/thread-exhaustion concern under load on top of the
+   consistency question. Confirmed the event sat published-in-Postgres but
+   absent from search until a later mutation republished it and it
+   self-healed. Fixed by setting `request_timeout_ms=10_000` on the
+   producer — restarted Kafka, repeated the same live test, hang dropped to
+   10.1s.
+
+Minor/cosmetic, left as noted rather than fixed: `SeatMapUpsert` accepts
+`NaN`/`Infinity` for seat `x`/`y` (Pydantic's default `allow_inf_nan=True`),
+which round-trip back as `null` on read — a quiet violation of `SeatMap`'s own
+non-optional `float` type on the response side. Not one of the five fixed
+here; flagged for whenever seat-map schema work is next touched.
+
+Every fix got a matching regression test in the real suite, not just the
+adversarial scripts: 8 new DTO tests (`test_event_schemas.py` — length caps at
+exactly the DB column boundary, NUL-byte rejection, capacity at/over the
+`int4` max), 1 new manager unit test (`test_event_manager_ownership.py` —
+`delete_event` returns 404 when the repository reports the row already gone),
+1 new integration test against real Postgres (`test_event_flow.py` — deleting
+the same already-fetched `Event` object twice, second call's rowcount is 0).
+42/42 `event-service` tests green, 18/18 `search-service` tests green
+(unaffected, run as a regression check). All five fixes re-verified live
+against the rebuilt containers after the automated suite passed, including
+re-running the Kafka-outage timing check by hand.
+
+No decisions-log delta — nothing here changes a locked decision, this is
+hardening existing endpoints against inputs the original implementation
+didn't anticipate. No `CLAUDE.md` update needed — the fixes follow existing
+conventions (DTO boundary validation, Manager-owns-the-transaction) rather
+than introducing new ones.

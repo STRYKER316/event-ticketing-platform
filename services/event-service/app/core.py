@@ -155,7 +155,13 @@ async def get_kafka_producer() -> AIOKafkaProducer:
     # both start a producer — the loser's connection is then never stopped.
     async with _kafka_producer_lock:
         if _kafka_producer is None:
-            producer = AIOKafkaProducer(bootstrap_servers=get_settings().kafka_bootstrap_servers)
+            # aiokafka's default request_timeout_ms is 40000 -- under a broker outage
+            # that leaves a publish-triggering request (already past its Postgres
+            # commit) hanging for 40s before the client sees a failure. 10s still
+            # tolerates real broker slowness while failing fast enough to matter.
+            producer = AIOKafkaProducer(
+                bootstrap_servers=get_settings().kafka_bootstrap_servers, request_timeout_ms=10_000
+            )
             await producer.start()
             _kafka_producer = producer
     return _kafka_producer

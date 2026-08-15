@@ -1,5 +1,6 @@
 import uuid
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -43,6 +44,11 @@ class EventRepository:
         result = await self._session.execute(select(func.count()).select_from(Event))
         return result.scalar_one()
 
-    async def delete(self, event: Event) -> None:
-        await self._session.delete(event)
+    async def delete(self, event: Event) -> bool:
+        # A Core-level DELETE (rather than session.delete()+flush()) lets us read back
+        # rowcount: under concurrent duplicate deletes, the loser's DELETE matches zero
+        # rows once the winner has already committed, and the caller needs to know that
+        # so it can report 404 instead of a false 204.
+        result = await self._session.execute(sa_delete(Event).where(Event.id == event.id))
         await self._session.flush()
+        return result.rowcount > 0

@@ -75,3 +75,52 @@ def test_seat_map_upsert_accepts_valid_payload():
         sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
     )
     assert len(upsert.sections) == 1
+
+
+def test_venue_create_rejects_name_over_the_db_column_limit():
+    # events.name is varchar(255) -- an over-length value must be a clean 422 at the
+    # DTO boundary, not an unhandled asyncpg.StringDataRightTruncationError at commit.
+    with pytest.raises(ValidationError):
+        VenueCreate(name="A" * 256, address="1 Main St", capacity=100)
+
+
+def test_venue_create_rejects_address_over_the_db_column_limit():
+    with pytest.raises(ValidationError):
+        VenueCreate(name="Arena", address="A" * 501, capacity=100)
+
+
+def test_venue_create_rejects_capacity_beyond_postgres_int4_range():
+    with pytest.raises(ValidationError):
+        VenueCreate(name="Arena", address="1 Main St", capacity=2_147_483_648)
+
+
+def test_venue_create_accepts_capacity_at_postgres_int4_max():
+    venue = VenueCreate(name="Arena", address="1 Main St", capacity=2_147_483_647)
+    assert venue.capacity == 2_147_483_647
+
+
+def test_venue_create_rejects_nul_byte_in_name():
+    with pytest.raises(ValidationError):
+        VenueCreate(name="Are\x00na", address="1 Main St", capacity=100)
+
+
+def test_event_create_rejects_title_over_the_db_column_limit():
+    # events.title is varchar(255), same failure mode as the venue name above.
+    with pytest.raises(ValidationError):
+        EventCreate(title="A" * 256, start_time=FUTURE, end_time=FUTURE + timedelta(hours=2), venue_id=uuid.uuid4())
+
+
+def test_event_create_rejects_description_over_the_db_column_limit():
+    with pytest.raises(ValidationError):
+        EventCreate(
+            title="t",
+            description="A" * 5001,
+            start_time=FUTURE,
+            end_time=FUTURE + timedelta(hours=2),
+            venue_id=uuid.uuid4(),
+        )
+
+
+def test_event_create_rejects_nul_byte_in_title():
+    with pytest.raises(ValidationError):
+        EventCreate(title="ti\x00tle", start_time=FUTURE, end_time=FUTURE + timedelta(hours=2), venue_id=uuid.uuid4())

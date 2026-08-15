@@ -125,7 +125,13 @@ class EventManager:
         event = await self._fetch_owned_event(user, event_id)
         self._check_no_bookings(event)
         was_published = event.status is EventStatus.PUBLISHED
-        await self._events.delete(event)
+        deleted = await self._events.delete(event)
+        if not deleted:
+            # Lost a race with a concurrent duplicate delete: the row was already gone
+            # by the time our DELETE ran. Report it the same way a fresh 404 would --
+            # not a second success with a second round of side effects.
+            logger.warning("event_delete_race_lost", event_id=str(event_id))
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
         await self._session.commit()
         await self._seat_maps.delete(event_id)
         if was_published:

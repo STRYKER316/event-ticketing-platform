@@ -237,6 +237,31 @@ async def test_deleting_a_draft_event_does_not_notify_producer(db_session: Async
     producer.publish_deleted.assert_not_awaited()
 
 
+async def test_repository_delete_reports_false_when_the_row_is_already_gone(
+    db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
+):
+    # Regression test against real Postgres for the concurrent-delete race (§ EventManager
+    # .delete_event): two concurrent requests can each load the same Event row before
+    # either one deletes it. Simulate that by deleting the same already-fetched ORM
+    # object twice -- the real DELETE's rowcount must be 0 the second time, so the
+    # repository reports False instead of a false "deleted" signal.
+    venue = await _seed_venue(db_session)
+    manager = EventManager(db_session, mongo_db, producer=AsyncMock())
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+
+    created = await manager.create_event(
+        ORGANIZER,
+        EventCreate(title="Deleted Twice", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+    )
+    event = await manager._events.get_by_id(created.id)
+
+    first = await manager._events.delete(event)
+    second = await manager._events.delete(event)
+
+    assert first is True
+    assert second is False
+
+
 async def test_cross_organizer_update_is_rejected(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
     venue = await _seed_venue(db_session)
     manager = EventManager(db_session, mongo_db, producer=AsyncMock())

@@ -37,7 +37,7 @@ def make_manager(event: Event) -> EventManager:
     manager._session.commit = AsyncMock()
     manager._events = MagicMock()
     manager._events.get_by_id = AsyncMock(return_value=event)
-    manager._events.delete = AsyncMock()
+    manager._events.delete = AsyncMock(return_value=True)
     manager._seat_maps = MagicMock()
     manager._seat_maps.delete = AsyncMock()
     manager._seat_maps.get_by_event_id = AsyncMock(return_value=None)
@@ -133,6 +133,24 @@ async def test_seat_map_upsert_republishes_a_published_event():
     published_event, published_seat_map = manager._producer.publish_upserted.await_args.args
     assert published_event is event
     assert published_seat_map.sections[0].name == "A"
+
+
+async def test_delete_reports_not_found_when_a_concurrent_delete_won_the_race():
+    # Repository.delete() returns False when its DELETE matched zero rows -- the
+    # row was already gone by the time this request's statement ran. The manager
+    # must treat that as a 404, not a second success with a second round of
+    # side effects (duplicate Kafka `deleted` message, redundant Mongo delete).
+    event = make_event()
+    manager = make_manager(event)
+    manager._events.delete = AsyncMock(return_value=False)
+    user = Principal(subject=OWNER_SUBJECT, roles=["organizer"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.delete_event(user, event.id)
+
+    assert exc_info.value.status_code == 404
+    manager._session.commit.assert_not_awaited()
+    manager._seat_maps.delete.assert_not_awaited()
 
 
 async def test_update_rejects_end_time_before_existing_start_time():

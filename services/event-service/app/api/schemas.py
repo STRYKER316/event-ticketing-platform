@@ -3,11 +3,32 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated
 
-from pydantic import AwareDatetime, BaseModel, Field, StringConstraints, field_validator, model_validator
+from pydantic import AfterValidator, AwareDatetime, BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from app.db.models import EventStatus
 
-NonBlankStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+def _reject_nul_bytes(value: str) -> str:
+    # Postgres text columns reject an embedded NUL (0x00) outright; catching it here
+    # keeps that a clean 422 instead of an unhandled asyncpg error surfacing as a 500.
+    if "\x00" in value:
+        raise ValueError("must not contain NUL bytes")
+    return value
+
+
+_NoNulBytes = AfterValidator(_reject_nul_bytes)
+
+# Postgres int4 range -- caps DTO-level ints that map straight to an Integer column,
+# so an out-of-range value is a clean 422 instead of an unhandled NumericValueOutOfRangeError.
+POSTGRES_INT4_MAX = 2_147_483_647
+
+# Bounded variants mirror a specific DB column's max length (models.py) so an
+# overlong value is rejected at the DTO boundary rather than as a raw
+# StringDataRightTruncationError from asyncpg.
+VenueName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255), _NoNulBytes]
+VenueAddress = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500), _NoNulBytes]
+EventTitle = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255), _NoNulBytes]
+EventDescription = Annotated[str, StringConstraints(max_length=5000), _NoNulBytes]
 
 
 class HealthResponse(BaseModel):
@@ -34,9 +55,9 @@ class VenueResponse(BaseModel):
 
 
 class VenueCreate(BaseModel):
-    name: NonBlankStr
-    address: NonBlankStr
-    capacity: int
+    name: VenueName
+    address: VenueAddress
+    capacity: int = Field(le=POSTGRES_INT4_MAX)
 
     @field_validator("capacity")
     @classmethod
@@ -76,8 +97,8 @@ class EventListResponse(BaseModel):
 
 
 class EventCreate(BaseModel):
-    title: NonBlankStr
-    description: str | None = None
+    title: EventTitle
+    description: EventDescription | None = None
     start_time: AwareDatetime
     end_time: AwareDatetime
     venue_id: uuid.UUID
@@ -98,8 +119,8 @@ class EventCreate(BaseModel):
 
 
 class EventUpdate(BaseModel):
-    title: NonBlankStr | None = None
-    description: str | None = None
+    title: EventTitle | None = None
+    description: EventDescription | None = None
     start_time: AwareDatetime | None = None
     end_time: AwareDatetime | None = None
     venue_id: uuid.UUID | None = None
