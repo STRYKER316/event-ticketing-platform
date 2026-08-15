@@ -16,14 +16,12 @@ class JWKSCache:
         self._fetched_at: float = 0.0
 
     async def _fetch(self) -> None:
-        client = self._client or httpx.AsyncClient()
-        try:
-            response = await client.get(self._settings.jwks_uri, timeout=5.0)
-            response.raise_for_status()
-            jwks = response.json()
-        finally:
-            if self._client is None:
-                await client.aclose()
+        if self._client is None:
+            self._client = httpx.AsyncClient()
+
+        response = await self._client.get(self._settings.jwks_uri, timeout=5.0)
+        response.raise_for_status()
+        jwks = response.json()
 
         self._keys = {
             key["kid"]: PyJWK.from_dict(key)

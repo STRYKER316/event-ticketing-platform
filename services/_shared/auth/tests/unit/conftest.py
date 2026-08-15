@@ -40,13 +40,11 @@ class _StubJWKSCache(JWKSCache):
 
 
 def _public_key_to_jwk(public_key, kid: str) -> dict:
-    import base64
-
     numbers = public_key.public_numbers()
 
     def _b64(value: int) -> str:
         raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
-        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+        return jwt.utils.base64url_encode(raw).decode()
 
     return {
         "kty": "RSA",

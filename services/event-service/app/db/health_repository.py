@@ -1,3 +1,5 @@
+import asyncio
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,5 +11,7 @@ class HealthRepository:
         self._mongo_db = mongo_db
 
     async def ping(self) -> None:
-        await self._session.execute(text("SELECT 1"))
-        await self._mongo_db.command("ping")
+        await asyncio.gather(
+            self._session.execute(text("SELECT 1")),
+            self._mongo_db.command("ping"),
+        )
