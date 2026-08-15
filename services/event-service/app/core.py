@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from functools import lru_cache
 
 import structlog
+from aiokafka import AIOKafkaProducer
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -25,6 +26,9 @@ class Settings(BaseSettings):
     mongo_password: str = "changeme"
     mongo_event_db_name: str = "event_service"
     log_level: str = "INFO"
+
+    kafka_bootstrap_servers: str = "localhost:9094"
+    events_topic: str = "event.events"
 
     @property
     def database_url(self) -> str:
@@ -137,3 +141,22 @@ def close_mongo_client() -> None:
     if _mongo_client is not None:
         _mongo_client.close()
         _mongo_client = None
+
+
+_kafka_producer: AIOKafkaProducer | None = None
+
+
+async def get_kafka_producer() -> AIOKafkaProducer:
+    global _kafka_producer
+    if _kafka_producer is None:
+        producer = AIOKafkaProducer(bootstrap_servers=get_settings().kafka_bootstrap_servers)
+        await producer.start()
+        _kafka_producer = producer
+    return _kafka_producer
+
+
+async def close_kafka_producer() -> None:
+    global _kafka_producer
+    if _kafka_producer is not None:
+        await _kafka_producer.stop()
+        _kafka_producer = None

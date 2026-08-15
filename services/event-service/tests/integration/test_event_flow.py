@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -26,7 +27,7 @@ async def _seed_venue(session: AsyncSession) -> Venue:
 
 async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
     venue = await _seed_venue(db_session)
-    manager = EventManager(db_session, mongo_db)
+    manager = EventManager(db_session, mongo_db, producer=AsyncMock())
     start = datetime.now(timezone.utc) + timedelta(days=1)
 
     created = await manager.create_event(
@@ -53,9 +54,59 @@ async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_d
     assert await SeatMapRepository(mongo_db).get_by_event_id(created.id) is None
 
 
+async def test_publish_notifies_producer_and_republishes_on_update(
+    db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
+):
+    venue = await _seed_venue(db_session)
+    producer = AsyncMock()
+    manager = EventManager(db_session, mongo_db, producer=producer)
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+
+    created = await manager.create_event(
+        ORGANIZER,
+        EventCreate(title="Publishable Concert", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+    )
+    producer.publish_upserted.assert_not_awaited()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.publish_event(ORGANIZER, created.id)
+    assert exc_info.value.status_code == 422
+
+    seat_map = SeatMap(
+        event_id=created.id,
+        sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
+    )
+    await SeatMapRepository(mongo_db).upsert(seat_map)
+
+    published = await manager.publish_event(ORGANIZER, created.id)
+    assert published.status.value == "published"
+    producer.publish_upserted.assert_awaited_once()
+
+    await manager.update_event(ORGANIZER, created.id, EventUpdate(title="Renamed Concert"))
+    assert producer.publish_upserted.await_count == 2
+
+    await manager.delete_event(ORGANIZER, created.id)
+    producer.publish_deleted.assert_awaited_once_with(created.id)
+
+
+async def test_deleting_a_draft_event_does_not_notify_producer(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
+    venue = await _seed_venue(db_session)
+    producer = AsyncMock()
+    manager = EventManager(db_session, mongo_db, producer=producer)
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+
+    created = await manager.create_event(
+        ORGANIZER,
+        EventCreate(title="Never Published", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+    )
+
+    await manager.delete_event(ORGANIZER, created.id)
+    producer.publish_deleted.assert_not_awaited()
+
+
 async def test_cross_organizer_update_is_rejected(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
     venue = await _seed_venue(db_session)
-    manager = EventManager(db_session, mongo_db)
+    manager = EventManager(db_session, mongo_db, producer=AsyncMock())
     start = datetime.now(timezone.utc) + timedelta(days=1)
 
     created = await manager.create_event(

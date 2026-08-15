@@ -16,6 +16,7 @@ from app.api.schemas import (
     VenueResponse,
 )
 from app.core import get_mongo_db, get_session
+from app.kafka.producers import EventProducer, get_event_producer
 from app.logic.event_manager import EventManager
 from app.logic.venue_manager import VenueManager
 
@@ -30,9 +31,10 @@ async def list_events(
     sort_order: SortOrder = Query(default=SortOrder.ASC),
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    producer: EventProducer = Depends(get_event_producer),
 ) -> EventListResponse:
     """Public — no auth required."""
-    return await EventManager(session, mongo_db).list_events(limit, offset, sort_field, sort_order)
+    return await EventManager(session, mongo_db, producer).list_events(limit, offset, sort_field, sort_order)
 
 
 @router.get("/events/{event_id}", response_model=EventResponse)
@@ -40,9 +42,10 @@ async def get_event(
     event_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    producer: EventProducer = Depends(get_event_producer),
 ) -> EventResponse:
     """Public — no auth required."""
-    return await EventManager(session, mongo_db).get_event(event_id)
+    return await EventManager(session, mongo_db, producer).get_event(event_id)
 
 
 @router.get("/events/{event_id}/seat-map", response_model=SeatMap)
@@ -50,9 +53,10 @@ async def get_seat_map(
     event_id: uuid.UUID,
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    producer: EventProducer = Depends(get_event_producer),
 ) -> SeatMap:
     """Public — no auth required."""
-    return await EventManager(session, mongo_db).get_seat_map(event_id)
+    return await EventManager(session, mongo_db, producer).get_seat_map(event_id)
 
 
 @router.get("/venues/{venue_id}", response_model=VenueResponse)
@@ -67,9 +71,11 @@ async def create_event(
     user: Principal = Depends(require_role("organizer")),
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    producer: EventProducer = Depends(get_event_producer),
 ) -> EventResponse:
-    """Organizer-only."""
-    return await EventManager(session, mongo_db).create_event(user, payload)
+    """Organizer-only. Creates a DRAFT event — see POST /events/{id}/publish for the
+    step that makes it visible to Search and provisions tickets (§7.2, §15 delta)."""
+    return await EventManager(session, mongo_db, producer).create_event(user, payload)
 
 
 @router.patch("/events/{event_id}", response_model=EventResponse)
@@ -79,9 +85,24 @@ async def update_event(
     user: Principal = Depends(require_role("organizer")),
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    producer: EventProducer = Depends(get_event_producer),
 ) -> EventResponse:
     """Organizer-only, ownership-scoped: must own the event being updated."""
-    return await EventManager(session, mongo_db).update_event(user, event_id, payload)
+    return await EventManager(session, mongo_db, producer).update_event(user, event_id, payload)
+
+
+@router.post("/events/{event_id}/publish", response_model=EventResponse)
+async def publish_event(
+    event_id: uuid.UUID,
+    user: Principal = Depends(require_role("organizer")),
+    session: AsyncSession = Depends(get_session),
+    mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    producer: EventProducer = Depends(get_event_producer),
+) -> EventResponse:
+    """Organizer-only, ownership-scoped: must own the event being published.
+    DRAFT -> PUBLISHED, one-way; 409 if already published, 422 if no seat map
+    exists yet (§15 delta)."""
+    return await EventManager(session, mongo_db, producer).publish_event(user, event_id)
 
 
 @router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -90,6 +111,7 @@ async def delete_event(
     user: Principal = Depends(require_role("organizer")),
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
+    producer: EventProducer = Depends(get_event_producer),
 ) -> None:
     """Organizer-only, ownership-scoped: must own the event being deleted."""
-    await EventManager(session, mongo_db).delete_event(user, event_id)
+    await EventManager(session, mongo_db, producer).delete_event(user, event_id)

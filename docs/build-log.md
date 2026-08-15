@@ -681,3 +681,57 @@ real error visible only in the structured JSON log (`auth_token_malformed`,
 `warning` level) — not leaked to the client. This closes the review-gate
 gap on both Phase 0 and Phase 1; Phase 2 onward gets the check live from
 the start.
+
+---
+
+## 2026-08-15 — P2.T1: Event Service Kafka producer
+
+Generated `docs/phases/phase-2-kickoff.md` from the master plan's Phase 2
+section, then started on P2.T1.
+
+Before writing any producer code, hit a real design gap: Phase 1 shipped
+`Event.status` as `DRAFT`/`PUBLISHED` with `POST /events` defaulting to
+`DRAFT` and no publish path, flagged at the Phase 1 review as an open scope
+question rather than fixed. Decisions-log §15 says "creation = publishing,
+no separate draft/review state" — the two disagreed, and P2.T1 needed a real
+answer for when an event becomes visible to Kafka/Search. Asked the user
+directly rather than guessing; chose to keep the two-state model and add a
+dedicated publish step, logged as an amendment under §15 (decisions-log
+delta, not just a build-log note, since it genuinely extends a locked
+decision).
+
+Implementation: `EventProducer` (`app/kafka/producers.py`) wraps a lazily-
+started, module-singleton `AIOKafkaProducer` (same lifecycle pattern as the
+existing Mongo client singleton in `core.py`), keyed by event ID for
+ordering/idempotency per §7. Messages are event-carried state transfer per
+§7.2 — the full seat list (section/row/seat label), flattened from the Mongo
+seat-map document, travels with the event rather than a venue reference.
+Added `POST /events/{id}/publish` (organizer-only, ownership-scoped,
+`DRAFT`→`PUBLISHED` one-way, 409 if already published, 422 if no seat map
+exists yet — publishing without one would mean the Kafka payload can't
+actually carry a seat list). `update_event` re-publishes only if the event
+is currently `PUBLISHED` (a `DRAFT` edit has nothing to sync); `delete_event`
+fires a delete message only if the event was `PUBLISHED` before removal.
+`EventManager` now takes the producer as a constructor-injected dependency
+alongside the session and Mongo handle, consistent with "never self-fetched."
+
+`aiokafka` added to `event-service`'s dependencies; `KAFKA_BOOTSTRAP_SERVERS`
++ `EVENTS_TOPIC` wired into its compose entry, with `kafka: service_healthy`
+added to `depends_on` (event-service now genuinely depends on Kafka being up,
+not just Postgres/Mongo/Keycloak).
+
+Verified live against the real stack, not just the test suite: rebuilt and
+recreated the `event-service` container (the running one was still Phase-1
+code — a `curl` against `/publish` first came back a bare FastAPI 404 before
+the rebuild, which is what caught it), created a `DRAFT` event as carol,
+confirmed `POST /publish` 422s with no seat map, inserted a seat-map document
+directly via `mongosh` (no write API for seat maps exists yet — same gap
+`seed.py` already works around), published it, and read the real message off
+`event.events` with `kafka-console-consumer` — full payload, correct
+flattened seats. Then confirmed: publishing twice 409s; a `PATCH` on the now-
+`PUBLISHED` event produces a second `upserted` message with the new title;
+deleting it produces a `deleted` message. 15/15 `event-service` tests green
+(4 new unit tests for the publish 409/422/success paths, 2 new integration
+tests for the republish-on-update and delete-notification behavior against
+real Postgres+Mongo, existing tests updated for the new constructor
+parameter).

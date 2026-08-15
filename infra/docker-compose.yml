@@ -126,6 +126,8 @@ services:
       MONGO_USER: ${MONGO_USER}
       MONGO_PASSWORD: ${MONGO_PASSWORD}
       MONGO_EVENT_DB_NAME: event_service
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      EVENTS_TOPIC: event.events
       AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
       AUTH_EXPECTED_AUDIENCE: ticketing-services
       AUTH_JWKS_URI_OVERRIDE: http://keycloak:8080/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
@@ -135,6 +137,8 @@ services:
       mongodb:
         condition: service_healthy
       keycloak:
+        condition: service_healthy
+      kafka:
         condition: service_healthy
     labels:
       traefik.enable: "true"

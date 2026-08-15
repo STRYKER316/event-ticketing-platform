@@ -20,17 +20,19 @@ from app.db.models import Event, EventStatus, Performer, Venue
 from app.db.performer_repository import PerformerRepository
 from app.db.seat_map_repository import SeatMapRepository
 from app.db.venue_repository import VenueRepository
+from app.kafka.producers import EventProducer
 
 logger = structlog.get_logger()
 
 
 class EventManager:
-    def __init__(self, session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
+    def __init__(self, session: AsyncSession, mongo_db: AsyncIOMotorDatabase, producer: EventProducer):
         self._session = session
         self._events = EventRepository(session)
         self._venues = VenueRepository(session)
         self._performers = PerformerRepository(session)
         self._seat_maps = SeatMapRepository(mongo_db)
+        self._producer = producer
 
     async def list_events(
         self,
@@ -84,14 +86,40 @@ class EventManager:
         event = await self._fetch_owned_event(user, event_id)
         await self._apply_update(event, payload)
         await self._session.commit()
+        if event.status is EventStatus.PUBLISHED:
+            await self._republish(event)
+        return await self.get_event(event.id)
+
+    async def publish_event(self, user: Principal, event_id: uuid.UUID) -> EventResponse:
+        event = await self._fetch_owned_event(user, event_id)
+        if event.status is EventStatus.PUBLISHED:
+            logger.warning("event_already_published", event_id=str(event_id))
+            raise HTTPException(status.HTTP_409_CONFLICT, "event already published")
+        seat_map = await self._seat_maps.get_by_event_id(event_id)
+        if seat_map is None:
+            logger.warning("event_publish_missing_seat_map", event_id=str(event_id))
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "cannot publish an event without a seat map")
+        event.status = EventStatus.PUBLISHED
+        await self._session.commit()
+        await self._producer.publish_upserted(event, seat_map)
         return await self.get_event(event.id)
 
     async def delete_event(self, user: Principal, event_id: uuid.UUID) -> None:
         event = await self._fetch_owned_event(user, event_id)
         self._check_no_bookings(event)
+        was_published = event.status is EventStatus.PUBLISHED
         await self._events.delete(event)
         await self._session.commit()
         await self._seat_maps.delete(event_id)
+        if was_published:
+            await self._producer.publish_deleted(event_id)
+
+    async def _republish(self, event: Event) -> None:
+        seat_map = await self._seat_maps.get_by_event_id(event.id)
+        if seat_map is None:
+            logger.warning("published_event_missing_seat_map", event_id=str(event.id))
+            return
+        await self._producer.publish_upserted(event, seat_map)
 
     async def _fetch_owned_event(self, user: Principal, event_id: uuid.UUID) -> Event:
         event = await self._events.get_by_id(event_id)

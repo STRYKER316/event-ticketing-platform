@@ -33,13 +33,14 @@ def make_event(organizer_id: str = OWNER_SUBJECT) -> Event:
 
 
 def make_manager(event: Event) -> EventManager:
-    manager = EventManager(session=MagicMock(), mongo_db=MagicMock())
+    manager = EventManager(session=MagicMock(), mongo_db=MagicMock(), producer=AsyncMock())
     manager._session.commit = AsyncMock()
     manager._events = MagicMock()
     manager._events.get_by_id = AsyncMock(return_value=event)
     manager._events.delete = AsyncMock()
     manager._seat_maps = MagicMock()
     manager._seat_maps.delete = AsyncMock()
+    manager._seat_maps.get_by_event_id = AsyncMock(return_value=None)
     return manager
 
 
