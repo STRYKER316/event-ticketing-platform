@@ -1,4 +1,4 @@
-.PHONY: up down logs test seed migrate
+.PHONY: up down logs test seed migrate bench-up bench-down
 
 # Local dev workflow (§25). Run from repo root.
 
@@ -11,6 +11,21 @@ down:
 
 logs:
 	cd infra && docker compose --env-file ../.env logs -f
+
+# Brings up Prometheus + Grafana alongside the default stack (§11, §24) — on
+# demand for benchmark runs (P8) rather than part of every `make up`.
+# Grafana: http://localhost:$$GRAFANA_PORT (admin / $$GRAFANA_ADMIN_PASSWORD).
+bench-up:
+	@test -f .env || cp .env.example .env
+	cd infra && docker compose --env-file ../.env --profile benchmark up -d
+
+# `docker compose down` always tears down every enabled service project-wide
+# (it takes no service-name arguments) -- `--profile benchmark down` would
+# stop the whole stack, not just prometheus/grafana. `stop`+`rm` do accept
+# service names, so only the benchmark-profile containers are touched.
+bench-down:
+	cd infra && docker compose --env-file ../.env stop prometheus grafana
+	cd infra && docker compose --env-file ../.env rm -f prometheus grafana
 
 # Runs suites that don't require live infra (fully mocked deps). Suites that
 # need a running broker/DB (e.g. infra/kafka-smoke-test) are run separately,

@@ -13,6 +13,24 @@ docker compose --env-file ../.env up -d
 docker compose ps
 ```
 
+## Benchmark profile (Prometheus + Grafana, P8)
+
+Not part of the default stack — brought up on demand for benchmark runs
+(§6, §11, §24) via the `benchmark` compose profile:
+
+```sh
+make bench-up    # from repo root; docker compose --profile benchmark up -d
+make bench-down
+```
+
+Prometheus (`infra/prometheus/prometheus.yml`) scrapes `event-service`,
+`search-service`, and `booking-service`'s existing `/metrics` endpoints
+(`prometheus-fastapi-instrumentator`, wired since P0.T5 — no new
+instrumentation) every 5s. Grafana auto-provisions the Prometheus datasource
+and a `booking-service` dashboard
+(`infra/grafana/provisioning/dashboards/json/booking-service.json`)
+from `infra/grafana/provisioning/` on startup — no manual setup needed.
+
 ## Ports (host-mapped, from `.env`)
 
 | Service | Container | Host port | Notes |
@@ -28,6 +46,8 @@ docker compose ps
 | booking-service | `booking-service` | routed via Traefik only (no direct host port) | ticket provisioning consumer (Kafka #2, §7.2) + `POST /bookings` over `booking_db` and (if `HOLD_STRATEGY=redis`) Redis (§6, §8); `/healthz`, `/metrics` |
 | Traefik | `traefik` | 80 (entrypoint), `TRAEFIK_DASHBOARD_PORT` (8080, dashboard) | Docker-labels provider; `event-service` on `PathPrefix('/')`, `search-service` on `PathPrefix('/search')`, `booking-service` on `PathPrefix('/bookings')` |
 | docker-socket-proxy | `docker-socket-proxy` | internal only | nginx proxy in front of the Docker socket — see note below |
+| Prometheus | `prometheus` | `PROMETHEUS_PORT` (9090) | `benchmark` profile only (`make bench-up`) — scrapes `event-service`/`search-service`/`booking-service` `/metrics` every 5s (§11, §24) |
+| Grafana | `grafana` | `GRAFANA_PORT` (3000) | `benchmark` profile only (`make bench-up`) — Prometheus datasource and a `booking-service` dashboard (request rate, latency p50/p95/p99, error rate) auto-provisioned on startup; login `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` |
 
 All images are arm64-native (§24) — no Rosetta emulation expected on Apple Silicon.
 
