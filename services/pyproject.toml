@@ -1,5 +1,5 @@
 [tool.uv.workspace]
-members = ["_shared/auth", "event-service", "search-service"]
+members = ["_shared/auth", "event-service", "search-service", "booking-service"]
 
 [tool.uv]
 package = false

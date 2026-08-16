@@ -168,6 +168,41 @@ services:
       traefik.http.routers.search-service.rule: PathPrefix(`/search`)
       traefik.http.services.search-service.loadbalancer.server.port: "8002"
 
+  booking-service:
+    build:
+      context: ../services
+      dockerfile: booking-service/Dockerfile
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      BOOKING_DB_NAME: ${BOOKING_DB_NAME}
+      BOOKING_DB_USER: ${BOOKING_DB_USER}
+      BOOKING_DB_PASSWORD: ${BOOKING_DB_PASSWORD}
+      BOOKING_SERVICE_PORT: 8003
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      EVENTS_TOPIC: event.events
+      HOLD_STRATEGY: cron
+      AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
+      AUTH_EXPECTED_AUDIENCE: ticketing-services
+      AUTH_JWKS_URI_OVERRIDE: http://keycloak:8080/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    labels:
+      traefik.enable: "true"
+      # Same reasoning as search-service's rule above — more specific than
+      # event-service's catch-all PathPrefix(`/`), no explicit priority needed.
+      traefik.http.routers.booking-service.rule: PathPrefix(`/bookings`)
+      traefik.http.services.booking-service.loadbalancer.server.port: "8003"
+
   docker-socket-proxy:
     image: nginx:1.27-alpine
     volumes:

@@ -1,0 +1,36 @@
+[project]
+name = "booking-service"
+version = "0.1.0"
+description = "Booking service — booking_db (tickets, bookings, hold state); the double-booking-critical path"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.29",
+    "alembic>=1.13",
+    "structlog>=24.4",
+    "prometheus-fastapi-instrumentator>=7.0",
+    "aiokafka>=0.12",
+    "redis>=5.0",
+    "apscheduler>=3.10",
+    "shared-auth",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "httpx>=0.27",
+    "testcontainers[postgres,redis,kafka]>=4.9",
+]
+
+[tool.uv.sources]
+shared-auth = { workspace = true }
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
