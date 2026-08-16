@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 import shared_auth
 import structlog
 from aiokafka import AIOKafkaConsumer
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api import health
-from app.core import close_redis, configure_logging, dispose_engine, get_session_factory
+from app.core import close_redis, configure_logging, dispose_engine, get_session_factory, get_settings
 from app.kafka.consumers import ProvisioningConsumer, build_kafka_consumer
+from app.logic.helpers.hold_sweep import build_scheduler
 
 logger = structlog.get_logger()
 
@@ -31,15 +33,22 @@ def _log_if_died(task: asyncio.Task) -> None:
 async def lifespan(app: FastAPI):
     kafka_consumer: AIOKafkaConsumer | None = None
     consumer_task: asyncio.Task | None = None
+    # Only the cron strategy needs a sweep — Redis expires its own keys, no
+    # scheduler needed for that strategy (§6).
+    scheduler: AsyncIOScheduler | None = build_scheduler() if get_settings().hold_strategy == "cron" else None
     try:
         kafka_consumer = build_kafka_consumer()
         await kafka_consumer.start()
         consumer_task = asyncio.create_task(ProvisioningConsumer(kafka_consumer, get_session_factory()).run())
         consumer_task.add_done_callback(_log_if_died)
+        if scheduler is not None:
+            scheduler.start()
         yield
     finally:
         # try/finally so a failure partway through startup still closes
         # whatever was already opened, instead of leaking the consumer.
+        if scheduler is not None:
+            scheduler.shutdown(wait=False)
         if consumer_task is not None:
             consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
