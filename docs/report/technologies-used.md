@@ -407,3 +407,78 @@ short TTL/sweep interval, confirmed `"Added job
 actually fires and clears an abandoned booking (`hold_sweep_expired_
 stale_redis_bookings`, `count: 1`) — see the Testing Strategy chapter for
 the full live sequence.
+
+## Prometheus + Grafana (benchmark observability)
+
+**What:** Prometheus scrapes each service's existing `/metrics` endpoint
+(`prometheus-fastapi-instrumentator`, wired since P0.T5 — no new
+instrumentation needed); Grafana renders it. Run as a `benchmark`-profiled
+`docker-compose` pair (`make bench-up`/`make bench-down`), not part of the
+default local stack.
+
+**Why:** chosen over a hosted APM (Datadog, New Relic) or hand-rolled log
+scraping specifically for the local/on-demand fit decisions-log §11
+already calls for: no external account, no steady-state memory cost on the
+default stack, and the same scrape/dashboard config works unmodified
+whether the benchmark runs locally or (later) against the AWS deployment.
+Grafana's dashboard-as-JSON provisioning means the `booking-service`
+dashboard is checked into the repo (`infra/grafana/provisioning/`) and
+reproducible on any machine, not hand-built through the UI each time.
+
+**Status:** Implemented, Tested, Verified (P8.T1). Live-verified against
+the real stack: all three Prometheus scrape targets (`event-service`,
+`search-service`, `booking-service`) confirmed `up`; real traffic driven
+through Traefik against `POST /bookings`; the resulting `http_requests_total`
+counter increments and `http_request_duration_seconds_bucket` samples
+confirmed scraped; all four dashboard panel expressions (request rate,
+p50/p95/p99 latency, `POST /bookings` p95, 5xx error ratio) queried
+directly through Grafana's datasource-proxy API and confirmed to return
+real, non-placeholder values. See `docs/build-log.md`'s P8.T1 entry for two
+real provisioning bugs found and fixed during this verification (a
+nested-bind-mount failure, a datasource-UID mismatch) and one real mistake
+made and corrected (`make bench-down` briefly tore down the whole stack
+instead of just these two containers, before the target was rewritten).
+
+## Python asyncio load harness (`/benchmark`)
+
+**What:** a standalone script (`benchmark/run_benchmark.py`, its own
+`pyproject.toml`/`uv` environment, not part of the `/services` workspace)
+that provisions a fresh, self-contained seat pool via the real
+`event-service`/`booking-service` APIs, fires a fixed burst of concurrent
+clients at it via `asyncio.gather`, and measures successful/failed booking
+counts, hold-acquisition latency (p50/p95/p99), and time-to-release-after-
+abandonment — the three metrics decisions-log §6 calls for.
+
+**Why (over k6):** decisions-log §6 left "k6 or a multi-threaded harness"
+undecided; resolved 2026-08-16 in favor of the Python asyncio harness after
+confirming with the user. It reuses the exact `asyncio.gather`
+concurrent-client pattern already proven correct in P3.T7's concurrency
+suite (`test_concurrency_suite.py` — N clients racing one seat, exactly one
+winner), generalized from one contended seat to a pool of them, rather than
+introducing a new Go-based dependency this project touches nowhere else.
+The trade-off, made explicit rather than silently accepted: k6's built-in
+percentile/threshold reporting is hand-rolled here instead
+(`summarize_latencies()` in the harness) — a small, auditable cost against
+a project that stays Python end-to-end.
+
+**Load profile:** `seat_pool_size` tickets (default 30) provisioned fresh
+per run; `clients_per_seat` concurrent clients (default 10) race each
+pooled seat in one `asyncio.gather` burst — no gradual ramp. One extra
+ticket beyond the pool is reserved and deliberately left unconfirmed to
+measure the passive release path, observed by polling `booking_db`
+directly for `Booking.status` `PENDING` -> `EXPIRED` — the one signal both
+hold strategies actually produce on release (the cron strategy also flips
+`Ticket.status`; the Redis strategy never writes that column at all, per
+its own §6 design, so the Booking row is the only cross-strategy
+observation point).
+
+**Status:** Implemented, Tested (P8.T2). Live-verified against the real
+stack under both `HOLD_STRATEGY` values: a burst of 15 clients against a
+5-seat pool produced exactly 5 successes/10 failures (matching the pool
+size exactly, both times); the release-latency measurement confirmed
+against a temporarily shortened `HOLD_TTL_SECONDS=5`/
+`HOLD_SWEEP_INTERVAL_SECONDS=5` override, correctly returning ~6s under
+`cron` and ~8s under `redis` — both within the expected TTL-plus-one-sweep
+window for their respective release mechanisms. Full contention-burst and
+release-latency runs at the P8.T3/T4 fixed load profile, archived under
+`/docs`, are that phase's task, not this one's.

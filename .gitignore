@@ -16,6 +16,11 @@ build/
 .env.*
 !.env.example
 
+# Benchmark harness raw output (P8, §6) -- local scratch runs; the runs
+# that actually feed the report get copied to docs/ deliberately, not
+# every ad hoc invocation of this script.
+benchmark/results/*.json
+
 # Node / frontend
 node_modules/
 frontend/dist/

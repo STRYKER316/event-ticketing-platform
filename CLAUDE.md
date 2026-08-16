@@ -26,6 +26,8 @@ full every session. When in doubt, the decisions log wins.
   /_shared/auth          shared FastAPI JWT-validation dependency (build once in P0, reuse everywhere)
 /frontend                minimal React, 5 screens, Nginx-served (Phase 7, not before)
 /infra                   docker-compose.yml, Traefik config, Keycloak realm export
+/benchmark               standalone P8 load harness (own pyproject.toml/uv venv, not
+                         part of the /services workspace — mirrors infra/kafka-smoke-test)
 /docs                    decisions-log.md, master-development-plan.md,
                          build-log.md (append-only build diary — decisions, failures, fixes),
                          architecture.html (living topology + flow diagrams, current state —

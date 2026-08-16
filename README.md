@@ -21,6 +21,7 @@ architectural or scope decision.
   /_shared/auth          shared FastAPI JWT-validation dependency, built once, reused everywhere
 /frontend                minimal React, 5 screens, Nginx-served (Phase 7, not before)
 /infra                   docker-compose.yml, Traefik config, Keycloak realm export
+/benchmark               standalone P8 load harness (own pyproject.toml/uv venv)
 /docs                    decisions-log.md, master-development-plan.md, build-log.md,
                          architecture.html, /phases (per-phase task checklists),
                          /report (continuously-drafted report chapters)

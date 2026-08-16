@@ -1833,3 +1833,74 @@ Decisions-log delta: none — this implements the already-locked §11/§24
 decision to run Prometheus/Grafana as an on-demand compose profile; no new
 architectural decision made. `CLAUDE.md` update: none needed — no new
 cross-service convention, just P8-scoped infra.
+
+## 2026-08-16 — P8.T2: Python asyncio load harness, k6-vs-Python resolved
+
+Resolved the kickoff doc's open question with the user first, per its own
+instruction: Python asyncio harness over k6, confirmed explicitly rather
+than defaulting to the doc's own recommendation unasked. Reasoning: reuses
+the exact `asyncio.gather` concurrent-client pattern already proven correct
+in P3.T7's concurrency suite, no new (Go-based) dependency for a project
+that's Python end-to-end everywhere else. No decisions-log entry needed for
+this choice per the kickoff doc's own note; recorded instead in the new
+Technologies Used chapter entry (see below) since it affects that chapter
+either way.
+
+Built `benchmark/run_benchmark.py` — standalone (own `pyproject.toml`/`uv`
+venv, mirrors `infra/kafka-smoke-test`'s pattern, not part of the
+`/services` workspace) — that provisions a fresh, self-contained seat pool
+via the real `event-service`/`booking-service` APIs (venue -> event -> seat
+map -> publish -> wait for Kafka provisioning, polling `booking_db`
+directly since booking-service exposes no GET endpoint to observe
+provisioning completion), fires a fixed burst of concurrent clients at it
+via `asyncio.gather`, and emits successful/failed counts, hold-acquisition
+latency percentiles, and a time-to-release-after-abandonment measurement,
+archived as structured JSON.
+
+Two design decisions worth recording:
+- **One shared booker token reused across every synthetic client**, rather
+  than minting one per client. The mechanism under test (the atomic
+  per-ticket `UPDATE` / Redis `SET NX EX`) is keyed on `ticket_id`, not
+  `user_subject` — no uniqueness constraint ties bookings to a single user
+  — so distinct identities would only add Keycloak token-minting overhead
+  to the measured setup without changing what's being measured.
+- **Release-latency observation polls `Booking.status` (`PENDING` ->
+  `EXPIRED`), not `Ticket.status`.** Investigated both hold strategies'
+  release code before picking a signal: the cron strategy flips both
+  `Ticket.status` (`HELD` -> `AVAILABLE`) and `Booking.status` on release,
+  but the Redis strategy never writes `Ticket.status` at all (§6's
+  documented trade-off) — only `Booking.status` changes. Polling the
+  Booking row is the only observation that works identically for both
+  strategies without strategy-specific branching in the harness.
+
+**Live-verified against the real stack**, not just a dry read of the code,
+under both `HOLD_STRATEGY` values: a burst of 15 clients (3 per seat) x 5
+seats produced exactly 5 successes / 10 failures against the expected pool
+size, both under `cron` and after switching the strategy. Release latency
+verified by temporarily running a second `booking-service` container
+(`docker compose run -e HOLD_TTL_SECONDS=5 -e HOLD_SWEEP_INTERVAL_SECONDS=5
+--use-aliases booking-service`, the same trick the Phase 3 checkpoint's
+live re-verification used) — measured ~6s under `cron`, ~8s under `redis`,
+both landing inside the expected TTL-plus-one-sweep-interval window for
+their respective mechanisms. Confirmed one real bug during this: the first
+attempt used lowercase Postgres enum values (`'available'`, `'expired'`)
+in the raw SQL against `tickets.status`/`bookings.status`, which failed
+with `InvalidTextRepresentationError` — SQLAlchemy's default native `Enum`
+stores the Python member *name* (`AVAILABLE`), not `.value`; fixed by
+querying the uppercase forms.
+
+Cleaned up all temporary verification artifacts afterward: removed the two
+short-TTL `booking-service` test containers, restored the normal
+compose-managed one (`HOLD_STRATEGY=cron`, default TTL/sweep), and deleted
+the smoke-test JSON outputs from `benchmark/results/` (not real benchmark
+data, not meant to be archived).
+
+Added `/benchmark` as a new top-level directory — updated `CLAUDE.md`'s and
+the root `README.md`'s repo-layout listings to match, and
+`docs/report/technologies-used.md` with two new entries (Prometheus +
+Grafana, and this harness) covering what P8.T1/T2 actually built and
+verified.
+
+Decisions-log delta: none — the k6-vs-Python choice is explicitly exempted
+from needing one per the kickoff doc. `CLAUDE.md` update: repo-layout
+listing only, no new convention.
