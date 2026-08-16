@@ -188,32 +188,68 @@ turns into prose.
 
 ## Phase 8 exit checklist (all must pass before P4)
 
-- [ ] Both open questions above resolved and recorded (k6-vs-Python choice
+- [x] Both open questions above resolved and recorded (k6-vs-Python choice
       needs no decisions-log entry; the payment-dependency choice for P8.T5
-      does, as a §17 amendment).
-- [ ] Prometheus + Grafana compose profile working, scraping real metrics.
-- [ ] Load harness reproducible: fixed documented command, fixed load
-      profile, re-runnable on demand.
-- [ ] Cron strategy run archived (raw data + graphs), Redis strategy run
-      archived under the identical load profile.
-- [ ] Release-latency metric measured and archived for both the immediate
-      and passive paths.
-- [ ] Validation checkpoint done live: benchmark is reproducible, raw
+      does, as a §17 amendment). k6-vs-Python resolved with the user
+      2026-08-16, Python asyncio chosen; §17 amendment recorded (simulate
+      the trigger directly), later corrected in place with n=3 numbers
+      after the connection-limit bug fix.
+- [x] Prometheus + Grafana compose profile working, scraping real metrics.
+      Live-verified twice: initial P8.T1 verification (all 3 targets `up`,
+      real dashboard panel data via Grafana's datasource-proxy API) and
+      again during the CHECKPOINT walkthrough (`make up` + `make bench-up`
+      from a clean state, confirmed `up`).
+- [x] Load harness reproducible: fixed documented command, fixed load
+      profile, re-runnable on demand. `benchmark/run_benchmark.py`,
+      documented in `benchmark/README.md`; re-run 6 times (3x cron, 3x
+      redis) with byte-identical parameters, confirming reproducibility.
+- [x] Cron strategy run archived (raw data + graphs), Redis strategy run
+      archived under the identical load profile. `docs/benchmark-results/
+      {cron,redis}-run-{1,2,3}.json` (raw per-request data + summaries) and
+      `{cron,redis}-grafana-export.json` (dashboard panel data via API,
+      screenshot unavailable — browser extension not connected this
+      session, see `docs/benchmark-results/README.md`).
+- [x] Release-latency metric measured and archived for both the immediate
+      and passive paths. Both present in every archived run file
+      (`release_latency` and `immediate_release_latency` keys); the
+      immediate path required simulating the not-yet-built `payment.failed`
+      trigger directly, per the §17 amendment.
+- [x] Validation checkpoint done live: benchmark is reproducible, raw
       outputs and graphs are archived, and the comparison is drawn only
       from measured data — no placeholder or estimated number anywhere in
-      the archived results or the analysis writeup.
-- [ ] Dedicated adversarial `/code-review` pass run on top of the routine
+      the archived results or the analysis writeup. A real measurement bug
+      (HTTP client connection-pool cap contaminating latency) was caught by
+      the dedicated review before this box was checked, fixed, and every
+      number re-measured (not patched) — see the CHECKPOINT build-log
+      entry. n=3 runs per strategy, not n=1, specifically because a single
+      run cannot support the comparison's conclusions.
+- [x] Dedicated adversarial `/code-review` pass run on top of the routine
       `/pre-pr` gate and self-verification (per this phase's process note
       above) — not a substitute for either, and specifically scrutinizing
-      the harness's own correctness, not just the code under test.
-- [ ] Live walkthrough done at CHECKPOINT; `docs/architecture.html` updated
+      the harness's own correctness, not just the code under test. Ran
+      both: dedicated pass found the connection-limit bug (confirmed),
+      a Grafana "no data" claim (traced against library source and
+      rejected as a false positive), and four other real findings, all
+      fixed and re-verified live. `/pre-pr`'s own code-review step
+      independently found the same connection-limit bug.
+- [x] Live walkthrough done at CHECKPOINT; `docs/architecture.html` updated
       to current state; `docs/build-log.md` entry appended; decisions-log
-      delta logged if any.
-- [ ] This file's own exit checklist checked off (per `CLAUDE.md`'s
+      delta logged if any. `docs/architecture.html` §07 added and later
+      corrected to match the n=3 numbers; `make down`/`make bench-up`/
+      `make bench-down` all live-verified in both states (profile up and
+      never started) as part of this same pass; decisions-log §6/§17
+      amended (§17 corrected in place after the re-measurement).
+- [x] This file's own exit checklist checked off (per `CLAUDE.md`'s
       phase-end checklist item 9), not left for a later session to notice
-      is still unchecked.
-- [ ] Phase-end checklist item 7 (`/pre-pr`) run against the diff since
-      this phase's starting commit, findings self-applied.
+      is still unchecked. Checked off with evidence notes in this same
+      CHECKPOINT pass, not deferred.
+- [x] Phase-end checklist item 7 (`/pre-pr`) run against the diff since
+      this phase's starting commit, findings self-applied. Simplify step
+      applied 4 real fixes (and introduced 1 regression, caught by
+      smoke-test and fixed); code-review step's findings applied; verify
+      step folded into the live re-runs and walkthrough above rather than
+      run separately, since every endpoint this diff touches was already
+      exercised live multiple times over.
 
 **Report evidence captured this phase (§16):** benchmark methodology
 writeup, Measured results (cron), Measured results (Redis), second
