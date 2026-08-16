@@ -26,7 +26,7 @@ repo, never an aspirational one.
 | Feature Development Process | Draft (Measured) — P8 benchmark complete | P8 benchmark (measured), P3 hold-strategy design | `feature-development-process.md` |
 | Testing Strategy | Draft (partial — 4 tiers: unit/integration, Kafka+ES, adversarial, P3 test-first concurrency + 2-pass review) | P1.T6 (`testcontainers` first use), P2.T3/T5 (Kafka consumer redelivery + eventual-consistency testing), pre-Phase-3 adversarial pass (8 rounds, 5 bugs found+fixed), P3.T3–T5/T7 (test-first `TicketHoldStrategy` contract + race proofs, both real strategies), P3 checkpoint (routine + dedicated adversarial `/code-review`, 2nd pass catching bugs in the 1st pass's own fixes); every later phase's suite | `testing-strategy.md` |
 | Deployment Flow | Not started — blocked on P10 | P10.T1–T4 | — |
-| Technologies Used | Draft (partial, running list) | every phase's tech, incl. P2's Kafka integration + Elasticsearch, P3's Redis + APScheduler | `technologies-used.md` |
+| Technologies Used | Draft (partial, running list) | every phase's tech, incl. P2's Kafka integration + Elasticsearch, P3's Redis + APScheduler, P8's Prometheus/Grafana + Python asyncio load harness | `technologies-used.md` |
 | Conclusion (Limitations/Future Work) | Not started — drafted last, P11.T3 | decisions-log §26 pull-list | — |
 | Abstract | Not started — written last, P11.T1 | whole report | — |
 

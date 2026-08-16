@@ -297,7 +297,7 @@ A "Claude Code–sized task" here is one focused session (~half a day to ~1.5 da
 | ID | Task | Done when | Report evidence |
 |---|---|---|---|
 | P8.T1 | Prometheus + Grafana compose profile (§11), up for benchmark runs | Metrics scraped, dashboards render | — |
-| P8.T2 | k6 scripts: concurrent clients vs a small seat pool (§6); metrics = success/fail count, hold-acquisition latency, time-to-release-after-abandonment | Script runs, emits metrics | Benchmark methodology writeup |
+| P8.T2 | Python `asyncio` load harness (resolved over k6 with the user, 2026-08-16 — reuses P3.T7's `asyncio.gather` pattern): concurrent clients vs a small seat pool (§6); metrics = success/fail count, hold-acquisition latency, time-to-release-after-abandonment | Script runs, emits metrics | Benchmark methodology writeup |
 | P8.T3 | Run **cron** strategy under load; save raw outputs + Grafana graphs | Raw results archived in `/docs` | Measured results (cron) |
 | P8.T4 | Run **Redis TTL** strategy under identical load; save | Raw results archived | Measured results (Redis) |
 | P8.T5 | Capture release-latency: immediate-on-failure vs timeout (§17) | Both numbers measured | Second measured metric |

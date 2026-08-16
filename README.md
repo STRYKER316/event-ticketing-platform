@@ -41,6 +41,8 @@ curl -X POST localhost/events -H "Authorization: Bearer $(./get-token.sh bob cha
 make logs            # tail all container logs
 make down            # stop the stack
 make test            # run suites that don't need live infra (currently: shared-auth)
+make bench-up         # prometheus + grafana, on demand only (P8 hold-mechanism benchmark)
+make bench-down
 ```
 
 Seed users (see `infra/keycloak/realm-export.json`), all password `changeme`:
@@ -56,15 +58,18 @@ Seed users (see `infra/keycloak/realm-export.json`), all password `changeme`:
 
 ## Status
 
-Phases 0-3 complete: walking skeleton, Event Service, Search Service +
+Phases 0-3 and 8 complete: walking skeleton, Event Service, Search Service +
 Kafka #1, and Booking Service (dual hold strategy: cron sweep + Redis TTL,
 proven under real concurrent load) — plus a P1 addendum (venue/seat-map
 write API), a pre-Phase-3 hardening pass (adversarial testing, 5 bugs found
-and fixed), and a Phase 3 checkpoint with two review passes (a dedicated
+and fixed), a Phase 3 checkpoint with two review passes (a dedicated
 adversarial one on top of the routine gate, since the dual hold strategy is
-the one bug class that silently corrupts the product's core guarantee) —
-see `docs/build-log.md` for all of the above. Phase 8 (Hold-Mechanism
-Benchmark, the report's centerpiece) is next per the locked report-first
-build order; see `/docs/phases/` for task checklists and
-`/docs/architecture.html` for current system state.
+the one bug class that silently corrupts the product's core guarantee), and
+Phase 8 (Hold-Mechanism Benchmark, the report's centerpiece) — a measured
+cron-vs-Redis comparison plus release-latency (immediate vs. passive), see
+`docs/benchmark-results/` and `docs/report/feature-development-process.md`
+— see `docs/build-log.md` for all of the above. Phase 4 (Payment Service +
+Stripe + Confirmation) is next per the locked report-first build order; see
+`/docs/phases/` for task checklists and `/docs/architecture.html` for
+current system state.
 

@@ -64,7 +64,7 @@ Both strategies implemented behind a common interface (e.g. `TicketHoldStrategy`
 - **Cron-based expiry** — status + expiration timestamp, periodic sweep (APScheduler)
 - **Redis TTL distributed lock** — `SET key value NX EX seconds`, auto-expiry
 
-**Benchmark plan:** concurrent clients against the same small seat pool (k6 or a multi-threaded harness). Metrics: successful/failed bookings, hold-acquisition latency, time-to-release-after-abandonment. This is the centerpiece of the report's Feature Development Process chapter — real measured numbers only, never fabricated.
+**Benchmark plan:** concurrent clients against the same small seat pool (k6 or a multi-threaded harness — resolved P8.T2, 2026-08-16: a standalone Python `asyncio` harness, `/benchmark`, reusing the `asyncio.gather` pattern already proven in P3.T7; no decisions-log entry needed for this specific choice per `docs/phases/phase-8-kickoff.md`'s own note). Metrics: successful/failed bookings, hold-acquisition latency, time-to-release-after-abandonment. This is the centerpiece of the report's Feature Development Process chapter — real measured numbers only, never fabricated. **Measured, P8:** see §17's amendment below for the release-latency numbers, and `docs/report/feature-development-process.md` for the full comparison — cron outperformed Redis on every metric under this benchmark's load profile and topology.
 
 See §21 for how a hold relates to the Booking row's lifecycle.
 
@@ -107,7 +107,7 @@ Minimal functional React UI, not a polished product build. Five screens: event l
 
 ## 11. Logging/Monitoring — Decided
 
-**Prometheus + Grafana**, using `prometheus-fastapi-instrumentator` for per-service metrics, plus structured JSON logging (`structlog`). Every service exposes a `/metrics` endpoint regardless of deployment target. Treated primarily as a **local/benchmark-time tool** — spun up when running the k6 hold-mechanism benchmark (§6) and generating report graphs — rather than an always-on component of the AWS deployment, to keep steady-state memory pressure down on a single instance (§12). Replaces the earlier Spring Boot Actuator plan; conceptually the same role.
+**Prometheus + Grafana**, using `prometheus-fastapi-instrumentator` for per-service metrics, plus structured JSON logging (`structlog`). Every service exposes a `/metrics` endpoint regardless of deployment target. Treated primarily as a **local/benchmark-time tool** — spun up when running the hold-mechanism benchmark (§6, `/benchmark`) and generating report graphs — rather than an always-on component of the AWS deployment, to keep steady-state memory pressure down on a single instance (§12). Replaces the earlier Spring Boot Actuator plan; conceptually the same role.
 
 ## 12. Deployment — Decided
 

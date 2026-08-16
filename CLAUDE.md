@@ -62,10 +62,13 @@ These hold across every service, every phase — check new code against them:
 FastAPI (async), SQLAlchemy async + asyncpg + Alembic, Motor (MongoDB), aiokafka
 (KRaft-mode Kafka, no Zookeeper), redis.asyncio, APScheduler, elasticsearch-py,
 stripe-python, structlog (JSON logs), prometheus-fastapi-instrumentator, Traefik v3
-(gateway), Keycloak (dev mode, JWT/OIDC), pytest + testcontainers-python, k6
-(benchmark load), React (frontend, Phase 7 only). `uv` for Python
+(gateway), Keycloak (dev mode, JWT/OIDC), pytest + testcontainers-python, a
+standalone Python `asyncio` load harness (`/benchmark`, resolved over k6 in P8.T2 —
+reuses the `asyncio.gather` concurrent-client pattern already proven in P3.T7),
+React (frontend, Phase 7 only). `uv` for Python
 dependency/workspace management (one shared venv/lockfile across `/services`, §
-"Restructure: uv workspace" in build-log.md).
+"Restructure: uv workspace" in build-log.md; `/benchmark` and
+`infra/kafka-smoke-test` are standalone `uv` tools outside that shared workspace).
 
 ## Workflow & cadence (decisions-log §25, §27)
 
