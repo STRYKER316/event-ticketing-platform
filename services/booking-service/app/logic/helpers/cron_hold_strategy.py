@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.chunking import chunked
 from app.db.models import Booking, BookingStatus, Ticket, TicketStatus
 from app.logic.helpers.hold_strategy import TicketHoldStrategy
 
@@ -66,15 +67,32 @@ class CronHoldStrategy(TicketHoldStrategy):
         if not expiring_ticket_ids:
             return 0
 
-        await self._session.execute(
-            sa_update(Booking)
-            .where(Booking.ticket_id.in_(expiring_ticket_ids), Booking.status == BookingStatus.PENDING)
-            .values(status=BookingStatus.EXPIRED)
-        )
-        result = await self._session.execute(
-            sa_update(Ticket)
-            .where(Ticket.id.in_(expiring_ticket_ids))
-            .values(status=TicketStatus.AVAILABLE, hold_expires_at=None)
-        )
+        released = 0
+        for batch in chunked(expiring_ticket_ids):
+            # Both UPDATEs below re-check status/expiry, not just ticket ID: a
+            # ticket in this batch may have been re-held or booked between the
+            # SELECT above and here, and a bare-ID UPDATE would then wrongly
+            # touch a row that has since moved on — the exact TOCTOU gap this
+            # class's docstring claims not to have. Both statements use the
+            # identical fresh predicate so they agree on exactly the same set
+            # of tickets, still-expired as of right now.
+            still_expired_ids = select(Ticket.id).where(
+                Ticket.id.in_(batch), Ticket.status == TicketStatus.HELD, Ticket.hold_expires_at < now
+            )
+            await self._session.execute(
+                sa_update(Booking)
+                .where(Booking.ticket_id.in_(still_expired_ids), Booking.status == BookingStatus.PENDING)
+                .values(status=BookingStatus.EXPIRED)
+            )
+            result = await self._session.execute(
+                sa_update(Ticket)
+                .where(
+                    Ticket.id.in_(batch),
+                    Ticket.status == TicketStatus.HELD,
+                    Ticket.hold_expires_at < now,
+                )
+                .values(status=TicketStatus.AVAILABLE, hold_expires_at=None)
+            )
+            released += result.rowcount
         await self._session.flush()
-        return result.rowcount
+        return released

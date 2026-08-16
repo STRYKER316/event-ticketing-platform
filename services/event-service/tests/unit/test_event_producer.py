@@ -61,19 +61,3 @@ async def test_publish_upserted_sends_correct_topic_key_and_payload():
         {"section": "A", "row": "1", "label": "A1"},
         {"section": "A", "row": "1", "label": "A2"},
     ]
-
-
-async def test_publish_deleted_sends_correct_topic_key_and_payload():
-    producer = AsyncMock()
-    event_id = uuid.uuid4()
-    event_producer = EventProducer(producer, TOPIC)
-
-    await event_producer.publish_deleted(event_id)
-
-    producer.send_and_wait.assert_awaited_once()
-    call = producer.send_and_wait.await_args
-    assert call.args[0] == TOPIC
-    assert call.kwargs["key"] == str(event_id).encode()
-
-    payload = json.loads(call.kwargs["value"])
-    assert payload == {"action": "deleted", "event_id": str(event_id)}

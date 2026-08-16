@@ -30,8 +30,3 @@ class EventUpsertedMessage(BaseModel):
     venue_name: str
     performer_names: list[str]
     seats: list[EventSeat]
-
-
-class EventDeletedMessage(BaseModel):
-    action: KafkaAction = KafkaAction.DELETED
-    event_id: uuid.UUID

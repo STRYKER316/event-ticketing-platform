@@ -192,7 +192,7 @@ async def test_publish_notifies_producer_and_republishes_on_update(
     with pytest.raises(HTTPException) as exc_info:
         await manager.delete_event(ORGANIZER, created.id)
     assert exc_info.value.status_code == 409
-    producer.publish_deleted.assert_not_awaited()
+    assert producer.publish_upserted.await_count == 2
 
 
 async def test_republish_on_venue_change_reflects_the_new_venue(
@@ -239,7 +239,7 @@ async def test_deleting_a_draft_event_does_not_notify_producer(db_session: Async
     )
 
     await manager.delete_event(ORGANIZER, created.id)
-    producer.publish_deleted.assert_not_awaited()
+    producer.publish_upserted.assert_not_awaited()
 
 
 async def test_repository_delete_reports_false_when_the_row_is_already_gone(

@@ -1,13 +1,17 @@
+import uuid
 from collections.abc import AsyncIterator
 
 import pytest
 from alembic import command
 from alembic.config import Config
+from redis.asyncio import Redis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from testcontainers.community.kafka import KafkaContainer
 from testcontainers.community.postgres import PostgresContainer
 from testcontainers.community.redis import RedisContainer
+
+from app.db.models import Ticket, TicketStatus
 
 
 @pytest.fixture(scope="session")
@@ -56,3 +60,30 @@ def db_session_factory(_migrated_database_url: str) -> async_sessionmaker[AsyncS
     their own session per unit of work rather than taking one via Depends()."""
     engine: AsyncEngine = create_async_engine(_migrated_database_url)
     return async_sessionmaker(engine, expire_on_commit=False)
+
+
+@pytest.fixture
+async def redis_client(redis_container: "RedisContainer") -> AsyncIterator[Redis]:
+    """Shared across every integration test module that needs a live Redis
+    connection, rather than each one re-deriving a client from
+    redis_container inline."""
+    client = Redis(
+        host=redis_container.get_container_host_ip(),
+        port=int(redis_container.get_exposed_port(redis_container.port)),
+        decode_responses=True,
+    )
+    yield client
+    await client.flushall()
+    await client.aclose()
+
+
+async def seed_ticket(session_factory: async_sessionmaker[AsyncSession]) -> uuid.UUID:
+    """Shared across integration test modules that just need one AVAILABLE
+    ticket seeded — not a pytest fixture since callers pass their own
+    db_session_factory explicitly (used inside asyncio.gather in the
+    concurrency suite, where fixture injection doesn't apply)."""
+    async with session_factory() as session:
+        ticket = Ticket(event_id=uuid.uuid4(), section="A", row_name="1", seat_label="A1", status=TicketStatus.AVAILABLE)
+        session.add(ticket)
+        await session.commit()
+        return ticket.id

@@ -9,18 +9,6 @@ from app.logic.helpers.redis_hold_strategy import RedisHoldStrategy
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture
-async def redis_client(redis_container) -> Redis:
-    client = Redis(
-        host=redis_container.get_container_host_ip(),
-        port=int(redis_container.get_exposed_port(redis_container.port)),
-        decode_responses=True,
-    )
-    yield client
-    await client.flushall()
-    await client.aclose()
-
-
 async def test_exactly_one_winner_under_concurrent_acquire(redis_client: Redis):
     ticket_id = uuid.uuid4()
     strategy = RedisHoldStrategy(redis_client)

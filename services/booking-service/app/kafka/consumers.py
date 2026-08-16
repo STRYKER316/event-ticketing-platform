@@ -1,4 +1,6 @@
+import asyncio
 import json
+import uuid
 
 import structlog
 from aiokafka import AIOKafkaConsumer
@@ -10,6 +12,14 @@ from app.kafka.schemas import EventUpsertedMessage, KafkaAction
 
 logger = structlog.get_logger()
 
+# A transient DB error (connection blip, pool exhaustion, brief deadlock) is
+# retried in place a few times before this consumer gives up on a message —
+# without this, run()'s per-record offset commit (see enable_auto_commit
+# below) would advance straight past a message whose write never actually
+# succeeded, silently losing that event's tickets on the very first hiccup.
+DB_WRITE_MAX_ATTEMPTS = 3
+DB_WRITE_RETRY_BACKOFF_SECONDS = 1.0
+
 
 def build_kafka_consumer() -> AIOKafkaConsumer:
     settings = get_settings()
@@ -18,6 +28,16 @@ def build_kafka_consumer() -> AIOKafkaConsumer:
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=settings.kafka_consumer_group_id,
         auto_offset_reset="earliest",
+        # Default (True) commits offsets on a background timer regardless of
+        # whether _handle()'s DB write actually finished — a crash between
+        # that timer firing and the write committing would silently drop
+        # tickets instead of safely redelivering them (§7 idempotency relies
+        # on redelivery actually happening). Committing manually, once per
+        # record, after _handle() returns, guarantees a genuine process
+        # crash mid-write is always safely redelivered. It does not by
+        # itself guarantee a *caught* write failure is retried forever —
+        # see DB_WRITE_MAX_ATTEMPTS in _handle() for that half of the story.
+        enable_auto_commit=False,
     )
 
 
@@ -34,6 +54,9 @@ class ProvisioningConsumer:
     async def run(self) -> None:
         async for record in self._consumer:
             await self._handle(record.value)
+            # Commit only after _handle() has fully finished with this
+            # record — see build_kafka_consumer()'s enable_auto_commit note.
+            await self._consumer.commit()
 
     async def _handle(self, raw: bytes) -> None:
         try:
@@ -65,12 +88,46 @@ class ProvisioningConsumer:
         # message on this topic already represents a published event, so there is
         # no separate "is this published" check to make here.
         seats = [(seat.section, seat.row, seat.label) for seat in message.seats]
-        async with self._session_factory() as session:
-            inserted = await TicketRepository(session).bulk_upsert_available(message.event_id, seats)
-            await session.commit()
+        inserted = await self._write_tickets(message.event_id, seats)
+        if inserted is None:
+            return
         logger.info(
             "tickets_provisioned",
             event_id=str(message.event_id),
             seats_in_message=len(seats),
             tickets_inserted=inserted,
         )
+
+    async def _write_tickets(self, event_id: uuid.UUID, seats: list[tuple[str, str, str]]) -> int | None:
+        """Retries a transient DB failure in place before giving up — see
+        DB_WRITE_MAX_ATTEMPTS's module-level docstring for why this exists.
+        Returns None only once every attempt has failed, at which point the
+        caller commits the Kafka offset anyway and moves on: an unhandled
+        exception here would escape run()'s `async for` loop and kill the
+        consumer task for good, silently stopping provisioning for every
+        future event too, which is worse than losing this one (logged at
+        critical, not silently) — same trade-off search-service's
+        EventConsumer makes for its own DB write."""
+        for attempt in range(1, DB_WRITE_MAX_ATTEMPTS + 1):
+            try:
+                async with self._session_factory() as session:
+                    inserted = await TicketRepository(session).bulk_upsert_available(event_id, seats)
+                    await session.commit()
+                return inserted
+            except Exception:
+                if attempt == DB_WRITE_MAX_ATTEMPTS:
+                    logger.critical(
+                        "provisioning_consumer_db_write_failed_permanently",
+                        event_id=str(event_id),
+                        attempts=attempt,
+                        exc_info=True,
+                    )
+                    return None
+                logger.warning(
+                    "provisioning_consumer_db_write_failed_retrying",
+                    event_id=str(event_id),
+                    attempt=attempt,
+                    exc_info=True,
+                )
+                await asyncio.sleep(DB_WRITE_RETRY_BACKOFF_SECONDS)
+        return None

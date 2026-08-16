@@ -6,7 +6,7 @@ from aiokafka import AIOKafkaProducer
 from app.api.schemas import SeatMap
 from app.core import get_kafka_producer, get_settings
 from app.db.models import Event
-from app.kafka.schemas import EventDeletedMessage, EventSeat, EventUpsertedMessage
+from app.kafka.schemas import EventSeat, EventUpsertedMessage
 
 logger = structlog.get_logger()
 
@@ -35,10 +35,7 @@ class EventProducer:
         )
         await self._send(event.id, message)
 
-    async def publish_deleted(self, event_id: uuid.UUID) -> None:
-        await self._send(event_id, EventDeletedMessage(event_id=event_id))
-
-    async def _send(self, event_id: uuid.UUID, message: EventUpsertedMessage | EventDeletedMessage) -> None:
+    async def _send(self, event_id: uuid.UUID, message: EventUpsertedMessage) -> None:
         # Keyed by event ID (§7 idempotency) so all messages for one event land on the
         # same partition and stay strictly ordered for a downstream consumer.
         await self._producer.send_and_wait(

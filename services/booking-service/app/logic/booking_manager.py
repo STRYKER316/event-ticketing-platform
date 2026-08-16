@@ -66,7 +66,7 @@ class BookingManager:
             # distributed rollback (no distributed transactions, §8).
             await self._session.rollback()
             await self._hold_strategy.release_hold(ticket.id)
-            logger.error("booking_integrity_race_lost", ticket_id=str(ticket.id))
+            logger.warning("booking_integrity_race_lost", ticket_id=str(ticket.id))
             raise HTTPException(status.HTTP_409_CONFLICT, "seat unavailable") from None
         return booking
 

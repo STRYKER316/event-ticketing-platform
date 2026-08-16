@@ -8,21 +8,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db.models import Booking, BookingStatus, Ticket, TicketStatus
 from app.logic.helpers.cron_hold_strategy import CronHoldStrategy
 
+from .conftest import seed_ticket
+
 pytestmark = pytest.mark.asyncio
-
-
-async def _seed_ticket(session_factory: async_sessionmaker[AsyncSession]) -> uuid.UUID:
-    async with session_factory() as session:
-        ticket = Ticket(event_id=uuid.uuid4(), section="A", row_name="1", seat_label="A1", status=TicketStatus.AVAILABLE)
-        session.add(ticket)
-        await session.commit()
-        return ticket.id
 
 
 async def test_exactly_one_winner_under_concurrent_acquire_real_postgres(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
-    ticket_id = await _seed_ticket(db_session_factory)
+    ticket_id = await seed_ticket(db_session_factory)
 
     async def attempt() -> bool:
         async with db_session_factory() as session:
@@ -95,7 +89,7 @@ async def test_sweep_does_not_touch_unexpired_holds(db_session_factory: async_se
 
 
 async def test_release_hold_returns_ticket_to_available(db_session_factory: async_sessionmaker[AsyncSession]):
-    ticket_id = await _seed_ticket(db_session_factory)
+    ticket_id = await seed_ticket(db_session_factory)
     async with db_session_factory() as session:
         strategy = CronHoldStrategy(session)
         await strategy.acquire_hold(ticket_id, ttl_seconds=60)

@@ -3,6 +3,7 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from functools import lru_cache
+from typing import Literal
 
 import structlog
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -29,7 +30,7 @@ class Settings(BaseSettings):
     events_topic: str = "event.events"
     kafka_consumer_group_id: str = "booking-service"
 
-    hold_strategy: str = "cron"  # "cron" | "redis" — Phase 8 benchmark toggles this
+    hold_strategy: Literal["cron", "redis"] = "cron"  # Phase 8 benchmark toggles this
     hold_ttl_seconds: int = 600
     hold_sweep_interval_seconds: int = 30
 
