@@ -2083,10 +2083,17 @@ bug already covered above:**
   `RESULTS_DIR.mkdir()` didn't cover a custom `--out` path either;
   switched to `out_path.parent.mkdir(parents=True, exist_ok=True)`.
 - `make down` (no `--profile` flag) doesn't stop containers started via
-  `make bench-up --profile benchmark` — compose only warns about orphans
-  by default rather than removing them, so forgetting `bench-down` before
-  `down` would leave prometheus/grafana running silently. Fixed: `make down`
-  now passes `--remove-orphans`.
+  `make bench-up --profile benchmark` — a plain `down` only tears down the
+  default profile's services, leaving prometheus/grafana running silently
+  if `bench-down` was forgotten. First fix attempt (`--remove-orphans`)
+  was itself wrong and caught only by live-testing it: profile-gated
+  services aren't "orphans" in Docker Compose's sense (an orphan is a
+  container for a service no longer defined in the compose file at all,
+  not one merely outside the current profile selection) —
+  `--remove-orphans` verified live to leave prometheus/grafana running
+  exactly as before. Corrected to `--profile benchmark down` (a no-op if
+  those containers were never started), re-verified live in both states
+  (benchmark profile up, and never started).
 - Commit-message rule violations flagged by both reviews independently
   (phase/task IDs embedded in subject lines, a body paragraph, a docs-only
   chapter riding silently inside a code commit's message) — addressed by
