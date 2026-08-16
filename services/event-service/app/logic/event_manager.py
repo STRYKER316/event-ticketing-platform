@@ -123,8 +123,11 @@ class EventManager:
 
     async def delete_event(self, user: Principal, event_id: uuid.UUID) -> None:
         event = await self._fetch_owned_event(user, event_id)
-        self._check_no_bookings(event)
-        was_published = event.status is EventStatus.PUBLISHED
+        self._check_cannot_delete_published(event)
+        # A PUBLISHED event can never reach here (checked above), so a
+        # deleted event was always DRAFT — never provisioned in Booking
+        # Service, so there is nothing for a booking.deleted Kafka message
+        # to announce.
         deleted = await self._events.delete(event_id)
         if not deleted:
             # Lost a race with a concurrent duplicate delete.
@@ -132,8 +135,6 @@ class EventManager:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
         await self._session.commit()
         await self._seat_maps.delete(event_id)
-        if was_published:
-            await self._producer.publish_deleted(event_id)
 
     async def _republish(self, event: Event, seat_map: SeatMap | None = None) -> None:
         if seat_map is None:
@@ -186,5 +187,13 @@ class EventManager:
         if payload.performer_ids is not None:
             event.performers = await self._resolve_performers(payload.performer_ids)
 
-    def _check_no_bookings(self, event: Event) -> None:
-        return
+    def _check_cannot_delete_published(self, event: Event) -> None:
+        # Event Service cannot see booking_db (database-per-service, §8) and
+        # there is no sixth Kafka integration point for a delete-time
+        # cross-service check (§7 caps the five). Once an event is
+        # PUBLISHED, tickets may exist in Booking Service — refuse deletion
+        # outright rather than attempt a coordination check this
+        # architecture has no channel for.
+        if event.status is EventStatus.PUBLISHED:
+            logger.warning("event_delete_rejected_published", event_id=str(event.id))
+            raise HTTPException(status.HTTP_409_CONFLICT, "cannot delete a published event")

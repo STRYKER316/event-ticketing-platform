@@ -186,8 +186,13 @@ async def test_publish_notifies_producer_and_republishes_on_update(
     await manager.update_event(ORGANIZER, created.id, EventUpdate(title="Renamed Concert"))
     assert producer.publish_upserted.await_count == 2
 
-    await manager.delete_event(ORGANIZER, created.id)
-    producer.publish_deleted.assert_awaited_once_with(created.id)
+    # A published event can never be deleted (Task 6 amendment, §-delta in
+    # decisions-log): Event Service has no channel to check Booking Service
+    # for live bookings, so deletion is refused outright once PUBLISHED.
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.delete_event(ORGANIZER, created.id)
+    assert exc_info.value.status_code == 409
+    producer.publish_deleted.assert_not_awaited()
 
 
 async def test_republish_on_venue_change_reflects_the_new_venue(

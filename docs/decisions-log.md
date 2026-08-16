@@ -146,6 +146,8 @@ Two Keycloak realm roles: **user** (browse/search/book) and **organizer** (creat
 
 **Update/delete policy**: organizers can update event details after creation. Deleting a published event with existing tickets/bookings is not supported, to avoid orphaning booking records — only events with zero bookings can be removed.
 
+**Amendment (Phase 3, 2026-08-16):** the "zero bookings" check above was never actually checkable as written — it implicitly assumed Event Service could see whether Booking Service has live `Ticket`/`Booking` rows for an event, which database-per-service (§8) rules out, and there is no sixth Kafka integration point for a delete-time cross-service query (§7 caps the five). Resolved at the point Booking Service's `_check_no_bookings` stub (left open since Phase 1/2) needed a real implementation: **a `PUBLISHED` event can never be deleted at all**, unconditionally — `DELETE /events/{id}` returns 409 once `status == PUBLISHED`, regardless of whether tickets were ever actually booked against it. `DRAFT` events, which are never provisioned into Booking Service, still delete freely with no check needed. This trades a small amount of precision (an unbooked-but-published event also can't be deleted) for a rule that's fully decidable within Event Service alone — the same reasoning as every other database-per-service boundary in this system.
+
 **Ownership scoping**: an organizer can only update or delete their own events, not other organizers' — enforced by comparing the event's owning-organizer ID against the JWT subject, not just checking for the `organizer` role generically. The `user` and `organizer` roles aren't mutually exclusive — a single account can hold both and both browse/book and create events.
 
 ## 16. Seating Model — Decided

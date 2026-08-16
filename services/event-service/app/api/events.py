@@ -137,5 +137,8 @@ async def delete_event(
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
     producer: EventProducer = Depends(get_event_producer),
 ) -> None:
-    """Organizer-only, ownership-scoped: must own the event being deleted."""
+    """Organizer-only, ownership-scoped: must own the event being deleted.
+    409 if the event is PUBLISHED — Booking Service may hold Ticket/Booking
+    rows against it and Event Service has no channel to check (§8), so
+    deletion is refused outright rather than conditionally."""
     await EventManager(session, mongo_db, producer).delete_event(user, event_id)

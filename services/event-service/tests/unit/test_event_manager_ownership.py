@@ -150,6 +150,22 @@ async def test_delete_reports_not_found_when_a_concurrent_delete_won_the_race():
     manager._seat_maps.delete.assert_not_awaited()
 
 
+async def test_owning_organizer_cannot_delete_a_published_event():
+    # Event Service can't see booking_db (§8) to check for live bookings, so
+    # a PUBLISHED event is refused outright rather than conditionally
+    # checked (Task 6 amendment, decisions-log delta).
+    event = make_event()
+    event.status = EventStatus.PUBLISHED
+    manager = make_manager(event)
+    user = Principal(subject=OWNER_SUBJECT, roles=["organizer"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.delete_event(user, event.id)
+
+    assert exc_info.value.status_code == 409
+    manager._events.delete.assert_not_awaited()
+
+
 async def test_update_rejects_end_time_before_existing_start_time():
     event = make_event()
     manager = make_manager(event)

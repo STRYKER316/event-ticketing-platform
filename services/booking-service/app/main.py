@@ -9,7 +9,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
-from app.api import health
+from app.api import bookings, health
 from app.core import close_redis, configure_logging, dispose_engine, get_session_factory, get_settings
 from app.kafka.consumers import ProvisioningConsumer, build_kafka_consumer
 from app.logic.helpers.hold_sweep import build_scheduler
@@ -65,6 +65,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(title="booking-service", lifespan=lifespan)
     app.include_router(health.router)
+    app.include_router(bookings.router)
     Instrumentator().instrument(app).expose(app)
 
     return app
