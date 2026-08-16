@@ -7,11 +7,13 @@ up:
 	cd infra && docker compose --env-file ../.env up -d
 
 down:
-	# --remove-orphans: without it, prometheus/grafana (started via `make
-	# bench-up`'s --profile flag) are invisible to a plain `down` and stay
-	# running silently if `bench-down` was forgotten -- compose only warns
-	# about orphans by default, it doesn't stop them.
-	cd infra && docker compose --env-file ../.env down --remove-orphans
+	# --profile benchmark: a plain `down` only tears down the *default*
+	# profile's services -- prometheus/grafana (profile-gated, not
+	# "orphans" in compose's sense -- --remove-orphans does NOT touch
+	# them, verified live) would stay running silently if `make bench-up`
+	# was used and `bench-down` forgotten. Passing the profile here is a
+	# no-op if those containers were never started.
+	cd infra && docker compose --env-file ../.env --profile benchmark down
 
 logs:
 	cd infra && docker compose --env-file ../.env logs -f
