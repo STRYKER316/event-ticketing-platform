@@ -1,9 +1,9 @@
 # Requirement Gathering
 
-*Status: draft, partial — roles/permissions evidence from Phase 1. The full
-functional requirements list (booking, payment, cancellation flows) fills
-in as those phases land; this draft covers what's actually enforced in the
-codebase today, not aspirational scope.*
+*Status: draft, partial — roles/permissions evidence from Phases 1 and 3.
+Payment and cancellation flows fill in as those phases land; this draft
+covers what's actually enforced in the codebase today, not aspirational
+scope.*
 
 ## Actors
 
@@ -15,8 +15,8 @@ omission (Conventions, `CLAUDE.md`):
 - **Anonymous / unauthenticated** — can browse: list events, view event
   detail, view a seat map, view venue detail. No token required.
 - **`user`** — an authenticated customer. Everything anonymous can do,
-  plus (from Phase 3 onward) hold a seat, book, pay, and cancel their own
-  booking.
+  plus (as of Phase 3) hold a seat and book it; pay and cancel their own
+  booking land in Phases 4 and 6.
 - **`organizer`** — everything `user` can do, plus create, update, and
   delete events they own, add venues to the shared catalog, and attach or
   update the seat map for events they own. A user can hold both roles
@@ -35,7 +35,7 @@ omission (Conventions, `CLAUDE.md`):
 | `PUT /events/{id}/seat-map` | 401 | 403 | **403** | Allow (upsert) |
 | `POST /events/{id}/publish` | 401 | 403 | **403** | Allow (`DRAFT`→`PUBLISHED`) |
 | `PATCH /events/{id}` | 401 | 403 | **403** | Allow |
-| `DELETE /events/{id}` | 401 | 403 | **403** | Allow |
+| `DELETE /events/{id}` | 401 | 403 | **403** | Allow (`DRAFT` only — **409** if `PUBLISHED`, see Phase 3 note below) |
 | `GET /search` (Search Service) | Allow | Allow | Allow | Allow |
 
 The bolded cells are the requirement that role checking alone cannot
@@ -84,11 +84,43 @@ amendment text). `GET /search` needs no role distinction at all — every
 actor sees the same published-event index, consistent with "browse/search"
 being explicitly anonymous-accessible scope (§2).
 
+## Roles/permissions table — Booking Service (Phase 3)
+
+| Endpoint | Anonymous | `user` (any) |
+|---|---|---|
+| `POST /bookings` | 401 | Allow (creates a `PENDING` booking, holds the seat) |
+
+Deliberately a one-row table: booking a ticket needs no `organizer` role
+at all (§15 delta) — any authenticated user, `user` or `organizer` alike,
+can book. There is no ownership-scoping check on this endpoint the way
+Event Service's writes have one, because there is no pre-existing owner
+to check against — the caller *becomes* the booking's `user_subject` by
+making the request, not by matching an existing resource's stored owner.
+This is a structurally different kind of authorization requirement than
+every Event Service write, worth stating explicitly rather than leaving
+implicit: "authenticated-only" and "ownership-scoped" are two different
+points on the same auth-requirement spectrum `CLAUDE.md`'s conventions
+require every route to declare, not the same check applied twice.
+
+**Phase 3 addition — closing the `_check_no_bookings` stub with a
+decidable-locally rule.** §15's original delete policy read "deleting a
+published event with existing tickets/bookings is not supported... only
+events with zero bookings can be removed" — a check Event Service was
+never actually able to perform, since database-per-service (§8) means it
+cannot see whether Booking Service holds any `Ticket`/`Booking` rows for
+a given event, and there is no sixth Kafka integration point for a
+delete-time cross-service query (§7 caps the five). Resolved at the point
+Booking Service actually existed and gave the stub something concrete to
+resolve against: `DELETE /events/{id}` now refuses unconditionally once
+`status == PUBLISHED` (409), regardless of whether tickets were ever
+actually booked — a fully locally-decidable rule, logged as a decisions-
+log amendment to §15 rather than a silent behavior change. `DRAFT`
+events, which can never have provisioned tickets, still delete freely.
+
 ## What this chapter still needs
 
-Functional requirements for booking (seat hold semantics, dual hold
-strategy, no-double-booking guarantee), payment (Stripe integration,
-idempotent webhook handling), cancellation/refund, and notification
-delivery are not yet written — they depend on Phases 3–6, which this draft
-does not cover. Non-functional requirements (the Hold-Mechanism Benchmark's
+Functional requirements for payment (Stripe integration, idempotent
+webhook handling), cancellation/refund, and notification delivery are not
+yet written — they depend on Phases 4–6, which this draft does not cover.
+Non-functional requirements (the Hold-Mechanism Benchmark's
 throughput/latency targets) depend on Phase 8.

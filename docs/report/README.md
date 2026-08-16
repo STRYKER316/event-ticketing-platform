@@ -19,14 +19,14 @@ repo, never an aspirational one.
 
 | Chapter | Status | Fed by | File |
 |---|---|---|---|
-| Project Description | Draft (partial — covers P0-P2) | P0 topology figure, architecture recap; P1 event management, P2 browse/search | `project-description.md` |
-| Requirement Gathering | Draft (partial — Event/Search Service roles only) | P1.T5 (roles table), P2.T1 (publish-step amendment), P1 addendum (venue/seat-map write API); booking/payment/refund flows still to come | `requirement-gathering.md` |
-| Class Diagrams | Draft (partial — Event Service + Search Service) | P1.T4, P2.T2–T4; Booking (P3.T1) and Payment (P4.T1) diagrams still to come | `class-diagrams.md` |
-| Database Schema Design | Draft (partial — `event_db`, seat-map docs, ES index) | P1.T2 (ER + textual), P2.T2 (ES mapping); `booking_db`/`payment_db` still to come | `database-schema-design.md` |
+| Project Description | Draft (partial — covers P0-P3) | P0 topology figure, architecture recap; P1 event management, P2 browse/search, P3 booking + dual hold | `project-description.md` |
+| Requirement Gathering | Draft (partial — Event/Search/Booking Service roles) | P1.T5 (roles table), P2.T1 (publish-step amendment), P1 addendum (venue/seat-map write API), P3.T6 (booking roles table + delete-rule amendment); payment/refund flows still to come | `requirement-gathering.md` |
+| Class Diagrams | Draft (partial — Event Service + Search Service + Booking Service) | P1.T4, P2.T2–T4, P3.T1/T3–T6 (Booking Manager/Repository + TicketHoldStrategy); Payment (P4.T1) diagram still to come | `class-diagrams.md` |
+| Database Schema Design | Draft (partial — `event_db`, seat-map docs, ES index, `booking_db`) | P1.T2 (ER + textual), P2.T2 (ES mapping), P3.T1 (`tickets`/`bookings` ER + textual); `payment_db` still to come | `database-schema-design.md` |
 | Feature Development Process | Not started — blocked on P8 | P8 benchmark (measured), P3 hold-strategy design | — |
-| Testing Strategy | Draft (partial — 3 tiers: unit/integration, Kafka+ES, adversarial) | P1.T6 (`testcontainers` first use), P2.T3/T5 (Kafka consumer redelivery + eventual-consistency testing), pre-Phase-3 adversarial pass (8 rounds, 5 bugs found+fixed); every later phase's suite | `testing-strategy.md` |
+| Testing Strategy | Draft (partial — 4 tiers: unit/integration, Kafka+ES, adversarial, P3 test-first concurrency + 2-pass review) | P1.T6 (`testcontainers` first use), P2.T3/T5 (Kafka consumer redelivery + eventual-consistency testing), pre-Phase-3 adversarial pass (8 rounds, 5 bugs found+fixed), P3.T3–T5/T7 (test-first `TicketHoldStrategy` contract + race proofs, both real strategies), P3 checkpoint (routine + dedicated adversarial `/code-review`, 2nd pass catching bugs in the 1st pass's own fixes); every later phase's suite | `testing-strategy.md` |
 | Deployment Flow | Not started — blocked on P10 | P10.T1–T4 | — |
-| Technologies Used | Draft (partial, running list) | every phase's tech, incl. P2's Kafka integration + Elasticsearch | `technologies-used.md` |
+| Technologies Used | Draft (partial, running list) | every phase's tech, incl. P2's Kafka integration + Elasticsearch, P3's Redis + APScheduler | `technologies-used.md` |
 | Conclusion (Limitations/Future Work) | Not started — drafted last, P11.T3 | decisions-log §26 pull-list | — |
 | Abstract | Not started — written last, P11.T1 | whole report | — |
 

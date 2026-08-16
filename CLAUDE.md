@@ -277,6 +277,15 @@ issues worth locking in against:
   value back in the 422 body, and Starlette's JSON encoder can't serialize `NaN`, so
   the rejection itself 500s. Any service with a money/measurement float field (Payment
   Service's `amount`, most likely) needs this.
+- **A `Settings` field whose valid values are a small fixed set of strings is typed
+  `Literal[...]`, never bare `str`** — the same "reject bad values before they reach
+  business logic" reasoning as the DTO-Enum rule above, just applied to config instead
+  of a request body. `booking-service`'s `hold_strategy: Literal["cron", "redis"]`
+  (§6) is the first instance: a typo'd `HOLD_STRATEGY` env value now fails at startup
+  (pydantic-settings validation) instead of silently reaching
+  `get_hold_strategy()`'s runtime `raise ValueError` on the first request that needs
+  it. Any future service-selecting-a-strategy config value should follow the same
+  pattern.
 - **Every endpoint's auth requirement is explicit, never implicit.** Each route is one of:
   public, authenticated-only, `require_role("organizer")`, or ownership-scoped (role +
   owner-ID comparison, §15). Deciding "no guard needed" is fine; leaving it unstated by
@@ -287,6 +296,18 @@ issues worth locking in against:
   rejected-input paths at `error`.
 - **Never query inside a loop.** Any endpoint assembling a response across multiple
   related records bulk-fetches first (`.in_()`-style filters), then assembles in memory.
+- **Any multi-row INSERT or `.in_()`/subquery clause built from a list whose size isn't
+  bounded by a small, fixed cap must batch through `chunked()`
+  (`booking-service/app/db/chunking.py`), not assume the list stays small.** Postgres/
+  asyncpg caps a single statement at ~32,767 bind params — found the hard way in Phase 3
+  when a single unbatched multi-row `INSERT` (5 params/seat) overflowed that cap for any
+  venue past ~6,500 seats, and a sweep's unbatched `.in_()` had the same latent risk
+  against a large backlog. Use the shared `chunked()` helper and its
+  `BIND_PARAM_SAFE_BATCH_SIZE` constant rather than each call site picking (and
+  potentially drifting on) its own batch size — this was originally two independently
+  duplicated magic numbers before being consolidated. Any future service with the same
+  shape (a bulk insert sized by user input, a sweep over a potentially large ID list)
+  should reuse or mirror this pattern, not reintroduce the bug.
 - New service = copy the `event-service` template (built in P0.T5 — app factory,
   `core.py`, Manager+Repository layering), don't hand-roll a second pattern. For a
   service with no SQL/Mongo of its own (e.g. `search-service` — Elasticsearch is not a
@@ -303,6 +324,30 @@ issues worth locking in against:
   (no explicit `priority` label needed). Verify this via Traefik's own API
   (`GET :8080/api/http/routers`) when adding a new service's route, not just by
   assuming it works.
+- **Integration tests use `testcontainers.community.*`, not the bare `testcontainers.*`
+  namespace** — established in Phase 1 (`community.postgres`, `community.mongodb`) and
+  extended in Phase 3 to `community.redis` and `community.kafka`. For Kafka
+  specifically: `community.kafka.KafkaContainer("apache/kafka:3.8.0")` — the same
+  image the compose stack actually runs — boots and works directly, no
+  `.with_kraft()` override needed, unlike `search-service`'s existing suite, which
+  uses a Confluent image (`confluentinc/cp-kafka`) plus `.with_kraft()` because that
+  was the working combination found in Phase 2 before this was known. Worth revisiting
+  `search-service`'s test infra to match at some point, but not a Phase 3 change — not
+  touched here.
+- **A Kafka consumer with its own DB write sets `enable_auto_commit=False` on the
+  `AIOKafkaConsumer` and commits the offset manually, once per record, only after that
+  record's handler has fully finished** — not on `aiokafka`'s default background timer,
+  which advances offsets independent of whether the write underneath them actually
+  succeeded. This is what makes "redelivery is a safe no-op" (the architecture invariant
+  above) actually true under a crash mid-write, not just under a clean shutdown.
+  Established in Phase 3 (`booking-service/app/kafka/consumers.py`) after a review found
+  the default left in place; also wrap the DB write itself in a small bounded retry
+  (a handful of attempts, short backoff) before giving up and letting the offset commit
+  past a permanently-failed message anyway — without the retry, a merely transient DB
+  error (a connection blip) costs that message's data on the very first hiccup, which
+  defeats the point of disabling auto-commit in the first place. Any future consumer with
+  its own DB write (Payment Service's webhook handler, most likely) should follow this
+  same shape.
 - Update this file after each phase checkpoint if conventions, commands, or structure
   shift — treat it as living documentation, not a one-time snapshot.
 

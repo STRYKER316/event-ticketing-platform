@@ -2,7 +2,7 @@
 
 Shared local infrastructure (§20, §24) — data/broker/gateway layer, plus the
 app services wired in behind Traefik as each phase builds them: `event-service`
-(Phase 0-1) and `search-service` (Phase 2) so far.
+(Phase 0-1), `search-service` (Phase 2), and `booking-service` (Phase 3) so far.
 
 Copy `../.env.example` to `../.env` and fill in values before running.
 
@@ -19,13 +19,14 @@ docker compose ps
 |---|---|---|---|
 | Postgres | `postgres` | `POSTGRES_PORT` (55432 — see note below) | one container, three logical DBs (`event_db`, `booking_db`, `payment_db`), each with its own user — see `postgres/init.sh` (§8, §20) |
 | MongoDB | `mongodb` | `MONGO_PORT` (27017) | event-service seat maps only (§8) |
-| Redis | `redis` | `REDIS_PORT` (6379) | |
+| Redis | `redis` | `REDIS_PORT` (6379) | booking-service's Redis-TTL `TicketHoldStrategy` only (§6, §8) — idle unless `HOLD_STRATEGY=redis` |
 | Elasticsearch | `elasticsearch` | `ELASTICSEARCH_PORT` (9200) | single-node, security disabled, heap capped at 512m (§24) |
 | Kafka | `kafka` | `KAFKA_PORT` (9092) | KRaft mode, single broker, no Zookeeper (§7, §24) |
 | Keycloak | `keycloak` | `KEYCLOAK_PORT` (8081) | dev mode, embedded DB, imports `keycloak/realm-export.json` on startup (§5, §12, §15) |
 | event-service | `event-service` | routed via Traefik only (no direct host port) | events/venues/seat-maps API (§8, §15); `/healthz`, `/metrics`, `/events`, `/venues`, `/events/{id}/seat-map`, `/events/{id}/publish` |
 | search-service | `search-service` | routed via Traefik only (no direct host port) | public `GET /search` over Elasticsearch, populated via Kafka (§7.1, §8); `/healthz`, `/metrics` |
-| Traefik | `traefik` | 80 (entrypoint), `TRAEFIK_DASHBOARD_PORT` (8080, dashboard) | Docker-labels provider; `event-service` on `PathPrefix('/')`, `search-service` on `PathPrefix('/search')` |
+| booking-service | `booking-service` | routed via Traefik only (no direct host port) | ticket provisioning consumer (Kafka #2, §7.2) + `POST /bookings` over `booking_db` and (if `HOLD_STRATEGY=redis`) Redis (§6, §8); `/healthz`, `/metrics` |
+| Traefik | `traefik` | 80 (entrypoint), `TRAEFIK_DASHBOARD_PORT` (8080, dashboard) | Docker-labels provider; `event-service` on `PathPrefix('/')`, `search-service` on `PathPrefix('/search')`, `booking-service` on `PathPrefix('/bookings')` |
 | docker-socket-proxy | `docker-socket-proxy` | internal only | nginx proxy in front of the Docker socket — see note below |
 
 All images are arm64-native (§24) — no Rosetta emulation expected on Apple Silicon.

@@ -1597,3 +1597,128 @@ entirely. Rewrote both.
 
 This closes out the comprehensive sweep — every file in scope has now been
 checked at least once. No decisions-log delta. No CLAUDE.md update needed.
+
+---
+
+## 2026-08-16 — Phase 3 checkpoint: two review passes, the second catching bugs in the first's own fixes
+
+Per `CLAUDE.md`, P3 gets a dedicated adversarial `/code-review` pass on top
+of the routine self-verification every phase gets, since the dual hold
+strategy is the one bug class that silently corrupts the product's core
+guarantee. Ran the full checkpoint sequence: routine `/pre-pr` review, fixes,
+a second dedicated adversarial review, fixes to *those* findings, a live
+end-to-end walkthrough against the real stack, then the full phase-end
+checklist (report chapters, `architecture.html`, decisions-log delta,
+`CLAUDE.md` self-update, cross-doc staleness sweep).
+
+**Pass 1 (routine `/pre-pr`) found five high-severity issues:**
+- `cron_hold_strategy.py`'s sweep UPDATE filtered only by ticket ID, no
+  status/expiry re-check — a hold re-acquired between the sweep's SELECT and
+  UPDATE would be silently reset to AVAILABLE, contradicting the method's
+  own TOCTOU-safety docstring.
+- `ProvisioningConsumer`'s `AIOKafkaConsumer` was left at `enable_auto_commit`'s
+  default `True` — offsets advanced on a timer regardless of whether the DB
+  write actually succeeded, breaking the "redelivery is a safe no-op"
+  guarantee under a crash mid-write.
+- The provisioning consumer's DB write had no error handling at all — any DB
+  error killed the background consumer task permanently while `/healthz`
+  stayed green, with nothing surfacing that provisioning had silently
+  stopped.
+- `TicketRepository.bulk_upsert_available()`'s multi-row INSERT bound 5
+  params/seat with no batching — events past ~6,500 seats would overflow
+  Postgres's ~32,767 bind-param cap.
+- The Redis strategy had no mechanism for expiring an abandoned `PENDING`
+  Booking row — Redis's own key expiry frees the *lock*, but the Booking row
+  `BookingManager` creates alongside it was never touched, so one abandoned
+  checkout under `HOLD_STRATEGY=redis` made that seat permanently unbookable
+  via `uq_bookings_active_ticket`. The most consequential finding: it meant
+  the two strategies weren't actually behaviorally equivalent, which would
+  have quietly undercut the P8 benchmark comparison.
+
+Fixed all five, plus several medium/low findings from the same pass: a
+weak Kafka DTO validation gap (blank section/row/label/title/venue_name
+accepted), a dead `EventDeletedMessage`/`publish_deleted` code path (dead
+because a `PUBLISHED` event can no longer be deleted at all, per the §15
+Phase 3 amendment — nothing produces a `DELETED` message anymore), a stale
+`booking_integrity_race_lost` log call at `error` when it's an
+expected/handled race per its own docstring (downgraded to `warning`), and
+a Redis test fixture that never truncated between tests.
+
+**Pass 2 (dedicated adversarial `/code-review`, run after Pass 1's fixes)
+found four more defects — all introduced or left incomplete by Pass 1's own
+fixes:**
+- The DB-write try/except added for Pass 1's "don't let a DB error kill the
+  consumer" finding still let `run()` commit the Kafka offset unconditionally
+  after a caught failure — silently losing that message's tickets on the
+  very first transient error, the opposite of what disabling
+  `enable_auto_commit` was supposed to guarantee. Fixed with a bounded
+  in-process retry (3 attempts, 1s backoff) before the consumer accepts the
+  loss and moves on, with the final give-up logged at `critical`.
+- `main.py`'s teardown called `scheduler.shutdown(wait=False)`
+  unconditionally; if `kafka_consumer.start()` failed before
+  `scheduler.start()` ever ran, APScheduler's `shutdown()` raises
+  `SchedulerNotRunningError` on a still-stopped scheduler (verified directly
+  against the installed `apscheduler` source), masking the original startup
+  error and aborting the rest of cleanup. Fixed with a `scheduler.running`
+  guard.
+- The cron sweep's Booking-row UPDATE (added to fix Pass 1's TOCTOU finding)
+  re-checked ticket ID only, asymmetric with the Ticket UPDATE right next to
+  it. Not exploitable today (no cancellation endpoint exists yet to create
+  the intervening state change), fixed anyway for consistency before it
+  becomes exploitable later.
+- `INSERT_BATCH_SIZE` and `SWEEP_BATCH_SIZE` — the two batch-size constants
+  Pass 1's fixes introduced — were independently defined with the same
+  magic number in two files. Extracted into a shared `chunked()` helper
+  (`app/db/chunking.py`).
+
+**Live re-verification against the real stack**, not just the automated
+suite: created a venue/event, attached a 12-seat map, published it, watched
+Kafka provision all 12 tickets, booked a seat, confirmed an immediate
+duplicate attempt on the same seat 409s, ran 20 concurrent `curl` requests
+against one fresh seat through Traefik and got exactly one 201/nineteen
+409s. Then, specifically to re-verify the Redis-sweep fix: temporarily
+flipped the running `booking-service` container to `HOLD_STRATEGY=redis`
+with a 5-second TTL/sweep interval (reverted after), booked and abandoned a
+seat, confirmed a second attempt correctly 409'd while the Redis hold was
+live, waited past TTL + sweep interval, confirmed
+`hold_sweep_expired_stale_redis_bookings` (`count: 1`) in the logs, then
+confirmed a fresh booking on that same seat succeeded — the exact bug
+reproduced and confirmed fixed against real Postgres and real Redis.
+
+**Test counts after both review passes and the fixes:** `booking-service`
+45/45 (23 unit, 22 integration — up from 35/35, four new regression tests
+added: seat-map-larger-than-one-batch, the Redis abandoned-booking sweep
+behavior, DB-write-failure retry behavior, and Kafka DTO blank-string
+rejection). `event-service` 54/54 (down from 55, net -1 after the
+`publish_deleted` dead-code removal).
+
+**Then a final `/pre-pr` simplify pass** (the routine review-gate step this
+checklist item also covers) found two real items across the whole phase
+diff: `hold_strategy_factory.py` and `hold_sweep.py` each had a dead
+`else: raise ValueError` branch — unreachable now that `Settings.hold_strategy`
+is `Literal["cron", "redis"]`, since pydantic-settings already rejects
+anything else at startup — collapsed to a plain two-way `if/else` in both;
+and `test_concurrency_suite.py` had two near-duplicates, `_attempt_booking_cron`/
+`_attempt_booking_redis` (merged into one `_attempt_booking(..., make_hold_strategy)`)
+and a redis-strategy abandoned-hold test that was a verbatim duplicate of
+one already in `test_redis_hold_race.py` (removed). Final count after this
+pass: `booking-service` 44/44 (23 unit, 21 integration).
+
+**Cross-doc staleness sweep** (checklist item 8) caught the same "no sweep
+needed" framing baked into multiple docs before this session — `docs/report/
+class-diagrams.md`, `technologies-used.md`, `project-description.md`,
+`database-schema-design.md`, and `docs/architecture.html` all previously
+stated or implied the Redis strategy needed no sweep at all, which was true
+for the lock but not for the Booking row. All corrected. `docs/phases/
+phase-3-kickoff.md`'s identical-sounding claim was checked and left as-is —
+it's a frozen historical task prompt (same category as this file), and
+narrowly scoped to `RedisHoldStrategy` itself, which genuinely needs no
+sweep; the gap was in a different class (`BookingManager`/
+`BookingRepository`) the kickoff prompt was never making a claim about.
+
+Decisions-log delta: yes — §6 amended with the Redis-strategy sweep gap and
+its fix, since it affects the Phase 8 benchmark's core premise that the two
+strategies are actually comparable. `CLAUDE.md` updated: two new Conventions
+entries (shared bind-param-batching via `chunked()`; the
+`enable_auto_commit=False` + bounded-retry shape for any future Kafka
+consumer with its own DB write).

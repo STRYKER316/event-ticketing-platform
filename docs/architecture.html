@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Event &amp; Search Services — event-ticketing-platform</title>
+<title>Event, Search &amp; Booking Services — event-ticketing-platform</title>
 <style>
   :root {
     --bg: #f6f7f9;
@@ -235,25 +235,26 @@
 
 <header>
   <p class="eyebrow">event-ticketing-platform — capstone</p>
-  <h1>Event &amp; Search Services</h1>
-  <p>What Phase 2 actually built: the first real Kafka integration point. Event Service now publishes a keyed message when an event is published, updated while published, or deleted; Search Service consumes it into Elasticsearch, idempotently, and serves it back over a public <code>GET /search</code>. Verified live — a hand-replayed duplicate Kafka message, not just a passing test. Also closed a gap decisions-log §15 had left open since Phase 1: organizers can now create venues and attach/update seat maps over HTTP — no more seeding or manual Mongo writes to get a publishable event. Traced 2026-08-15.</p>
+  <h1>Event, Search &amp; Booking Services</h1>
+  <p>What Phase 3 actually built: the double-booking-critical service. Booking Service now provisions <code>Ticket</code> rows idempotently from Event Service's Kafka payload (integration point #2), and books a specific seat through one of <strong>two independently swappable hold mechanisms</strong> behind a single <code>TicketHoldStrategy</code> interface — a cron sweep over a Postgres column, or a self-expiring Redis <code>SET NX EX</code> lock — selected by one config value, never branched on in code. Both proven, not assumed, against the identical concurrency contract: 25 simulated clients racing one seat, exactly one wins, under each mechanism, re-run repeatedly. Also closed a gap left open since Phase 1: <code>DELETE /events/{id}</code> now refuses a <code>PUBLISHED</code> event outright, since Event Service has no channel to check Booking Service for live bookings. Two review passes ran at checkpoint — the second, dedicated adversarial one, caught real bugs in the first pass's own fixes (a Kafka offset-commit gap, a masked-exception path in scheduler teardown, an asymmetric TOCTOU guard, a duplicated batch-size constant) — see the Testing Strategy report chapter for the full list. Verified live against the real stack, both hold strategies in turn, including the fixed Redis-strategy sweep (abandon a hold, wait past TTL, confirm the seat is bookable again — the exact bug the review found). Traced 2026-08-16.</p>
   <div class="badges">
     <span class="badge ok">Phase 0 complete</span>
     <span class="badge ok">Phase 1 complete</span>
     <span class="badge ok">Phase 2 complete</span>
-    <span class="badge">19 tasks · P0.T1–T7, P1.T1–T7, P2.T1–T5</span>
+    <span class="badge ok">Phase 3 complete</span>
+    <span class="badge">26 tasks · P0.T1–T7, P1.T1–T7, P2.T1–T5, P3.T1–T7</span>
     <span class="badge">+ P1 addendum: venue/seat-map write API</span>
-    <span class="badge">10 containers</span>
+    <span class="badge">12 containers</span>
   </div>
 </header>
 
 <section>
   <h2><span class="num">01</span> — Topology</h2>
-  <h3>One entrypoint, one service — now with two databases behind it</h3>
-  <p class="lede">Traefik now routes to two services: <code>event-service</code> still on its original catch-all label, <code>search-service</code> on a specific <code>PathPrefix(/search)</code> that outranks it by rule length. What changed this phase: <code>event-service</code> publishes a keyed Kafka message when an event is published, updated while published, or deleted; <code>search-service</code> consumes it into Elasticsearch, idempotently, and serves <code>GET /search</code>. Redis is still provisioned but idle.</p>
+  <h3>One entrypoint, three services — Kafka now fans out to two independent consumers</h3>
+  <p class="lede">Traefik now routes to three services: <code>event-service</code> on its original catch-all label, <code>search-service</code> on <code>PathPrefix(/search)</code>, <code>booking-service</code> on <code>PathPrefix(/bookings)</code> — both more-specific rules outrank the catch-all by rule length, no explicit priority needed. What changed this phase: publishing an event now also triggers Kafka integration point #2 — <code>booking-service</code> runs a second, independent consumer group (<code>booking-service</code>, distinct from <code>search-service</code>'s) against the same <code>event.events</code> topic, provisioning <code>Ticket</code> rows idempotently. Redis is wired and active for the first time — one of Booking Service's two swappable hold mechanisms.</p>
 
   <figure>
-    <svg viewBox="0 0 900 600" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service by a catch-all rule and to search-service by a more specific /search rule; event-service queries Postgres and MongoDB and validates tokens against Keycloak, then publishes a keyed Kafka message on the event.events topic when an event is published, updated while published, or deleted; search-service consumes that topic, idempotently upserting or deleting documents in Elasticsearch, and serves GET /search back through Traefik; Redis is provisioned but not yet wired to any service.">
+    <svg viewBox="0 0 900 680" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service by a catch-all rule, to search-service by a /search rule, and to booking-service by a /bookings rule; event-service queries Postgres and MongoDB and validates tokens against Keycloak, then publishes a keyed Kafka message on the event.events topic when an event is published or updated while published — a published event can no longer be deleted at all; search-service consumes that topic into Elasticsearch and serves GET /search; booking-service independently consumes the same topic to provision Ticket rows in its own booking_db Postgres database, and serves POST /bookings, acquiring a hold via either a Postgres-column cron strategy or a Redis SET NX EX strategy depending on configuration; booking-service also verifies JWTs against Keycloak like event-service does.">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -320,7 +321,7 @@
       <!-- event-service down to kafka: publish -->
       <line x1="540" y1="128" x2="540" y2="298" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
       <text x="548" y="270" text-anchor="start" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">publish (Kafka #1)</text>
-      <text x="548" y="284" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">keyed by event_id, on publish/update/delete while PUBLISHED</text>
+      <text x="548" y="284" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">keyed by event_id, on publish/update while PUBLISHED (delete is refused, §02)</text>
 
       <!-- kafka -->
       <rect x="460" y="300" width="160" height="60" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
@@ -345,22 +346,40 @@
       <text x="760" y="436" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">elasticsearch</text>
       <text x="760" y="452" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">single-node, index: events</text>
 
-      <!-- idle infra row -->
-      <line x1="24" y1="500" x2="876" y2="500" stroke="var(--border)" stroke-width="1"/>
-      <text x="24" y="522" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">PROVISIONED — NOT WIRED TO A SERVICE YET</text>
+      <!-- booking-service row divider -->
+      <line x1="24" y1="480" x2="876" y2="480" stroke="var(--border)" stroke-width="1"/>
+      <text x="24" y="502" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">PHASE 3 — BOOKING SERVICE, KAFKA INTEGRATION POINT #2</text>
 
-      <g fill="none" stroke="var(--idle)" stroke-width="1.3">
-        <rect x="375" y="536" width="150" height="52" rx="8"/>
-      </g>
-      <g font-family="var(--mono)" font-size="12" fill="var(--idle)" text-anchor="middle">
-        <text x="450" y="566">redis</text>
-      </g>
-      <g font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)" text-anchor="middle">
-        <text x="450" y="580">dual hold strategy, P3</text>
-      </g>
+      <!-- kafka down to booking-service: second, independent consumer group -->
+      <line x1="540" y1="360" x2="540" y2="518" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="548" y="490" text-anchor="start" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">consume (Kafka #2, provisioning)</text>
+      <text x="548" y="504" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">group_id=booking-service — independent of search-service's group</text>
+
+      <!-- booking-service -->
+      <rect x="460" y="522" width="180" height="76" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="550" y="550" text-anchor="middle" font-family="var(--mono)" font-size="13" font-weight="600" fill="currentColor">booking-service</text>
+      <text x="550" y="567" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">FastAPI /bookings</text>
+      <text x="550" y="581" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--accent)">also routed here via Traefik; verifies JWT via shared_auth</text>
+      <text x="550" y="593" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--accent)">TicketHoldStrategy: cron (Postgres) or redis (below), by config</text>
+
+      <!-- booking-service down to postgres booking_db -->
+      <line x1="500" y1="598" x2="440" y2="626" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="410" y="616" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">tickets, bookings</text>
+
+      <rect x="330" y="626" width="150" height="52" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="405" y="648" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">postgres</text>
+      <text x="405" y="664" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">booking_db</text>
+
+      <!-- booking-service down to redis -->
+      <line x1="600" y1="598" x2="660" y2="626" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="690" y="616" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">SET NX EX</text>
+
+      <rect x="620" y="626" width="140" height="52" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="690" y="648" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">redis</text>
+      <text x="690" y="664" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">redis strategy only</text>
     </svg>
   </figure>
-  <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · mongo:7 · apache/kafka:3.8.0 (KRaft) · elasticsearch:8.15.0 — 10 containers, one docker-compose network, host port 80 only.</figcaption>
+  <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · mongo:7 · apache/kafka:3.8.0 (KRaft) · elasticsearch:8.15.0 · redis:7-alpine — 12 containers, one docker-compose network, host port 80 only.</figcaption>
 </section>
 
 <section>
@@ -439,13 +458,13 @@
   </figure>
   <figcaption>Verified live: alice → 403 {"detail":"Requires role: organizer"} · bob → 201, event created with organizer_id = bob's JWT subject.</figcaption>
 
-  <p class="lede" style="margin-top:24px;">Role alone stops here — it doesn't answer "whose event is this?" That's a second, explicit check in <code>EventManager</code>: on <code>PATCH</code>/<code>DELETE /events/{id}</code>, the stored <code>organizer_id</code> is compared against the caller's JWT subject before any mutation. Verified live: <code>carol</code> (organizer role, different subject) → 403 on both bob's event; bob → 200/204 on his own. The new <code>POST /events/{id}/publish</code> route this phase is guarded the identical way — organizer role plus ownership — not shown as a separate diagram since the mechanism is unchanged, only the route.</p>
+  <p class="lede" style="margin-top:24px;">Role alone stops here — it doesn't answer "whose event is this?" That's a second, explicit check in <code>EventManager</code>: on <code>PATCH</code>/<code>DELETE /events/{id}</code>, the stored <code>organizer_id</code> is compared against the caller's JWT subject before any mutation. Verified live: <code>carol</code> (organizer role, different subject) → 403 on both bob's event; bob → 200 on <code>PATCH</code>, 204 on <code>DELETE</code> of a still-<code>DRAFT</code> event of his own — a <code>PUBLISHED</code> event now returns 409 to its own owner too, regardless of ownership — a Phase 3 rule (decisions-log §15 amendment): Event Service has no channel to check Booking Service for live bookings, so deletion of a published event is refused outright rather than conditionally. The <code>POST /events/{id}/publish</code> route is guarded the identical role-plus-ownership way — not shown as a separate diagram since the mechanism is unchanged, only the route.</p>
 </section>
 
 <section>
   <h2><span class="num">03</span> — Kafka integration point #1: publish → search</h2>
   <h3>Event-carried state transfer, idempotent both ways</h3>
-  <p class="lede">The first of five locked Kafka integration points (§7). No synchronous call from either service into the other — Event Service publishes a self-contained message (full seat list included, not a venue reference), Search Service consumes it whenever it gets to it. The gap in between is the eventual-consistency window (§7/§26): real, bounded, and tested, not hidden.</p>
+  <p class="lede">The first of five locked Kafka integration points (§7). No synchronous call from either service into the other — Event Service publishes a self-contained message (full seat list included, not a venue reference), Search Service consumes it whenever it gets to it. The gap in between is the eventual-consistency window (§7/§26): real, bounded, and tested, not hidden. <strong>Current-state note (Phase 3):</strong> the redelivered-<code>DELETED</code>-message flow below was true and tested when this diagram was traced (Phase 2, deleting a published event was allowed); as of Phase 3, <code>EventProducer.publish_deleted</code> no longer exists at all — a <code>PUBLISHED</code> event can never be deleted (§02) — so no code path in this system produces a <code>DELETED</code> message anymore. Search Service's consumer still handles one defensively (still real, still tested via a hand-replayed message, same as originally), it's just no longer reachable through any actual application flow.</p>
 
   <figure>
     <svg viewBox="0 0 900 500" role="img" aria-label="Sequence diagram: an organizer calls POST /events/id/publish on event-service, which sets status to PUBLISHED, commits, then sends a Kafka message keyed by event ID to the event.events topic containing the full event payload including the flattened seat list; search-service's consumer, in a separate background task, receives the message and upserts a document into Elasticsearch by event ID; a client calling GET /search after this point finds the event, but a client calling immediately after publish does not, illustrating the eventual consistency window; replaying the identical Kafka message a second time re-indexes the same document — Elasticsearch's version number increments but no duplicate document is created, and a redelivered delete against an already-removed document is caught and logged rather than raised.">
@@ -524,7 +543,153 @@
 </section>
 
 <section>
-  <h2><span class="num">04</span> — What's proven vs. not yet built</h2>
+  <h2><span class="num">04</span> — Kafka integration point #2: publish → ticket provisioning</h2>
+  <h3>The same message, a second independent consumer, a structurally idempotent write</h3>
+  <p class="lede">The identical <code>event.events</code> message from §03 is also read by <code>booking-service</code>'s own consumer group — a second, wholly independent subscriber to the same topic, not a fan-out event-service has to know about. Idempotency here isn't a checked condition the way it was for the Elasticsearch upsert-by-ID (§03): it's a property of one SQL statement shape plus a unique constraint, so there's no "have I seen this before" branch that could itself have a bug.</p>
+
+  <figure>
+    <svg viewBox="0 0 900 400" role="img" aria-label="Sequence diagram: event-service's Kafka producer sends the same publish message from integration point 1; booking-service's ProvisioningConsumer, a second independent consumer group, receives it and calls TicketRepository.bulk_upsert_available with an INSERT ON CONFLICT DO NOTHING statement against a unique constraint on event_id, section, row_name, seat_label, creating one Ticket row per seat; the message is then replayed identically, and the same INSERT ON CONFLICT DO NOTHING statement matches zero new rows the second time, proving redelivery is a safe no-op structurally rather than via an explicit duplicate check.">
+      <g stroke="var(--border)" stroke-width="1.3">
+        <line x1="70" y1="70" x2="70" y2="380"/>
+        <line x1="320" y1="70" x2="320" y2="380"/>
+        <line x1="570" y1="70" x2="570" y2="380"/>
+        <line x1="820" y1="70" x2="820" y2="380"/>
+      </g>
+      <g font-family="var(--mono)" font-size="12.5" font-weight="600" fill="currentColor" text-anchor="middle">
+        <text x="70" y="48">event-service</text>
+        <text x="320" y="48">kafka</text>
+        <text x="570" y="48">booking-service</text>
+        <text x="820" y="48">booking_db</text>
+      </g>
+      <g font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)" text-anchor="middle">
+        <text x="570" y="62">ProvisioningConsumer</text>
+        <text x="820" y="62">tickets</text>
+      </g>
+
+      <!-- publish (same event as §03) -->
+      <line x1="70" y1="86" x2="312" y2="86" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="195" y="80" text-anchor="middle" font-family="var(--mono)" font-size="10">send(key=event_id, action=upserted, seats=[...]) — same message as §03</text>
+
+      <line x1="320" y1="110" x2="562" y2="110" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="440" y="104" text-anchor="middle" font-family="var(--mono)" font-size="10">deliver — group_id=booking-service (independent of search-service's group)</text>
+
+      <line x1="570" y1="134" x2="812" y2="134" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="695" y="128" text-anchor="middle" font-family="var(--mono)" font-size="10">INSERT ... ON CONFLICT (event_id,section,row_name,seat_label) DO NOTHING</text>
+
+      <rect x="660" y="150" width="220" height="46" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.3"/>
+      <text x="770" y="170" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="600" fill="var(--ok)">one Ticket row per seat</text>
+      <text x="770" y="184" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ok)">status = AVAILABLE</text>
+
+      <!-- redelivery -->
+      <line x1="30" y1="218" x2="870" y2="218" stroke="var(--border)" stroke-width="1"/>
+      <text x="30" y="238" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">REDELIVERY — identical message, replayed</text>
+
+      <line x1="320" y1="262" x2="562" y2="262" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3" marker-end="url(#arrowDim)"/>
+      <text x="440" y="256" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--idle)">deliver (duplicate of the message above)</text>
+
+      <line x1="570" y1="286" x2="812" y2="286" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3" marker-end="url(#arrowDim)"/>
+      <text x="695" y="280" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--idle)">same INSERT ... ON CONFLICT DO NOTHING statement</text>
+
+      <rect x="640" y="300" width="260" height="46" rx="8" fill="var(--idle-soft)" stroke="var(--idle)" stroke-width="1.1"/>
+      <text x="770" y="320" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="600" fill="var(--idle)">0 rows inserted this time</text>
+      <text x="770" y="334" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--idle)">no per-row check needed — the constraint is the mechanism</text>
+
+      <text x="30" y="368" font-family="var(--mono)" font-size="10" fill="var(--text-faint)">A DELETED message is a no-op here too: event-service now refuses to delete a PUBLISHED event at all (§02), so one should never arrive for a provisioned event — EventProducer.publish_deleted no longer even exists.</text>
+    </svg>
+  </figure>
+  <figcaption>Verified live: publishing a real event through Event Service provisioned real <code>Ticket</code> rows in <code>booking_db</code> within seconds. Same pattern proven in <code>tests/integration/test_provisioning_consumer.py</code> (redelivery leaves the count unchanged) and re-exercised in <code>tests/integration/test_concurrency_suite.py</code> alongside the race proofs below.</figcaption>
+</section>
+
+<section>
+  <h2><span class="num">05</span> — Dual hold strategy: the booking-flow race, and how each mechanism wins it</h2>
+  <h3>One interface, two atomicity mechanisms, the identical guarantee</h3>
+  <p class="lede">This is the report's centerpiece correctness claim, and the one thing in this codebase that genuinely branches at runtime (<code>TicketHoldStrategy</code>, §6) — everywhere else in this system is single-path. <code>HOLD_STRATEGY</code> picks which mechanism runs; neither <code>BookingManager</code> nor this diagram's outcome changes depending on which.</p>
+
+  <figure>
+    <svg viewBox="0 0 900 320" role="img" aria-label="Sequence diagram: two users, A and B, both call POST /bookings for the same ticket_id at nearly the same time; both requests reach BookingManager.create_booking, which calls the configured TicketHoldStrategy's acquire_hold; the strategy's atomic operation — either a conditional Postgres UPDATE or a Redis SET NX EX — lets exactly one caller through; user A receives 201 with a PENDING booking and the held seat, user B receives 409 seat unavailable, regardless of which concrete strategy is active.">
+      <g stroke="var(--border)" stroke-width="1.3">
+        <line x1="60" y1="70" x2="60" y2="300"/>
+        <line x1="220" y1="70" x2="220" y2="300"/>
+        <line x1="460" y1="70" x2="460" y2="300"/>
+        <line x1="700" y1="70" x2="700" y2="300"/>
+        <line x1="840" y1="70" x2="840" y2="300"/>
+      </g>
+      <g font-family="var(--mono)" font-size="12" font-weight="600" fill="currentColor" text-anchor="middle">
+        <text x="60" y="48">user A</text>
+        <text x="220" y="48">user B</text>
+        <text x="460" y="48">BookingManager</text>
+        <text x="700" y="48">TicketHoldStrategy</text>
+        <text x="840" y="48">bookings</text>
+      </g>
+      <g font-family="var(--mono)" font-size="9" fill="var(--text-muted)" text-anchor="middle">
+        <text x="700" y="62">cron: Postgres UPDATE · redis: SET NX EX</text>
+      </g>
+
+      <line x1="60" y1="82" x2="452" y2="82" stroke="currentColor" stroke-width="1.3" marker-end="url(#arrow)"/>
+      <text x="260" y="76" text-anchor="middle" font-family="var(--mono)" font-size="10">POST /bookings {ticket_id}</text>
+      <line x1="220" y1="94" x2="452" y2="94" stroke="currentColor" stroke-width="1.3" marker-end="url(#arrow)"/>
+      <text x="260" y="106" text-anchor="middle" font-family="var(--mono)" font-size="10">POST /bookings {ticket_id} — same seat, nearly same instant</text>
+
+      <line x1="460" y1="122" x2="692" y2="122" stroke="currentColor" stroke-width="1.3" marker-end="url(#arrow)"/>
+      <text x="576" y="116" text-anchor="middle" font-family="var(--mono)" font-size="10">acquire_hold(ticket_id) — both callers, concurrently</text>
+
+      <rect x="640" y="134" width="120" height="40" rx="6" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.2"/>
+      <text x="700" y="150" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="currentColor">one atomic op —</text>
+      <text x="700" y="163" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="currentColor">exactly one winner</text>
+
+      <line x1="700" y1="174" x2="480" y2="204" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="560" y="196" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ok)">True (A)</text>
+      <line x1="700" y1="174" x2="920" y2="204" stroke="var(--fail)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="850" y="196" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--fail)">False (B)</text>
+
+      <line x1="460" y1="212" x2="832" y2="212" stroke="var(--ok)" stroke-width="1.3" marker-end="url(#arrow)"/>
+      <text x="640" y="206" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)">A's winning path: insert Booking(status=PENDING), commit</text>
+
+      <rect x="30" y="230" width="220" height="60" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.3"/>
+      <text x="140" y="250" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="600" fill="var(--ok)">A: 201 PENDING</text>
+      <text x="140" y="264" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ok)">seat held under</text>
+      <text x="140" y="276" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ok)">the active strategy</text>
+
+      <rect x="270" y="230" width="220" height="60" rx="8" fill="var(--fail-soft)" stroke="var(--fail)" stroke-width="1.3"/>
+      <text x="380" y="250" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="600" fill="var(--fail)">B: 409 seat unavailable</text>
+      <text x="380" y="264" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--fail)">acquire_hold returned</text>
+      <text x="380" y="276" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--fail)">False — no row inserted</text>
+
+      <rect x="520" y="230" width="350" height="60" rx="8" fill="none" stroke="var(--idle)" stroke-width="1.2" stroke-dasharray="3,3"/>
+      <text x="695" y="250" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--idle)">defense-in-depth, independent of the strategy above:</text>
+      <text x="695" y="264" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--idle)">bookings.uq_bookings_active_ticket (partial unique index)</text>
+      <text x="695" y="277" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">catches it at the DB if a strategy bug ever let two through</text>
+    </svg>
+  </figure>
+  <figcaption>Verified live under both configured strategies in turn (<code>HOLD_STRATEGY=cron</code>, then <code>HOLD_STRATEGY=redis</code>): booked a real seat, a second booking attempt on the same seat returned 409 both times. Under <code>redis</code> specifically, confirmed live that <code>tickets.status</code> stays <code>AVAILABLE</code> in Postgres for the seat's whole held lifetime while the real lock and its live TTL sit in Redis (<code>redis-cli GET</code>/<code>TTL</code> against the running container) — the documented trade-off below, observed directly rather than only asserted.</figcaption>
+
+  <div class="two-col" style="margin-top:20px;">
+    <div class="col">
+      <h4><span class="dot ok"></span>cron strategy</h4>
+      <ul>
+        <li><span class="check">✓</span> lock <em>is</em> <code>tickets.status</code>/<code>hold_expires_at</code></li>
+        <li><span class="check">✓</span> one atomic conditional <code>UPDATE ... WHERE status='available'</code></li>
+        <li><span class="check">✓</span> abandoned holds released by an APScheduler sweep, on an interval</li>
+        <li><span class="check">✓</span> sweep also expires the associated <code>PENDING</code> booking</li>
+        <li><span class="check">✓</span> 20/20 concurrent-acquire test runs: exactly one winner, repeated</li>
+      </ul>
+    </div>
+    <div class="col">
+      <h4><span class="dot ok"></span>redis strategy</h4>
+      <ul>
+        <li><span class="check">✓</span> lock is a Redis key — <code>tickets.status</code> is never touched</li>
+        <li><span class="check">✓</span> one atomic <code>SET key value NX EX ttl</code></li>
+        <li><span class="check">✓</span> the Redis <em>lock</em> expires on its own — no sweep needed for that half</li>
+        <li><span class="check">✓</span> the <code>PENDING</code> <code>Booking</code> row still needs a sweep — age-based, its own APScheduler job</li>
+        <li><span class="dash">–</span> documented trade-off: Postgres can't answer "is this held" here</li>
+        <li><span class="check">✓</span> 20/20 concurrent-acquire test runs: exactly one winner, repeated</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">06</span> — What's proven vs. not yet built</h2>
   <div class="two-col">
     <div class="col">
       <h4><span class="dot ok"></span>proven, live, this phase</h4>
@@ -547,16 +712,26 @@
         <li><span class="check">✓</span> <code>GET /search</code> — free text, paginated, sorted, tiebreaker-stable</li>
         <li><span class="check">✓</span> a second service (search-service) coexists behind Traefik correctly</li>
         <li><span class="check">✓</span> organizer write APIs for venues and seat maps (§15 gap closed) — ownership-scoped, republishes a <code>PUBLISHED</code> event's seat-map change to Kafka/Search</li>
+        <li><span class="check">✓</span> a third service (booking-service) coexists behind Traefik, its own Postgres, and Redis</li>
+        <li><span class="check">✓</span> ticket provisioning (Kafka #2) — idempotent by unique constraint, not application logic</li>
+        <li><span class="check">✓</span> <code>TicketHoldStrategy</code> — both real implementations proven against one shared contract test</li>
+        <li><span class="check">✓</span> no-double-booking under real concurrent load — 25 clients, one seat, exactly one winner, both strategies, re-run repeatedly</li>
+        <li><span class="check">✓</span> abandoned-hold release, both strategies — cron sweeps ticket+booking together, redis sweeps the booking row separately (age-based, since the Redis lock's own TTL only frees the key)</li>
+        <li><span class="check">✓</span> <code>POST /bookings</code> — authenticated, no organizer role required, returns a held <code>PENDING</code> booking</li>
+        <li><span class="check">✓</span> partial unique index as defense-in-depth, independent of the hold strategy</li>
+        <li><span class="check">✓</span> <code>DELETE /events/{id}</code> now refuses a <code>PUBLISHED</code> event outright (§15 amendment)</li>
+        <li><span class="check">✓</span> one command (<code>make up</code>) boots all 12 containers</li>
       </ul>
     </div>
     <div class="col">
       <h4><span class="dot idle"></span>provisioned, not built yet</h4>
       <ul>
-        <li><span class="dash">–</span> no booking/payment/notification logic yet</li>
-        <li><span class="dash">–</span> delete-if-zero-bookings is a stub — real check lands with Booking (Phase 3)</li>
-        <li><span class="dash">–</span> Redis holds unused (Phase 3)</li>
-        <li><span class="dash">–</span> only two of five services exist</li>
+        <li><span class="dash">–</span> no payment/notification logic yet (Phases 4-5)</li>
+        <li><span class="dash">–</span> no cancellation/refund flow yet (Phase 6)</li>
+        <li><span class="dash">–</span> Booking never reaches <code>CONFIRMED</code> — that's Phase 4's payment webhook</li>
+        <li><span class="dash">–</span> only three of five backend services exist</li>
         <li><span class="dash">–</span> no frontend</li>
+        <li><span class="dash">–</span> the Hold-Mechanism Benchmark (Phase 8) hasn't run — no throughput/latency numbers yet, only the correctness proof this phase built</li>
         <li><span class="dash">–</span> nothing deployed to AWS (Phase 10)</li>
       </ul>
     </div>
@@ -564,10 +739,10 @@
 </section>
 
 <section>
-  <h2><span class="num">05</span> — Reproduce this yourself</h2>
-  <p class="lede">Every command below is real — this is exactly what was run to trace the diagrams above. Takes about a minute.</p>
+  <h2><span class="num">07</span> — Reproduce this yourself</h2>
+  <p class="lede">Every command below is real — this is exactly what was run to trace the diagrams above. Takes a couple of minutes.</p>
   <pre><span class="c"># from repo root</span>
-make up                                    <span class="c"># boots all 10 containers</span>
+make up                                    <span class="c"># boots all 12 containers</span>
 make seed                                  <span class="c"># baseline venues/performers/events + one seat map</span>
 
 <span class="c"># public read — hits real postgres, paged + sorted</span>
@@ -605,6 +780,31 @@ curl "localhost/search?q=&lt;title words&gt;"
 <span class="c"># ...found once search-service's consumer catches up (sub-second locally)</span>
 curl "localhost/search?q=&lt;title words&gt;"
 <span class="out">{"items":[{...}], "total":1, ...}</span>                  <span class="ok">200</span>
+
+<span class="c"># ...and provisioned into booking_db too (Kafka #2), same publish, same message</span>
+docker exec -it postgres psql -U booking_service -d booking_db \
+  -c "SELECT id, status FROM tickets WHERE event_id = '&lt;bob's event id&gt;';"
+<span class="out">available — one row per seat in the seat map above</span>
+
+<span class="c"># alice books the seat — no organizer role required, unlike every Event Service write</span>
+TOKEN=$(./get-token.sh alice)
+curl -X POST localhost/bookings -H "Authorization: Bearer $TOKEN" \
+  -d '{"ticket_id":"&lt;the ticket id above&gt;"}'
+<span class="out">{"id":"...", "status":"pending", "ticket_id":"...", ...}</span>  <span class="ok">201</span>
+
+<span class="c"># bob tries to book the same seat right after — the race, under HOLD_STRATEGY=cron</span>
+TOKEN=$(./get-token.sh bob)
+curl -X POST localhost/bookings -H "Authorization: Bearer $TOKEN" \
+  -d '{"ticket_id":"&lt;the same ticket id&gt;"}'
+<span class="out">{"detail":"seat unavailable"}</span>                       <span class="fail">409</span>
+
+<span class="c"># flip to the other strategy and repeat — same outcome, different mechanism</span>
+<span class="c"># (infra/docker-compose.yml: HOLD_STRATEGY: redis, then `docker compose up -d booking-service`)</span>
+<span class="out">same 201 / 409 split — verified live under both strategies</span>
+
+<span class="c"># bob tries to delete his now-published event — refused outright (§15 amendment)</span>
+curl -X DELETE localhost/events/&lt;bob's event id&gt; -H "Authorization: Bearer $TOKEN"
+<span class="out">{"detail":"cannot delete a published event"}</span>          <span class="fail">409</span>
 
 make down                                  <span class="c"># tear down</span></pre>
 </section>

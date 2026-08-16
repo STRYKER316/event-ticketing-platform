@@ -2,7 +2,7 @@
 
 *Status: draft, running list — appended each phase per the DOCUMENT step.
 "Real-world framing" polish pass happens at P11.T2; until then this is
-accurate but unpolished. Entries below cover what Phase 0-2 actually
+accurate but unpolished. Entries below cover what Phases 0-3 actually
 introduced and verified running.*
 
 Each entry: what it is, why it was chosen over the alternatives considered,
@@ -146,10 +146,18 @@ long-running process) without giving up anything this project actually
 needs from Kafka.
 
 **Status:** Implemented, Tested (Phase 2 — first real integration point,
-event↔search, §7.1). Event Service's `aiokafka` producer publishes a keyed
+event↔search, §7.1; Phase 3 adds integration point #2, event→booking
+provisioning — same producer, a second independent consumer group
+(`booking-service`) reading the same topic, proving the one-producer/
+many-independent-consumer-groups shape scales past the first pair without
+any change to the producer side). Event Service's `aiokafka` producer publishes a keyed
 message (event ID as the partition/idempotency key) on the event's `publish`
-action and on any update/delete while `PUBLISHED`; Search Service's consumer
-processes it into Elasticsearch. Idempotency verified two ways: unit tests
+action and on any update while `PUBLISHED`; Search Service's consumer
+processes it into Elasticsearch. (A `PUBLISHED` event can no longer be
+deleted at all as of Phase 3 — `EventProducer.publish_deleted` was removed
+as dead code once that path became unreachable — so this producer only
+ever emits `upserted`, never `deleted`, going forward; see the Booking
+Service class-diagram note.) Idempotency verified two ways: unit tests
 against a mocked repository, and live against the real stack by hand-
 replaying an identical Kafka message via `kafka-console-producer` and
 confirming the document count never grows past one (an upsert-by-ID
@@ -160,6 +168,31 @@ mode) backs the integration suite — a different image than the compose
 stack's `apache/kafka`, since that container helper's bootstrap scripts are
 Confluent-specific; noted as a test-infrastructure detail, not a production
 concern.
+
+**Phase 3 addendum:** Booking Service's own integration suite passes
+`KafkaContainer("apache/kafka:3.8.0")` directly — the same image the
+compose stack actually runs, not the Confluent substitute above — and it
+boots and works without needing `.with_kraft()` or any other override,
+since the `apache/kafka` image already runs KRaft mode by default. Worth
+noting as a small, real discrepancy between the two services' test
+infrastructure rather than glossing over it: Search Service's Confluent
+workaround may no longer be strictly necessary, but re-verifying that and
+switching it over is out of scope for this phase and not revisited here.
+
+**Phase 3 review finding: offset-commit semantics matter for idempotency,
+not just the write itself.** `ProvisioningConsumer` originally left
+`aiokafka`'s `enable_auto_commit` at its default `True`, which commits
+offsets on a background timer independent of whether the DB write under
+it actually finished — a crash between that timer firing and the write
+committing would silently drop tickets rather than trigger the
+redelivery the idempotent `ON CONFLICT DO NOTHING` design depends on.
+Fixed with `enable_auto_commit=False` and an explicit `commit()` after
+each record is fully handled, plus a bounded in-process retry (3
+attempts, 1s backoff) so a merely transient DB error doesn't cost that
+message's tickets on the very first hiccup. The "idempotent consumer"
+claim (decisions-log §7) is about more than the write being safe to
+redeliver — it also requires the redelivery to actually happen when it's
+needed, which is an offset-commit-timing property, not a write-shape one.
 
 ## Elasticsearch (search index)
 
@@ -268,3 +301,109 @@ tear down automatically, so the suite is runnable from a clean checkout
 scoped `PostgresContainer`/`MongoDbContainer` fixtures, one Alembic
 migration run per session, table truncation between individual tests.
 Established as the pattern every later phase's integration suite reuses.
+Phase 3 extends the pattern to a third and fourth container type
+(`community.redis.RedisContainer`, `community.kafka.KafkaContainer`) in
+the same suite — Booking Service's correctness claims span three real
+datastores at once (Postgres, Redis, and the Kafka broker the
+provisioning consumer reads from), so the integration tier needed all
+three running simultaneously, not sequentially.
+
+## Redis (`redis.asyncio`)
+
+**What:** an in-memory key-value store, used here exclusively as the
+backing store for one of Booking Service's two `TicketHoldStrategy`
+implementations — a distributed lock via `SET key value NX EX seconds`,
+Redis's atomic acquire-or-fail-with-auto-expiry primitive.
+
+**Why:** chosen for this specific role because `SET ... NX EX` gives
+exactly-one-winner concurrency semantics and self-expiry in a single
+atomic operation, with no sweep needed to reclaim the *lock* itself —
+a genuinely different mechanism from the cron strategy's
+periodic-sweep approach (§6), which is the entire point of building both:
+the Phase 8 benchmark measures which trade-off performs better under
+real concurrent load, and that comparison is only meaningful if the two
+mechanisms are actually different, not two names for the same idea.
+`redis.asyncio` specifically (over the sync `redis-py` client) for the
+same async-throughout reason as every other I/O dependency in this
+project (§3).
+
+**A gap the "no sweep needed" framing hid, found during this phase's
+review:** the *lock* self-expires, but the `Booking` row `BookingManager`
+creates alongside it lives in Postgres, which Redis knows nothing about.
+An abandoned checkout used to leave that row `pending` forever, and a
+partial unique index (see the Database Schema Design chapter) then
+permanently blocked the seat — so this strategy does need a sweep after
+all, just for a Postgres row instead of the Redis key, run on its own
+APScheduler job (see the APScheduler entry below).
+
+**Why not use Redis for the cron strategy's hold state too, for
+consistency?** Considered and deliberately rejected — the cron
+strategy's whole reason for existing in this comparison is that it
+stores hold state in the same Postgres database the rest of Booking
+Service already writes to, using an atomic conditional `UPDATE` rather
+than a second datastore's primitive. Making both strategies use Redis
+would collapse the comparison into "the same lock, implemented twice,"
+not two architecturally different approaches worth benchmarking against
+each other.
+
+**Status:** Implemented, Tested, Verified (live). `RedisHoldStrategy`'s
+`acquire_hold`/`release_hold`/`is_held` proven against the shared
+`TicketHoldStrategy` contract test and a dedicated race test (25
+concurrent clients, exactly one winner) via a real `testcontainers`
+Redis instance; the auto-release-on-TTL claim specifically verified by
+asserting the Redis key is simply gone after its TTL elapses, not via
+any scheduler run — there is no scheduler on this path, which is the
+mechanism being proven. Verified live against the running compose
+stack's `redis` container too: booked a real seat with `HOLD_STRATEGY=redis`
+active, confirmed a second booking attempt on the same seat cleanly
+returned 409, and inspected the live Redis key and its TTL directly
+(`redis-cli GET`/`TTL`) alongside confirming `tickets.status` correctly
+stays `AVAILABLE` in Postgres throughout — the documented trade-off (see
+Class Diagrams chapter) observed directly, not just asserted in a
+docstring.
+
+## APScheduler
+
+**What:** an in-process Python job scheduler, used here to run Booking
+Service's periodic sweep — an `AsyncIOScheduler` interval job that runs
+whichever cleanup the active `HOLD_STRATEGY` needs.
+
+**Why:** chosen over a system-level cron job or a separate scheduling
+service specifically because the sweep needs to run inside the same
+async application (same event loop, same database session factory) as
+the rest of Booking Service, with no separate process, deployment
+artifact, or inter-process coordination to stand up for what is, in this
+project's scope, a single periodic in-process task. Wired into the same
+FastAPI `lifespan` context manager that starts/stops the Kafka consumer.
+
+**Both hold strategies need this scheduler, not just cron — a correction
+made during this phase's review.** Originally only started when
+`HOLD_STRATEGY=cron`, on the reasoning that the Redis strategy's lock
+expires on its own. True for the lock, not for the `Booking` row
+alongside it (see the Redis entry above) — `hold_sweep.py` now always
+starts the scheduler and picks which job to register based on the active
+strategy: `_sweep_cron_holds_once` (releases expired `Ticket` holds and
+their `Booking` rows together) under `cron`, or
+`_sweep_stale_redis_bookings_once` (age-based `Booking`-row expiry only)
+under `redis`. An unrecognized `HOLD_STRATEGY` value fails scheduler
+construction the same way `get_hold_strategy()` already failed on the
+first request that needed it, rather than only failing one of the two
+places.
+
+**Status:** Implemented, Tested, Verified (live, both strategies). The
+cron sweep's release logic (`CronHoldStrategy.release_expired()`) is
+tested directly against a real Postgres instance — an already-expired
+hold is released and its associated `PENDING` booking transitioned to
+`EXPIRED`, while an unexpired hold is correctly left untouched — and the
+Redis sweep's logic (`BookingRepository.expire_stale_pending()`) is
+tested the same way, independent of whether APScheduler's own timer
+fires during the test, since the scheduler is only the trigger, not the
+logic being proven. Verified live under both values: booted with
+`HOLD_STRATEGY=cron`, confirmed `"Scheduler started"` and `"Added job
+\"_sweep_cron_holds_once\""` in the structured logs alongside the Kafka
+consumer's own startup sequence; switched to `HOLD_STRATEGY=redis` with a
+short TTL/sweep interval, confirmed `"Added job
+\"_sweep_stale_redis_bookings_once\""` on boot, then confirmed the job
+actually fires and clears an abandoned booking (`hold_sweep_expired_
+stale_redis_bookings`, `count: 1`) — see the Testing Strategy chapter for
+the full live sequence.

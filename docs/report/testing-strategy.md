@@ -185,3 +185,184 @@ and retracted on its own self-verification pass before reaching this report
 not just the pytest suite). 54/54 `event-service` tests green (43 unit, 11
 integration), 18/18 `search-service` tests green, as of the pre-Phase-3
 checkpoint: `cd services/<service> && uv run pytest`.
+
+## Phase 3: test-first for the one correctness claim the whole report leans on
+
+Every prior tier in this chapter was build-then-test. Phase 3 is the
+deliberate exception, per `CLAUDE.md`'s explicit process note for this
+phase: the `TicketHoldStrategy` contract test and both concrete
+implementations' race tests were written *before* their implementations,
+not after — "does this behave correctly under a tricky concurrent/edge
+case" is exactly the condition `CLAUDE.md` calls out as warranting
+test-first, and no other case in this codebase to date has warranted it.
+
+**The shared-contract-first sequence, concretely.** P3.T3 wrote
+`tests/unit/test_hold_strategy_contract.py` — acquire-on-available
+succeeds, second-acquire-on-held fails, release-then-reacquire succeeds,
+release-of-unheld is a no-op, and (running the acquire call 20 times
+concurrently via `asyncio.gather`) exactly one of them wins — against a
+`FakeHoldStrategy` that did not exist yet, confirmed to fail with
+`ModuleNotFoundError` before writing a single line of the interface or
+the fake. P3.T4 and P3.T5 then wrote the identical race assertion again,
+each against a strategy class that likewise did not exist yet, confirmed
+failing first, before implementing `CronHoldStrategy` and
+`RedisHoldStrategy` respectively. The same contract test, run against
+three independent implementations (one in-memory, two backed by real
+infrastructure), is what makes "both strategies satisfy the same
+guarantee" a proven claim rather than an assumption from reading two
+separate implementations and hoping they agree.
+
+**Why 20-25 concurrent clients via `asyncio.gather`, not a smaller
+number.** A race test with too few concurrent callers can pass by luck
+even with a genuinely broken lock — two callers might simply not
+interleave badly on a given run. Every race test in this phase re-runs
+the same assertion against 20 (`test_hold_strategy_contract.py`,
+`test_cron_hold_race.py`, `test_redis_hold_race.py`) or 25
+(`test_concurrency_suite.py`, going through the full `BookingManager`
+flow rather than the strategy alone) simultaneous attempts, and every
+race test in this phase was manually re-run several times in a row
+during development specifically to rule out a false-positive green —
+concurrency bugs are exactly the class that can pass once and fail on
+the next run, so "it passed" isn't trusted here without "it passed
+repeatedly."
+
+**Two genuinely different atomicity mechanisms, proven against the
+identical contract.** `CronHoldStrategy.acquire_hold` is one atomic
+conditional Postgres `UPDATE ... WHERE status = 'available'` —
+correctness comes from row-level locking under the database's own
+`READ COMMITTED` isolation, the same TOCTOU-safe pattern already used to
+fix `BaseRepository.delete()`'s race in the pre-Phase-3 hardening pass
+(same bug class, much higher stakes here). `RedisHoldStrategy.acquire_hold`
+is `SET key value NX EX seconds` — correctness comes from Redis's own
+atomic command semantics, an entirely different storage system with a
+different atomicity guarantee. Neither implementation shares a code path
+with the other; the only thing they share is the interface and the test
+suite that holds both to the same bar.
+
+**Idempotent provisioning, proven structurally, not just asserted.** The
+provisioning consumer (integration point #2, §7.2) is tested for
+redelivery the same way Search Service's consumer was in Phase 2 —
+sending the identical Kafka message twice and asserting the ticket count
+doesn't grow past what one delivery would produce
+(`tests/integration/test_provisioning_consumer.py`,
+`test_concurrency_suite.py`) — but the mechanism differs meaningfully
+from Phase 2's upsert-by-ID: `bulk_upsert_available` is a single
+`INSERT ... ON CONFLICT DO NOTHING` statement per message, so there is no
+application-level "have I seen this before" branch to get wrong.
+Idempotency here is a property of the unique constraint plus the SQL
+statement shape, not of conditional logic the test is checking for a
+bug in.
+
+**A live discovery during this phase's own testing, not a code bug.**
+Restarting Booking Service's container in quick succession (rebuild →
+up → rebuild → up, while developing and manually verifying the
+provisioning consumer) once left the `aiokafka` consumer group showing
+an actively-heartbeating member that nonetheless stopped advancing past
+a one-message backlog for over 40 seconds — the group coordinator's own
+heartbeat task stays alive independently of whether the code iterating
+`async for record in consumer` is actually still running, so a silently
+died background task and a genuinely slow-but-alive one look identical
+from `kafka-consumer-groups.sh --describe` alone. A single clean restart
+resolved it deterministically and immediately (same consumer group,
+generation incremented, processed the pending message within seconds of
+rejoining) — consistent with test-methodology interference from rapid
+back-to-back container recreation, not a defect in `ProvisioningConsumer`
+itself, which passes its full redelivery and idempotency suite
+repeatably. Motivated a real, permanent hardening either way: `main.py`'s
+background consumer task now has a `done_callback` that logs at
+`critical` if the task ever actually dies, since a background
+`asyncio.Task`'s exception is otherwise only surfaced when the task
+object is garbage-collected — which never happens while `lifespan` holds
+a live reference to it for the app's entire run, so a real crash would
+otherwise be completely silent. Worth citing as the same category of
+finding as Phase 2's Elasticsearch disk-watermark incident: something
+live testing surfaces that no mocked or purely logical test structurally
+can.
+
+## Phase 3: two review passes, the second catching real bugs in the first pass's fixes
+
+Self-verification (live testing before claiming done) is the default review
+gate for every phase; P3 is one of two phases (with P8) that additionally
+gets a dedicated adversarial `/code-review` pass on top of it, per
+`CLAUDE.md`, because the dual hold strategy is the one bug class that
+silently corrupts the product's core guarantee. Two passes actually ran here,
+not one, and the second earned its place by finding real defects the first
+pass's own fixes introduced — direct evidence for why this gate exists as a
+separate step rather than folding into self-verification.
+
+**Pass 1** (the routine `/pre-pr` code-review step, run against the full
+phase diff) found five high-severity issues, all in code that had already
+passed its own test suite: the cron sweep's expiry UPDATE filtered only by
+ticket ID, so a hold re-acquired between its SELECT and UPDATE would be
+silently reset to AVAILABLE, contradicting the method's own TOCTOU-safety
+docstring; `aiokafka`'s `enable_auto_commit` was left at its default `True`,
+so Kafka offsets advanced on a timer independent of whether the DB write
+underneath them had actually succeeded; the provisioning consumer's DB write
+had no error handling at all, so any DB error killed the background consumer
+task permanently while `/healthz` stayed green; the multi-row ticket INSERT
+bound 5 params/seat with no batching, overflowing Postgres's ~32,767
+bind-param cap for any venue past roughly 6,500 seats; and — the most
+consequential for this phase's own benchmark premise — the Redis strategy
+had no mechanism at all for expiring an abandoned `PENDING` Booking row,
+since Redis's own key-expiry frees the *hold* but was never wired to touch
+the Booking row it doesn't know about, so one abandoned checkout under
+`HOLD_STRATEGY=redis` made that seat permanently unbookable
+(`uq_bookings_active_ticket` blocks it forever). That last one is worth
+flagging specifically: it meant the two hold strategies weren't actually
+behaviorally equivalent, which would have quietly undercut the P8 benchmark
+comparison this phase exists to set up.
+
+**Pass 2** (a dedicated adversarial `/code-review`, run after Pass 1's fixes
+were applied) found four more defects — all introduced or left incomplete by
+Pass 1's own fixes, not new discoveries in the original code:
+
+- The DB-write try/except added to satisfy Pass 1's "don't let a DB error
+  permanently kill the consumer" finding still let `run()` commit the Kafka
+  offset unconditionally after a caught failure — silently losing that
+  message's tickets on the very first transient error, the opposite of what
+  disabling `enable_auto_commit` was introduced to guarantee. Fixed with a
+  bounded in-process retry (3 attempts, 1s backoff) before the consumer
+  accepts the loss and moves on, with the final give-up logged at `critical`
+  rather than silently.
+- `main.py`'s teardown called `scheduler.shutdown(wait=False)`
+  unconditionally; if `kafka_consumer.start()` failed before
+  `scheduler.start()` ever ran, APScheduler's `shutdown()` raises
+  `SchedulerNotRunningError` on a still-stopped scheduler, masking the
+  original startup error and aborting the rest of cleanup. Verified directly
+  against the installed `apscheduler` source before fixing with a
+  `scheduler.running` guard.
+- The cron sweep's Booking-row UPDATE (added to fix Pass 1's TOCTOU finding)
+  re-checked ticket ID only, asymmetric with the Ticket UPDATE right next to
+  it, which *did* get the fresh status/expiry re-check. Not exploitable in
+  today's codebase (no cancellation endpoint exists yet to create the
+  intervening state change), but fixed for consistency before it becomes
+  exploitable later.
+- The two batch-size constants Pass 1's fixes introduced
+  (`INSERT_BATCH_SIZE`, `SWEEP_BATCH_SIZE`) were independently defined with
+  the same magic number in two files — extracted into one shared
+  `app/db/chunking.py` helper so they can't silently drift apart.
+
+**Live re-verification, not just the automated suite.** Beyond the two
+review passes, the fixed booking flow was walked end-to-end against the real
+running stack post-fix: create venue → create event → attach a 12-seat map →
+publish → confirm Kafka delivers `tickets_provisioned` with all 12 seats
+inserted → book a seat → confirm an immediate duplicate booking attempt on
+the same seat gets `409` → run 20 concurrent booking attempts against one
+fresh seat and confirm exactly one `201` and nineteen `409`s. The Redis-sweep
+fix specifically was re-verified live by temporarily switching the running
+container to `HOLD_STRATEGY=redis` with a 5-second TTL/sweep interval:
+booked and deliberately abandoned a seat, confirmed a second booking attempt
+was correctly rejected while the Redis hold was still live, waited past the
+TTL, confirmed the scheduler's `_sweep_stale_redis_bookings_once` job logged
+`hold_sweep_expired_stale_redis_bookings` (`count: 1`), then confirmed a
+fresh booking attempt on that same seat now succeeded — the exact bug
+Pass 1 found, reproduced and confirmed fixed against real Postgres and real
+Redis, not just the test suite.
+
+**Status:** Implemented, Tested, Verified (live, both hold strategies).
+44/44 `booking-service` tests green (23 unit, 21 integration), plus
+`event-service`'s suite at 54/54 (55 prior, net -1 after this phase's
+`EventDeletedMessage`/`publish_deleted` dead-code removal — event-service now
+refuses to delete a `PUBLISHED` event outright, per the §15 Phase 3
+amendment, so the message and its producer method were never reachable).
+`cd services/booking-service && uv run pytest`.
