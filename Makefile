@@ -7,7 +7,11 @@ up:
 	cd infra && docker compose --env-file ../.env up -d
 
 down:
-	cd infra && docker compose --env-file ../.env down
+	# --remove-orphans: without it, prometheus/grafana (started via `make
+	# bench-up`'s --profile flag) are invisible to a plain `down` and stay
+	# running silently if `bench-down` was forgotten -- compose only warns
+	# about orphans by default, it doesn't stop them.
+	cd infra && docker compose --env-file ../.env down --remove-orphans
 
 logs:
 	cd infra && docker compose --env-file ../.env logs -f

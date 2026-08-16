@@ -56,6 +56,11 @@ from redis.asyncio import Redis as AsyncRedis
 DEFAULT_BASE_URL = "http://localhost"
 RESULTS_DIR = Path(__file__).parent / "results"
 
+
+def _env(name: str, default: str) -> str:
+    return os.environ.get(name, default)
+
+
 # Seed users from infra/keycloak/realm-export.json (§5). Organizer role
 # needed to create/publish the benchmark event; the booker identity just
 # needs to be authenticated -- POST /bookings has no role requirement.
@@ -64,19 +69,15 @@ RESULTS_DIR = Path(__file__).parent / "results"
 # per-ticket UPDATE / Redis SET NX EX) is keyed on ticket_id, not
 # user_subject, so distinct identities add Keycloak token-minting
 # overhead to the measured setup without changing what's being measured.
-ORGANIZER_USERNAME = "carol"
-ORGANIZER_PASSWORD = "changeme"
-BOOKER_USERNAME = "alice"
-BOOKER_PASSWORD = "changeme"
+ORGANIZER_USERNAME = _env("BENCHMARK_ORGANIZER_USERNAME", "carol")
+ORGANIZER_PASSWORD = _env("BENCHMARK_ORGANIZER_PASSWORD", "changeme")
+BOOKER_USERNAME = _env("BENCHMARK_BOOKER_USERNAME", "alice")
+BOOKER_PASSWORD = _env("BENCHMARK_BOOKER_PASSWORD", "changeme")
 
 
 # --------------------------------------------------------------------------
 # Config
 # --------------------------------------------------------------------------
-
-
-def _env(name: str, default: str) -> str:
-    return os.environ.get(name, default)
 
 
 class Config:
@@ -86,8 +87,12 @@ class Config:
         self.keycloak_port = _env("KEYCLOAK_PORT", "8081")
         self.keycloak_realm = _env("KEYCLOAK_REALM", "ticketing")
         # Confidential, direct-access-grant client -- same one get-token.sh uses.
-        self.keycloak_client_id = "ticketing-service"
-        self.keycloak_client_secret = "changeme"
+        # Deliberately NOT the KEYCLOAK_CLIENT_ID/KEYCLOAK_CLIENT_SECRET env vars:
+        # those name the public frontend client (ticketing-frontend, PKCE-only,
+        # can't do password grant) already set in .env for a different purpose.
+        # Reusing that name here would silently authenticate as the wrong client.
+        self.keycloak_client_id = _env("BENCHMARK_KEYCLOAK_CLIENT_ID", "ticketing-service")
+        self.keycloak_client_secret = _env("BENCHMARK_KEYCLOAK_CLIENT_SECRET", "changeme")
 
         self.postgres_host = _env("POSTGRES_HOST", "localhost")
         self.postgres_port = int(_env("POSTGRES_PORT", "55432"))
@@ -212,17 +217,21 @@ async def wait_for_tickets(pool: asyncpg.Pool, event_id: str, expected_count: in
 
 
 async def attempt_booking(client: httpx.AsyncClient, cfg: Config, token: str, ticket_id: str) -> dict:
+    # Never raises: a burst of hundreds of concurrent requests will, over
+    # enough runs, eventually hit something stranger than a clean
+    # HTTPError (a malformed/truncated 201 body, say) -- letting that
+    # propagate out of asyncio.gather would abort the whole burst and lose
+    # every other in-flight measurement, not just this one client's result.
     headers = {"Authorization": f"Bearer {token}"}
     start = time.perf_counter()
     try:
         response = await client.post(f"{cfg.base_url}/bookings", headers=headers, json={"ticket_id": ticket_id})
-    except httpx.HTTPError as exc:
+        elapsed = time.perf_counter() - start
+        if response.status_code == 201:
+            return {"ok": True, "status_code": 201, "latency": elapsed, "booking_id": response.json()["id"]}
+        return {"ok": False, "status_code": response.status_code, "latency": elapsed}
+    except Exception as exc:
         return {"ok": False, "status_code": None, "latency": time.perf_counter() - start, "error": str(exc)}
-
-    elapsed = time.perf_counter() - start
-    if response.status_code == 201:
-        return {"ok": True, "status_code": 201, "latency": elapsed, "booking_id": response.json()["id"]}
-    return {"ok": False, "status_code": response.status_code, "latency": elapsed}
 
 
 async def run_contention_burst(
@@ -262,14 +271,18 @@ async def _poll_until_expired(
     return {"measured_seconds": None, "timed_out": True, "skipped": False}
 
 
-async def measure_release_latency(
-    client: httpx.AsyncClient, cfg: Config, pool: asyncpg.Pool, token: str, ticket_id: str
-) -> dict:
+async def _create_pending_booking(client: httpx.AsyncClient, cfg: Config, token: str, ticket_id: str) -> uuid.UUID:
     response = await client.post(
         f"{cfg.base_url}/bookings", headers={"Authorization": f"Bearer {token}"}, json={"ticket_id": ticket_id}
     )
     response.raise_for_status()
-    booking_id = uuid.UUID(response.json()["id"])
+    return uuid.UUID(response.json()["id"])
+
+
+async def measure_release_latency(
+    client: httpx.AsyncClient, cfg: Config, pool: asyncpg.Pool, token: str, ticket_id: str
+) -> dict:
+    booking_id = await _create_pending_booking(client, cfg, token, ticket_id)
     return await _poll_until_expired(pool, booking_id, cfg.release_poll_interval, cfg.release_max_wait)
 
 
@@ -292,25 +305,45 @@ async def simulate_immediate_release(
     plus the Booking-row update a real consumer would make alongside it,
     then polls the identical Booking.status signal the passive measurement
     uses -- same observation methodology, different trigger."""
-    response = await client.post(
-        f"{cfg.base_url}/bookings", headers={"Authorization": f"Bearer {token}"}, json={"ticket_id": ticket_id}
-    )
-    response.raise_for_status()
-    booking_id = uuid.UUID(response.json()["id"])
+    booking_id = await _create_pending_booking(client, cfg, token, ticket_id)
     ticket_uuid = uuid.UUID(ticket_id)
 
     trigger_start = time.monotonic()
     async with pool.acquire() as conn, conn.transaction():
         if hold_strategy == "cron":
-            await conn.execute(
+            status = await conn.execute(
                 "UPDATE tickets SET status = 'AVAILABLE', hold_expires_at = NULL WHERE id = $1 AND status = 'HELD'",
                 ticket_uuid,
             )
+            # "UPDATE 0" means this ticket was never actually HELD under the
+            # cron strategy -- almost certainly --hold-strategy doesn't match
+            # what the server is actually running. A silent no-op here would
+            # still let the Booking-row update below and the poll succeed,
+            # producing a plausible but meaningless "fast release" number for
+            # a mechanism that was never actually exercised.
+            if status != "UPDATE 1":
+                raise RuntimeError(
+                    f"immediate-release simulation expected ticket {ticket_uuid} to be HELD under the cron "
+                    f"strategy but the UPDATE matched 0 rows ({status!r}) -- does --hold-strategy actually "
+                    "match the server's real HOLD_STRATEGY?"
+                )
         else:
-            await redis_client.delete(f"ticket:hold:{ticket_uuid}")
+            deleted = await redis_client.delete(f"ticket:hold:{ticket_uuid}")
+            if deleted == 0:
+                raise RuntimeError(
+                    f"immediate-release simulation expected a Redis hold key for ticket {ticket_uuid} but "
+                    "found none -- does --hold-strategy actually match the server's real HOLD_STRATEGY?"
+                )
         await conn.execute("UPDATE bookings SET status = 'EXPIRED' WHERE id = $1 AND status = 'PENDING'", booking_id)
     trigger_elapsed = time.monotonic() - trigger_start
 
+    # The poll below confirms the write above is visible -- with both on the
+    # same Postgres connection pool, that's expected to resolve in one
+    # iteration. trigger_write_seconds is the metric that actually means
+    # something here (how long the release write itself takes); the poll
+    # result mainly documents that nothing was left unflushed, not a
+    # meaningful "time observed externally" the way the passive path's
+    # number is (there, nothing else is watching the write happen).
     observed = await _poll_until_expired(pool, booking_id, poll_interval=0.05, max_wait=5.0)
     observed["trigger_write_seconds"] = trigger_elapsed
     return observed
@@ -321,27 +354,38 @@ async def simulate_immediate_release(
 # --------------------------------------------------------------------------
 
 
-def _percentile(values: list[float], p: float) -> float:
-    values = sorted(values)
-    k = (len(values) - 1) * p
+def _percentile(sorted_values: list[float], p: float) -> float:
+    """Linear-interpolation percentile. Expects an already-sorted list --
+    callers share one sort across all percentiles rather than re-sorting
+    per call."""
+    k = (len(sorted_values) - 1) * p
     f = int(k)
-    c = min(f + 1, len(values) - 1)
+    c = min(f + 1, len(sorted_values) - 1)
     if f == c:
-        return values[f]
-    return values[f] + (values[c] - values[f]) * (k - f)
+        return sorted_values[f]
+    return sorted_values[f] + (sorted_values[c] - sorted_values[f]) * (k - f)
+
+
+def _status_code_breakdown(results: list[dict]) -> dict:
+    counts: dict[str, int] = {}
+    for r in results:
+        key = str(r.get("status_code")) if r.get("status_code") is not None else "no_response"
+        counts[key] = counts.get(key, 0) + 1
+    return counts
 
 
 def summarize_latencies(samples: list[float]) -> dict:
     if not samples:
         return {"count": 0}
+    sorted_samples = sorted(samples)
     return {
         "count": len(samples),
         "mean": statistics.fmean(samples),
-        "min": min(samples),
-        "max": max(samples),
-        "p50": _percentile(samples, 0.50),
-        "p95": _percentile(samples, 0.95),
-        "p99": _percentile(samples, 0.99),
+        "min": sorted_samples[0],
+        "max": sorted_samples[-1],
+        "p50": _percentile(sorted_samples, 0.50),
+        "p95": _percentile(sorted_samples, 0.95),
+        "p99": _percentile(sorted_samples, 0.99),
     }
 
 
@@ -351,9 +395,21 @@ def summarize_latencies(samples: list[float]) -> dict:
 
 
 async def main_async(cfg: Config) -> dict:
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        organizer_token = await get_token(client, cfg, ORGANIZER_USERNAME, ORGANIZER_PASSWORD)
-        booker_token = await get_token(client, cfg, BOOKER_USERNAME, BOOKER_PASSWORD)
+    # Default httpx.Limits caps at 100 connections -- with the default load
+    # profile (30 seats x 10 clients/seat = 300 concurrent requests), ~200
+    # of them would queue for a free connection *before* attempt_booking's
+    # perf_counter() clock even reaches the server, silently inflating the
+    # measured hold-acquisition latency with client-side queueing time
+    # rather than genuine server/DB contention. Sized to comfortably clear
+    # the burst plus the couple of extra release-latency requests.
+    burst_size = cfg.seat_pool_size * cfg.clients_per_seat
+    limits = httpx.Limits(max_connections=burst_size + 20, max_keepalive_connections=burst_size + 20)
+    async with httpx.AsyncClient(timeout=30.0, limits=limits) as client:
+        # Independent Keycloak requests -- fetch concurrently.
+        organizer_token, booker_token = await asyncio.gather(
+            get_token(client, cfg, ORGANIZER_USERNAME, ORGANIZER_PASSWORD),
+            get_token(client, cfg, BOOKER_USERNAME, BOOKER_PASSWORD),
+        )
 
         # One extra seat for the passive release-latency measurement, plus
         # one more if the immediate-trigger simulation is also requested --
@@ -364,7 +420,8 @@ async def main_async(cfg: Config) -> dict:
         event_id = await provision_seat_pool(client, cfg, organizer_token, total_seats)
 
         pool = await asyncpg.create_pool(cfg.booking_dsn, min_size=1, max_size=5)
-        redis_client = AsyncRedis(host=cfg.redis_host, port=cfg.redis_port) if cfg.measure_immediate_release else None
+        needs_redis = cfg.measure_immediate_release and cfg.hold_strategy == "redis"
+        redis_client = AsyncRedis(host=cfg.redis_host, port=cfg.redis_port) if needs_redis else None
         try:
             ticket_ids = await wait_for_tickets(pool, event_id, total_seats)
             contended_tickets = ticket_ids[: cfg.seat_pool_size]
@@ -405,6 +462,9 @@ async def main_async(cfg: Config) -> dict:
                     "successful_count": len(successes),
                     "failed_count": len(failures),
                     "expected_successful_count": cfg.seat_pool_size,
+                    # Without this, a losing request that 500s is indistinguishable from
+                    # a correctly-rejected 409 -- both just count as "failed."
+                    "failed_status_code_breakdown": _status_code_breakdown(failures),
                     "hold_acquisition_latency_seconds": summarize_latencies([r["latency"] for r in successes]),
                     "failed_latency_seconds": summarize_latencies([r["latency"] for r in failures]),
                 },
@@ -472,9 +532,9 @@ def main() -> None:
     cfg = Config(args)
     result = asyncio.run(main_async(cfg))
 
-    RESULTS_DIR.mkdir(exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = Path(cfg.out) if cfg.out else RESULTS_DIR / f"{cfg.label}-{timestamp}.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(result, indent=2))
 
     burst = result["contention_burst"]
@@ -484,6 +544,7 @@ def main() -> None:
         f"successful={burst['successful_count']} failed={burst['failed_count']} "
         f"(expected successful={burst['expected_successful_count']})"
     )
+    print(f"failed status codes: {burst['failed_status_code_breakdown']}")
     lat = burst["hold_acquisition_latency_seconds"]
     if lat.get("count"):
         print(f"hold-acquisition latency (s): p50={lat['p50']:.4f} p95={lat['p95']:.4f} p99={lat['p99']:.4f}")
