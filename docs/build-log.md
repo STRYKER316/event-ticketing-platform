@@ -1967,3 +1967,39 @@ not a skipped requirement.
 
 Decisions-log delta: yes — §17 amended with the P8.T5 resolution and its
 measured numbers (see above). `CLAUDE.md` update: none needed.
+
+## 2026-08-16 — P8.T6: Feature Development Process analysis writeup
+
+Wrote `docs/report/feature-development-process.md` from the P8.T3-T5
+archived data — the report's centerpiece chapter, per the kickoff doc.
+Ties every number back to the actual mechanism difference already
+documented in the Class Diagrams chapter (cron's single atomic Postgres
+`UPDATE` in the same transaction as the `Booking`-row insert, vs. Redis's
+`SET NX EX` plus a *separate* Postgres `Booking`-row insert — an extra
+network hop the cron path doesn't have).
+
+**Honest reading, per the kickoff doc's explicit instruction not to
+manufacture false balance:** cron won on every single measured metric —
+acquisition latency at every percentile, passive release latency, and
+immediate-release trigger time. Not a mixed result; reported as a clean
+one rather than dressed up as closer than it was. Attributed the gap to
+the extra Redis network hop this benchmark's topology (single machine,
+Redis and Postgres as separate containers) actually pays on every
+acquisition, explicitly scoped as a topology-shaped cost rather than a
+claim that Redis's `SET NX EX` is inherently slower — and explicitly
+flagged the conditions (multi-instance `booking-service`, larger
+contention, Postgres nearer saturation) under which Redis's usual
+advantages would have a chance to show up, none of which this benchmark's
+scale exercised. Conclusion: the measured evidence favors `cron` as the
+default for the current single-instance deployment target (§12), with
+Redis kept as the documented alternative for a future multi-instance
+topology — framed as a recommendation this benchmark's scope can actually
+support, not an overclaim.
+
+Updated `docs/report/README.md`'s chapter status table: Feature
+Development Process moves from "Not started — blocked on P8" to "Draft
+(Measured) — P8 benchmark complete."
+
+Decisions-log delta: none — no new decision, this chapter interprets
+already-measured data and already-locked §6/§12 decisions.
+`CLAUDE.md` update: none needed.
