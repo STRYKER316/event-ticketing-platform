@@ -2,7 +2,9 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import get_settings
+from app.logic.helpers.cron_hold_strategy import CronHoldStrategy
 from app.logic.helpers.hold_strategy import TicketHoldStrategy
+from app.logic.helpers.redis_hold_strategy import RedisHoldStrategy
 
 
 def get_hold_strategy(session: AsyncSession, redis: Redis) -> TicketHoldStrategy:
@@ -11,11 +13,7 @@ def get_hold_strategy(session: AsyncSession, redis: Redis) -> TicketHoldStrategy
     either ever branching on which is active themselves."""
     strategy = get_settings().hold_strategy
     if strategy == "cron":
-        from app.logic.helpers.cron_hold_strategy import CronHoldStrategy
-
         return CronHoldStrategy(session)
     if strategy == "redis":
-        from app.logic.helpers.redis_hold_strategy import RedisHoldStrategy
-
         return RedisHoldStrategy(redis)
     raise ValueError(f"unknown HOLD_STRATEGY: {strategy!r}")
