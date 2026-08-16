@@ -179,27 +179,45 @@ performance numbers mean anything.
 
 ## Phase 3 exit checklist (all must pass before P8)
 
-- [ ] Booking Service scaffolded, `booking_db` migrated, unique constraint on
+- [x] Booking Service scaffolded, `booking_db` migrated, unique constraint on
       `(event_id, seat)` enforced.
-- [ ] Provisioning consumer idempotent; redelivery proven a no-op.
-- [ ] `TicketHoldStrategy` interface with both implementations passing the
+- [x] Provisioning consumer idempotent; redelivery proven a no-op.
+      (Checkpoint review also found and fixed offset-commit semantics —
+      `enable_auto_commit=False` plus a bounded DB-write retry — so
+      idempotency-by-construction is now paired with redelivery actually
+      happening on a crash mid-write; see `docs/build-log.md`.)
+- [x] `TicketHoldStrategy` interface with both implementations passing the
       same concurrency-correctness contract.
-- [ ] Booking flow API: happy path + no-double-booking, both proven live.
-- [ ] Full concurrency test suite green under both strategies
-      (testcontainers Postgres + Redis + Kafka).
-- [ ] Validation checkpoint done live: two concurrent requests for the same
+- [x] Booking flow API: happy path + no-double-booking, both proven live.
+      (Live-verified at checkpoint: single booking, immediate duplicate
+      409, and a 20-client concurrent race — exactly one 201 — through
+      Traefik against the real stack, not just the test suite.)
+- [x] Full concurrency test suite green under both strategies
+      (testcontainers Postgres + Redis + Kafka). 44/44, `booking-service`.
+- [x] Validation checkpoint done live: two concurrent requests for the same
       seat under each strategy → exactly one `PENDING` booking; duplicate
       provisioning message → no duplicate tickets; abandoned hold releases
-      under both strategies.
-- [ ] Dedicated adversarial `/code-review` pass run on top of the routine
+      under both strategies. (The Redis-strategy release specifically was
+      found at checkpoint to need a companion Postgres-side sweep for the
+      abandoned `Booking` row, not just the Redis key's own TTL — fixed
+      and live-verified: abandon a hold under `HOLD_STRATEGY=redis`, wait
+      past TTL + sweep interval, confirm the seat is bookable again.)
+- [x] Dedicated adversarial `/code-review` pass run on top of the routine
       `/pre-pr` gate and self-verification (per this phase's process note
-      above) — not a substitute for either.
-- [ ] Live walkthrough done at CHECKPOINT; `docs/architecture.html` updated
+      above) — not a substitute for either. Ran twice: the routine pass
+      found 5 high-severity issues; the dedicated adversarial pass, run
+      after those fixes, found 4 more defects in the first pass's own
+      fixes — see `docs/build-log.md` for both lists.
+- [x] Live walkthrough done at CHECKPOINT; `docs/architecture.html` updated
       to current state; `docs/build-log.md` entry appended; decisions-log
       delta logged if any (e.g. if the `_check_no_bookings` resolution from
       P3.T6 changes the deferred behavior §-referenced in Phase 1).
-- [ ] Phase-end checklist item 7 (`/pre-pr`) run against the diff since this
-      phase's starting commit, findings self-applied.
+      (Decisions-log §6 amended with the Redis-sweep gap and fix.)
+- [x] Phase-end checklist item 7 (`/pre-pr`) run against the diff since this
+      phase's starting commit, findings self-applied. (simplify pass found
+      2 real items — dead `else: raise` branches, duplicate tests — both
+      fixed; code-review and verify covered by the two review passes and
+      the live walkthrough above.)
 
 **Report evidence captured this phase (§16):** Booking class diagram +
 textual schema, integration-point #2 sequence diagram, strategy-pattern

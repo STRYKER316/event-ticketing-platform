@@ -1,4 +1,4 @@
-.PHONY: up down logs test seed
+.PHONY: up down logs test seed migrate
 
 # Local dev workflow (§25). Run from repo root.
 
@@ -18,6 +18,14 @@ logs:
 test:
 	cd services && uv run --package shared-auth pytest _shared/auth
 
-# Populates baseline demo data (§19). Run against a running local stack.
+# Applies every Postgres-backed service's Alembic migrations against the
+# running stack. Required once after a fresh `make up` (against empty
+# databases) — no container runs this automatically, so `make seed` and
+# every API route fail with "relation does not exist" until this has run.
+migrate:
+	set -a && . .env && set +a && cd services/event-service && uv run --package event-service alembic upgrade head
+	set -a && . .env && set +a && cd services/booking-service && uv run --package booking-service alembic upgrade head
+
+# Populates baseline demo data (§19). Run against a running, migrated stack.
 seed:
 	set -a && . .env && set +a && cd services/event-service && uv run --package event-service python -m app.seed

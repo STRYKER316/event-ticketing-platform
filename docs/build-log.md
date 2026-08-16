@@ -1722,3 +1722,50 @@ strategies are actually comparable. `CLAUDE.md` updated: two new Conventions
 entries (shared bind-param-batching via `chunked()`; the
 `enable_auto_commit=False` + bounded-retry shape for any future Kafka
 consumer with its own DB write).
+
+---
+
+## 2026-08-16 — Before-push checklist: fresh-clone boot test finds a real gap
+
+Ran the before-push checklist (working tree clean, secret scan across
+`origin/main..HEAD`, fast-forward check, Academic-presentation scan — all
+clean) plus the fresh-clone boot test CLAUDE.md calls out as worth doing
+before a real external-facing moment, which a push to `origin` is. Cloned
+the repo to a scratch directory (distinct compose project name and ports,
+so it ran alongside the live dev stack without disturbing it) and ran
+`make up` against it.
+
+**Real finding:** `GET /events` 500'd with `asyncpg.exceptions.UndefinedTableError:
+relation "events" does not exist`. Nothing in the Dockerfiles, the compose
+file, or the Makefile ever runs `alembic upgrade head` — every service's
+tables only exist in the long-running local dev environment because someone
+ran migrations manually against it at some point, undocumented. A genuinely
+fresh clone following the root README's own quickstart (`make up` →
+`make seed`) would fail at the first step past `make up`. Confirmed the fix
+by running `alembic upgrade head` manually for both `event-service` and
+`booking-service` against the fresh clone's Postgres — `GET /events` then
+returned `200` cleanly.
+
+Fixed by adding a `make migrate` target (runs both services' Alembic
+upgrades) and inserting it into the root README's quickstart between
+`make up` and `make seed`, with a comment explaining why it's needed.
+Also fixed the root README's `## Status` section, which still read "Phase
+3... is next" — stale since before this session, caught only because
+reading the whole file for the quickstart fix surfaced it. Verified
+`make migrate` runs cleanly (idempotent no-op) against the already-migrated
+live dev stack.
+
+Torn down and cleaned up completely afterward: the fresh-clone stack's
+containers, named volumes, and locally-built images (`docker compose down
+-v --rmi local`), the scratch clone directory itself, plus — at the user's
+request, given they use Docker for other work on this machine too — a
+scoped cleanup of this session's own Docker cruft: 20 dangling images left
+behind by repeated `docker compose up --build` reruns (safe to prune
+regardless of other projects, since a dangling image is by definition
+untagged and unreferenced) and the build cache (~2GB reclaimed). Deliberately
+did not run a blanket `docker volume prune` or `docker system prune -a`,
+since those touch every unused resource on the machine, tagged images and
+volumes from unrelated work included — not just this project's.
+
+Decisions-log delta: none — this is a dev-tooling/documentation gap, not an
+architectural decision. No `CLAUDE.md` update needed.

@@ -30,6 +30,8 @@ architectural or scope decision.
 
 ```sh
 make up             # copies .env.example -> .env if missing, boots the compose stack
+make migrate         # applies event-service's and booking-service's Alembic migrations
+                      # (required once against a fresh stack -- nothing runs this automatically)
 make seed            # populates baseline demo events/venues/seat maps
 ./get-token.sh       # prints an access token for seed user alice (pass a different user/pass as args)
 curl "localhost/events"                                              # public read
@@ -53,10 +55,15 @@ Seed users (see `infra/keycloak/realm-export.json`), all password `changeme`:
 
 ## Status
 
-Phases 0-2 complete (walking skeleton, Event Service, Search Service +
-Kafka #1), plus a P1 addendum (venue/seat-map write API) and a pre-Phase-3
-hardening pass (adversarial testing, 5 bugs found and fixed — see
-`docs/build-log.md`). Phase 3 (Booking Service + dual hold strategy) is
-next; see `/docs/phases/` for task checklists and `/docs/architecture.html`
-for current system state.
+Phases 0-3 complete: walking skeleton, Event Service, Search Service +
+Kafka #1, and Booking Service (dual hold strategy: cron sweep + Redis TTL,
+proven under real concurrent load) — plus a P1 addendum (venue/seat-map
+write API), a pre-Phase-3 hardening pass (adversarial testing, 5 bugs found
+and fixed), and a Phase 3 checkpoint with two review passes (a dedicated
+adversarial one on top of the routine gate, since the dual hold strategy is
+the one bug class that silently corrupts the product's core guarantee) —
+see `docs/build-log.md` for all of the above. Phase 8 (Hold-Mechanism
+Benchmark, the report's centerpiece) is next per the locked report-first
+build order; see `/docs/phases/` for task checklists and
+`/docs/architecture.html` for current system state.
 

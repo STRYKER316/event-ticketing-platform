@@ -108,7 +108,7 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   history lives). Same file every phase, redeployed in place, not a new file per
   phase. Commit it as part of the phase's checkpoint. This is also the report's
   §16 topology/flow evidence, produced once, not redone later for the report.
-- **Phase-end checklist.** Before tagging CHECKPOINT, run through all eight — most are
+- **Phase-end checklist.** Before tagging CHECKPOINT, run through all nine — most are
   already required by the bullets above, this is the standing list so none get
   skipped by accident:
   1. **End-to-end testing** — live walkthrough against the real stack (see
@@ -152,6 +152,16 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
      seat-map gap-closing session needs it too. Goal: every phase doc, report chapter,
      and other current-state doc stays in sync with the code, not just
      `architecture.html`.
+  9. **Check off this phase's own `docs/phases/phase-N-kickoff.md` exit checklist** —
+     every `[ ]` under "Phase N exit checklist" flipped to `[x]`, each with a one-line
+     note pointing at the actual evidence (a test count, a live-verified behavior, a
+     decisions-log delta), not just the box ticked blind. Added after Phase 3's own
+     kickoff doc sat with every exit-checklist item still unchecked despite the phase
+     being genuinely, verifiably done — items 1-8 above all check the *work*, but
+     nothing checked whether the *tracking doc for the work* itself got updated, so it
+     silently drifted every phase until someone asked "does this look done to you?"
+     and the unchecked boxes were the tell. `phase-0/1/2-kickoff.md` got this right at
+     the time; Phase 3 didn't, and this item exists so a future phase can't repeat it.
 
   Lower-priority, worth doing before a real external-facing moment (public repo, demo,
   submission) rather than every phase: verify `main` boots from a genuinely clean
