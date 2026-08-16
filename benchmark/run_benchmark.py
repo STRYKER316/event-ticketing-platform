@@ -7,10 +7,20 @@ Measures, against a running booking-service (via Traefik):
   - successful/failed booking counts under a fixed burst of concurrent
     clients racing for a small, fixed seat pool
   - hold-acquisition latency (p50/p95/p99) for successful bookings
-  - time-to-release-after-abandonment: one extra booking is deliberately
-    left unconfirmed, and the harness polls Postgres until the passive
-    release path (cron sweep interval / Redis TTL, whichever
+  - time-to-release-after-abandonment (passive path): one extra booking is
+    deliberately left unconfirmed, and the harness polls Postgres until the
+    passive release path (cron sweep interval / Redis TTL, whichever
     HOLD_STRATEGY the server is actually running) marks it EXPIRED
+  - (optional, --measure-immediate-release) time-to-release for an
+    *immediately triggered* release (§17): P4/the payment.failed Kafka
+    consumer don't exist yet, so this simulates that trigger directly --
+    performs the same write TicketHoldStrategy.release_hold() would (a
+    Postgres UPDATE for cron, a Redis DEL for redis), then polls the same
+    Booking.status PENDING -> EXPIRED signal the passive measurement uses,
+    for an apples-to-apples comparison of trigger latency, not just
+    observation methodology. See docs/decisions-log.md §17 amendment
+    (P8.T5) for why this simulates the write directly rather than adding a
+    production endpoint or importing booking-service's app code.
 
 Fixed, documented, re-runnable command (stack already up via `make up`,
 run from repo root):
@@ -23,7 +33,10 @@ run from repo root):
 server's HOLD_STRATEGY. Run once per strategy (restart booking-service
 with HOLD_STRATEGY=cron / HOLD_STRATEGY=redis between runs, see
 infra/README.md) for the P8.T3/T4 comparison, same --seat-pool-size and
---clients-per-seat both times so the load profile is identical.
+--clients-per-seat both times so the load profile is identical. Pass
+--measure-immediate-release --hold-strategy {cron,redis} (matching
+whichever HOLD_STRATEGY the server is actually running) for the P8.T5
+release-latency comparison.
 """
 
 import argparse
@@ -38,6 +51,7 @@ from pathlib import Path
 
 import asyncpg
 import httpx
+from redis.asyncio import Redis as AsyncRedis
 
 DEFAULT_BASE_URL = "http://localhost"
 RESULTS_DIR = Path(__file__).parent / "results"
@@ -81,6 +95,9 @@ class Config:
         self.booking_db_user = _env("BOOKING_DB_USER", "booking_service")
         self.booking_db_password = _env("BOOKING_DB_PASSWORD", "changeme")
 
+        self.redis_host = _env("REDIS_HOST", "localhost")
+        self.redis_port = int(_env("REDIS_PORT", "6379"))
+
         self.label = args.label
         self.seat_pool_size = args.seat_pool_size
         self.clients_per_seat = args.clients_per_seat
@@ -88,6 +105,8 @@ class Config:
         self.skip_release_latency = args.skip_release_latency
         self.release_poll_interval = args.release_poll_interval
         self.release_max_wait = args.release_max_wait
+        self.measure_immediate_release = args.measure_immediate_release
+        self.hold_strategy = args.hold_strategy
 
     @property
     def token_url(self) -> str:
@@ -220,8 +239,27 @@ async def run_contention_burst(
 
 
 # --------------------------------------------------------------------------
-# Release-latency (passive path)
+# Release-latency (passive path) and immediate-trigger simulation (§17)
 # --------------------------------------------------------------------------
+
+
+async def _poll_until_expired(
+    pool: asyncpg.Pool, booking_id: uuid.UUID, poll_interval: float, max_wait: float
+) -> dict:
+    # Booking.status PENDING -> EXPIRED is the one signal both strategies
+    # actually produce on release: the cron strategy also flips
+    # Ticket.status HELD -> AVAILABLE, but the Redis strategy never writes
+    # Ticket.status at all (§6) -- polling the Booking row is the only
+    # observation that works identically for both, and for the immediate
+    # path below, the only one directly comparable to this passive one.
+    start = time.monotonic()
+    deadline = start + max_wait
+    while time.monotonic() < deadline:
+        row = await pool.fetchrow("SELECT status FROM bookings WHERE id = $1", booking_id)
+        if row is not None and row["status"] == "EXPIRED":
+            return {"measured_seconds": time.monotonic() - start, "timed_out": False, "skipped": False}
+        await asyncio.sleep(poll_interval)
+    return {"measured_seconds": None, "timed_out": True, "skipped": False}
 
 
 async def measure_release_latency(
@@ -232,20 +270,50 @@ async def measure_release_latency(
     )
     response.raise_for_status()
     booking_id = uuid.UUID(response.json()["id"])
+    return await _poll_until_expired(pool, booking_id, cfg.release_poll_interval, cfg.release_max_wait)
 
-    # Booking.status PENDING -> EXPIRED is the one signal both strategies
-    # actually produce on release: the cron strategy also flips
-    # Ticket.status HELD -> AVAILABLE, but the Redis strategy never writes
-    # Ticket.status at all (§6) -- polling the Booking row is the only
-    # observation that works identically for both.
-    start = time.monotonic()
-    deadline = start + cfg.release_max_wait
-    while time.monotonic() < deadline:
-        row = await pool.fetchrow("SELECT status FROM bookings WHERE id = $1", booking_id)
-        if row is not None and row["status"] == "EXPIRED":
-            return {"measured_seconds": time.monotonic() - start, "timed_out": False, "skipped": False}
-        await asyncio.sleep(cfg.release_poll_interval)
-    return {"measured_seconds": None, "timed_out": True, "skipped": False}
+
+async def simulate_immediate_release(
+    client: httpx.AsyncClient,
+    cfg: Config,
+    pool: asyncpg.Pool,
+    redis_client: AsyncRedis,
+    token: str,
+    ticket_id: str,
+    hold_strategy: str,
+) -> dict:
+    """Simulates the §17 payment.failed -> immediate-release trigger, which
+    has no real caller yet (P4/the Kafka consumer for it don't exist -- see
+    docs/decisions-log.md §17 P8.T5 amendment). Performs the same write
+    TicketHoldStrategy.release_hold() would (a Postgres UPDATE for cron, a
+    Redis DEL for redis -- mirrored directly from
+    app/logic/helpers/{cron,redis}_hold_strategy.py rather than importing
+    booking-service's app code into this standalone tool's separate venv),
+    plus the Booking-row update a real consumer would make alongside it,
+    then polls the identical Booking.status signal the passive measurement
+    uses -- same observation methodology, different trigger."""
+    response = await client.post(
+        f"{cfg.base_url}/bookings", headers={"Authorization": f"Bearer {token}"}, json={"ticket_id": ticket_id}
+    )
+    response.raise_for_status()
+    booking_id = uuid.UUID(response.json()["id"])
+    ticket_uuid = uuid.UUID(ticket_id)
+
+    trigger_start = time.monotonic()
+    async with pool.acquire() as conn, conn.transaction():
+        if hold_strategy == "cron":
+            await conn.execute(
+                "UPDATE tickets SET status = 'AVAILABLE', hold_expires_at = NULL WHERE id = $1 AND status = 'HELD'",
+                ticket_uuid,
+            )
+        else:
+            await redis_client.delete(f"ticket:hold:{ticket_uuid}")
+        await conn.execute("UPDATE bookings SET status = 'EXPIRED' WHERE id = $1 AND status = 'PENDING'", booking_id)
+    trigger_elapsed = time.monotonic() - trigger_start
+
+    observed = await _poll_until_expired(pool, booking_id, poll_interval=0.05, max_wait=5.0)
+    observed["trigger_write_seconds"] = trigger_elapsed
+    return observed
 
 
 # --------------------------------------------------------------------------
@@ -287,12 +355,16 @@ async def main_async(cfg: Config) -> dict:
         organizer_token = await get_token(client, cfg, ORGANIZER_USERNAME, ORGANIZER_PASSWORD)
         booker_token = await get_token(client, cfg, BOOKER_USERNAME, BOOKER_PASSWORD)
 
-        # One extra seat beyond the contended pool, reserved for the
-        # release-latency measurement so it never competes with the burst.
-        total_seats = cfg.seat_pool_size + 1
+        # One extra seat for the passive release-latency measurement, plus
+        # one more if the immediate-trigger simulation is also requested --
+        # both reserved outside the contended pool so neither competes with
+        # the burst.
+        extra_seats = 1 + (1 if cfg.measure_immediate_release else 0)
+        total_seats = cfg.seat_pool_size + extra_seats
         event_id = await provision_seat_pool(client, cfg, organizer_token, total_seats)
 
         pool = await asyncpg.create_pool(cfg.booking_dsn, min_size=1, max_size=5)
+        redis_client = AsyncRedis(host=cfg.redis_host, port=cfg.redis_port) if cfg.measure_immediate_release else None
         try:
             ticket_ids = await wait_for_tickets(pool, event_id, total_seats)
             contended_tickets = ticket_ids[: cfg.seat_pool_size]
@@ -310,7 +382,14 @@ async def main_async(cfg: Config) -> dict:
             else:
                 release_result = await measure_release_latency(client, cfg, pool, booker_token, release_ticket)
 
-            return {
+            immediate_release_result = None
+            if cfg.measure_immediate_release:
+                immediate_ticket = ticket_ids[cfg.seat_pool_size + 1]
+                immediate_release_result = await simulate_immediate_release(
+                    client, cfg, pool, redis_client, booker_token, immediate_ticket, cfg.hold_strategy
+                )
+
+            output = {
                 "label": cfg.label,
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "event_id": event_id,
@@ -336,8 +415,13 @@ async def main_async(cfg: Config) -> dict:
                 },
                 "raw_samples": results,
             }
+            if immediate_release_result is not None:
+                output["immediate_release_latency"] = {"hold_strategy": cfg.hold_strategy, **immediate_release_result}
+            return output
         finally:
             await pool.close()
+            if redis_client is not None:
+                await redis_client.aclose()
 
 
 def parse_args() -> argparse.Namespace:
@@ -365,7 +449,22 @@ def parse_args() -> argparse.Namespace:
         "or the release measurement times out (defaults: 600 + 30 = 630s).",
     )
     parser.add_argument("--out", default=None, help="Output path; defaults to results/<label>-<timestamp>.json")
-    return parser.parse_args()
+    parser.add_argument(
+        "--measure-immediate-release",
+        action="store_true",
+        help="Also simulate the §17 immediate-release trigger (P8.T5) -- requires --hold-strategy.",
+    )
+    parser.add_argument(
+        "--hold-strategy",
+        choices=["cron", "redis"],
+        default=None,
+        help="Which mechanism to simulate for --measure-immediate-release. Must match what "
+        "HOLD_STRATEGY the booking-service container is actually running.",
+    )
+    args = parser.parse_args()
+    if args.measure_immediate_release and args.hold_strategy is None:
+        parser.error("--measure-immediate-release requires --hold-strategy")
+    return args
 
 
 def main() -> None:
@@ -393,7 +492,17 @@ def main() -> None:
     elif release["timed_out"]:
         print(f"release-latency: TIMED OUT after {release['max_wait_seconds']}s")
     else:
-        print(f"release-latency: {release['measured_seconds']:.2f}s")
+        print(f"release-latency (passive): {release['measured_seconds']:.2f}s")
+    immediate = result.get("immediate_release_latency")
+    if immediate is not None:
+        if immediate["timed_out"]:
+            print("release-latency (immediate): TIMED OUT")
+        else:
+            print(
+                f"release-latency (immediate, {immediate['hold_strategy']}): "
+                f"trigger-write={immediate['trigger_write_seconds']:.4f}s, "
+                f"observed={immediate['measured_seconds']:.4f}s"
+            )
     print(f"raw output archived: {out_path}")
 
 

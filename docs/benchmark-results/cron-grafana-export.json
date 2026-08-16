@@ -1,0 +1,120 @@
+{
+  "run": "cron",
+  "captured_at": "2026-08-16T14:25:24.735730+00:00",
+  "source": "Grafana datasource-proxy API (Prometheus), dashboard uid=booking-service",
+  "panels": [
+    {
+      "title": "Request rate (req/s)",
+      "queries": [
+        {
+          "expr": "sum by (handler, status) (rate(http_requests_total{job=\"booking-service\"}[1m]))",
+          "legend": "{{handler}} [{{status}}]",
+          "result": [
+            {
+              "metric": {
+                "handler": "/metrics",
+                "status": "2xx"
+              },
+              "value": [
+                1786890324.764,
+                "0.19999999999999998"
+              ]
+            },
+            {
+              "metric": {
+                "handler": "/bookings",
+                "status": "4xx"
+              },
+              "value": [
+                1786890324.764,
+                "0"
+              ]
+            },
+            {
+              "metric": {
+                "handler": "/bookings",
+                "status": "2xx"
+              },
+              "value": [
+                1786890324.764,
+                "0"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Request latency (p50/p95/p99, booking-service)",
+      "queries": [
+        {
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"booking-service\"}[1m])))",
+          "legend": "p50",
+          "result": [
+            {
+              "metric": {},
+              "value": [
+                1786890324.773,
+                "0.05"
+              ]
+            }
+          ]
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"booking-service\"}[1m])))",
+          "legend": "p95",
+          "result": [
+            {
+              "metric": {},
+              "value": [
+                1786890324.781,
+                "0.095"
+              ]
+            }
+          ]
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"booking-service\"}[1m])))",
+          "legend": "p99",
+          "result": [
+            {
+              "metric": {},
+              "value": [
+                1786890324.787,
+                "0.099"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "POST /bookings latency (p95)",
+      "queries": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"booking-service\", handler=\"/bookings\"}[1m])))",
+          "legend": "p95",
+          "result": [
+            {
+              "metric": {},
+              "value": [
+                1786890324.793,
+                "NaN"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Error rate (5xx / total, booking-service)",
+      "queries": [
+        {
+          "expr": "sum(rate(http_requests_total{job=\"booking-service\", status=~\"5..\"}[1m])) / sum(rate(http_requests_total{job=\"booking-service\"}[1m]))",
+          "legend": "5xx ratio",
+          "result": []
+        }
+      ]
+    }
+  ]
+}

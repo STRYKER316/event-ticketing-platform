@@ -1904,3 +1904,66 @@ verified.
 Decisions-log delta: none — the k6-vs-Python choice is explicitly exempted
 from needing one per the kickoff doc. `CLAUDE.md` update: repo-layout
 listing only, no new convention.
+
+## 2026-08-16 — P8.T3-T5: cron/Redis benchmark runs + release-latency (immediate vs. passive)
+
+Ran the fixed load profile (30-seat pool, 10 clients/seat, burst ramp) from
+P8.T2 against both hold strategies and archived the raw results under the
+new `docs/benchmark-results/`. Before the real runs, resolved P8.T5's open
+question with the user in spirit of "don't stop, but the doc flags this as
+needing a decision" — went with option (a), simulate the `payment.failed`
+immediate-release trigger directly, since P4 (the real trigger's producer)
+doesn't exist yet at this point in the locked build order and deferral
+would contradict the entire reason P8 runs before P4 ("needs only
+Booking's two hold strategies," §27). Recorded as a `decisions-log.md` §17
+amendment, including one correction to the kickoff doc's own framing: it
+describes the signal to observe as "`Ticket` back to `AVAILABLE`," which is
+vacuous under the Redis strategy (`Ticket.status` is never written there,
+§6) — the harness polls `Booking.status` `PENDING` → `EXPIRED` instead, the
+one signal both strategies actually produce, for both the passive and
+immediate measurements.
+
+Extended `benchmark/run_benchmark.py` with `--measure-immediate-release
+--hold-strategy {cron,redis}`: books one more extra ticket, then at a known
+instant performs the exact write `TicketHoldStrategy.release_hold()` would
+— a Postgres `UPDATE ... WHERE status = 'HELD'` for cron, a Redis `DEL
+ticket:hold:{id}` for redis, mirrored directly from
+`app/logic/helpers/{cron,redis}_hold_strategy.py` rather than importing
+booking-service's app code into the harness's separate standalone venv —
+plus the `Booking.status` update a real `payment.failed` consumer would
+make alongside it, then polls the same signal the passive measurement
+uses. Added `redis` as a harness dependency for this (the harness already
+depended on `asyncpg` for direct-DB observation; this is the same pattern
+extended to Redis).
+
+**Measured, both strategies, identical load profile** (`HOLD_TTL_SECONDS=10`/
+`HOLD_SWEEP_INTERVAL_SECONDS=5` for reproducibility — see
+`docs/benchmark-results/README.md` for why this doesn't affect the
+contention-burst numbers): both strategies produced exactly 30/300
+successful bookings (one winner per 10-way seat race, matching P3.T7's
+already-proven correctness guarantee — this benchmark measures
+throughput/latency under that guarantee, not whether it holds). Cron:
+p50/p95 hold-acquisition latency 0.59s/0.83s, passive release 11.06s,
+immediate release <1ms observed (5.1ms trigger-write). Redis: p50/p95
+0.82s/1.02s, passive release 12.05s, immediate release <1ms observed
+(5.9ms trigger-write). Immediate release is roughly three orders of
+magnitude faster than passive for both strategies — confirms §17's
+compensation-flow decision is worth its complexity independent of which
+hold strategy is active.
+
+Live-verified via smoke runs at small scale (3-5 seat pools) before the
+real archived runs, under both strategies, using a temporarily
+short-TTL'd second `booking-service` container (`docker compose run -e
+HOLD_TTL_SECONDS=10 -e HOLD_SWEEP_INTERVAL_SECONDS=5 --use-aliases
+booking-service`, same trick as P8.T2's own verification) — confirmed
+exact expected success counts and sane latency numbers before spending the
+real runs' time on the archived data. Attempted a live Grafana screenshot
+via `claude-in-chrome` browser automation for the "screenshot/export"
+archival requirement; the extension wasn't connected this session, so used
+Grafana's datasource-proxy API to export the same four dashboard panels'
+real Prometheus query results as JSON instead (`docs/benchmark-results/
+{cron,redis}-grafana-export.json`) — documented as a deliberate substitution,
+not a skipped requirement.
+
+Decisions-log delta: yes — §17 amended with the P8.T5 resolution and its
+measured numbers (see above). `CLAUDE.md` update: none needed.
