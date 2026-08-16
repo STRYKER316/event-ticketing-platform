@@ -82,6 +82,20 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   `docs/build-log.md` — what was built, what failed and why, what fixed it, any ad
   hoc decision too small for the decisions log) →
   CHECKPOINT (tag/merge at the phase boundary).
+- **A `docs/phases/phase-N-kickoff.md` that already exists for the phase being
+  started IS the completed PLAN step — do not re-plan it.** When the user kicks off
+  a phase this file already covers, don't invoke `superpowers:brainstorming` or
+  `superpowers:writing-plans` — the kickoff doc's per-task prompts, done-when
+  criteria, and exit checklist already are the plan those skills would otherwise
+  produce, and running them again burns session budget re-deriving something
+  already on disk (this happened starting Phase 3: ~10-12% of session usage spent
+  on a redundant brainstorming pass before the existing kickoff doc was even read).
+  Read the kickoff doc, then go straight to IMPLEMENT using its task list —
+  `superpowers:executing-plans` or `superpowers:subagent-driven-development` are
+  fine for *execution structure* on that already-written plan, but the plan itself
+  doesn't need re-generating. Only fall back to actual brainstorming/planning if no
+  kickoff doc exists yet for the phase being started, or the user explicitly asks
+  to revise the plan.
 - **Test-first vs. build-then-test — decided per task, not blanket.** Write the test
   capturing the correctness contract *before* the implementation for business-logic
   Manager methods on correctness-critical paths specifically: the dual hold strategies
