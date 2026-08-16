@@ -1,0 +1,1585 @@
+{
+  "label": "redis",
+  "generated_at": "2026-08-16T14:53:27.538881+00:00",
+  "event_id": "7bffe333-f683-4784-bd07-66621d389f08",
+  "load_profile": {
+    "seat_pool_size": 30,
+    "clients_per_seat": 10,
+    "total_clients": 300,
+    "ramp": "burst (asyncio.gather, all clients fired at once)"
+  },
+  "contention_burst": {
+    "started_at": "2026-08-16T14:53:14.579787+00:00",
+    "finished_at": "2026-08-16T14:53:16.417741+00:00",
+    "successful_count": 30,
+    "failed_count": 270,
+    "expected_successful_count": 30,
+    "failed_status_code_breakdown": {
+      "409": 270
+    },
+    "hold_acquisition_latency_seconds": {
+      "count": 30,
+      "mean": 0.8388511415667987,
+      "min": 0.39743358400301076,
+      "max": 1.6857093750004424,
+      "p50": 0.7021559790009633,
+      "p95": 1.5592762774533182,
+      "p99": 1.66022742561021
+    },
+    "failed_latency_seconds": {
+      "count": 270,
+      "mean": 0.91997068950721,
+      "min": 0.3997575829998823,
+      "max": 1.7673160419944907,
+      "p50": 0.8351741874939762,
+      "p95": 1.6498089224056456,
+      "p99": 1.7446636887536442
+    }
+  },
+  "release_latency": {
+    "poll_interval_seconds": 1.0,
+    "max_wait_seconds": 60.0,
+    "measured_seconds": 11.050574791996041,
+    "timed_out": false,
+    "skipped": false
+  },
+  "raw_samples": [
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.4055154169909656,
+      "booking_id": "e8ad9c92-0c74-4b57-88ea-2103e7dd4812"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.408529834006913
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4172255830053473
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4137639589898754
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4098967919999268
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4083571669907542
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4095647500071209
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5598123329982627
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.42367095800000243
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9358574590005446
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.4188178339973092,
+      "booking_id": "9c39a046-b502-4b6e-8316-52ea8a4ea69a"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4229499159991974
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.562342749995878
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6806617499969434
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4503608329978306
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5714551249984652
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4524730420089327
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5944617500063032
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.48313966700516175
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6023895000107586
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5722666249930626
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7717415840015747
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8511669160070596
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8337439579918282
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.082489791995613
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4016258749907138
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5000222079979721
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.3997575829998823
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.39743358400301076,
+      "booking_id": "d812e314-1ba4-40f7-9cf3-17e9c844e90a"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.40961858301307075
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4011250000039581
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.40224166700500064,
+      "booking_id": "ca4d68eb-2ae1-4f61-86b2-e24099cc8a47"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.40766062500188127
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7532430840074085
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6692622499977006
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.41197850000753533
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4218666660017334
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.770225832995493
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5555787920020521
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.773511834006058
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7117756660009036
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4718491250096122
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.4807504170021275,
+      "booking_id": "755e7c53-e0ea-4772-b3ef-18471c439817"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4820320839935448
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6977070830034791
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.45338545899721794
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4868019580026157
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6003975829953561
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4900658749975264
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6125414999987697
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.5006109160021879,
+      "booking_id": "56c25ec7-a400-476b-b80c-62bb6fb6de9d"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7401412909966893
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.627785832999507
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5197534579929197
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7431514159979997
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5059188749874011
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6522085420001531
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5210956660012016
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5162870000058319
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.62956000000122
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.399191290998715,
+      "booking_id": "3881b9eb-d67c-49c5-a994-30c124a94bab"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5224375410034554
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8695186249969993
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4103095000027679
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5312363749981159
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4107736250007292
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.40862120800011326
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.40669429099943954
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4109920000046259
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6676305000000866
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.45317208299820777,
+      "booking_id": "15e7f10e-3856-446e-ae4a-f1850b15829d"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4114264160016319
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5491609169985168
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4484891250031069
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4300260839954717
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4282744579977589
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.562102291994961
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7264690829906613
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4568881659943145
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.46038379200035706
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6837415000045439
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.440015250002034,
+      "booking_id": "4f58d671-6f57-4980-89d6-e9dbd53021ac"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.802807166997809
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4677684579946799
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8124672499980079
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.47311658300168347
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.716916666002362
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4776947500067763
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4741487919964129
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4846238329919288
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.4861679159948835,
+      "booking_id": "62a35d45-9764-4453-bbff-125008a10e84"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4921019590110518
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.48772166699927766
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5009356250084238
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6136187079973752
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.4931324159988435
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5023161670105765
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0576051249954617
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.49707662500441074
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6487653749936726
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.5269692500005476,
+      "booking_id": "271ccecb-2a75-4059-9f98-4272fabbe137"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5147337500093272
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.773285625007702
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5287794169998961
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.523695416006376
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5161734580033226
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5184081670013256
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.662109083001269
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5431348749989411
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5515545829985058
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.708078415991622
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.5321172909898451,
+      "booking_id": "6d3e3a58-8333-451a-86fd-2c770574e36b"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8662279999989551
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8792433749913471
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5631568749959115
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5745153750031022
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5713301250070799
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5569120000000112
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5595919580082409
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5646996249997756
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.5792654160031816,
+      "booking_id": "0b8e4e11-529b-436e-8cf7-65077050b038"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8006411249953089
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5983919999998761
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6045149590063374
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6180527500109747
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.5915546670003096
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6213247499981662
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6247493749979185
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6004219579917844
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7372069999983069
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.6278497080056695,
+      "booking_id": "ca342b12-7baa-434b-83f3-e957d0397725"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6387447920133127
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6310246669891058
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7328245829994557
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6609812920069089
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0396910839917837
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6646422920020996
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8657782090012915
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6923459999961779
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6798129160015378
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0129612080054358
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.6674310829985188,
+      "booking_id": "191d35f6-3baa-47a1-94c7-c7715ef780a4"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6951317920029396
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6831343749945518
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.6981248749943916
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7086489590001293
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9241329999931622
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7150917919934727
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8080577079963405
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8858582499960903
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7521870829950785
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.7368808750034077,
+      "booking_id": "cc5255a9-b1bf-49a8-be57-28048981ba47"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7558038750139531
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7675204999977723
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7714041669969447
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9539890000014566
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8366044169961242
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9125944169936702
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7790073749929434
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7836050000041723
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.7582324999966659,
+      "booking_id": "847004f5-97db-474b-aca6-7e934a6e0914"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.7742708339937963
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.936341166991042
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8224136250064475
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8093196249974426
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0134336249902844
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8304263339960016
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.843013207995682
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8256903330038767
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8127392919996055
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.8383304580056574,
+      "booking_id": "d4583b84-bd32-45c5-a8ea-cf85f3014d4c"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9006711670081131
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8507232919946546
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9050153749994934
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8723554579919437
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8767858329956653
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0013298340054462
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8901269170019077
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.8853299170004902
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9232752079988131
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9673544170073001
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9440949590061791
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.9611947079974925,
+      "booking_id": "c3747ae0-86b3-4aa2-aefd-b6c8efcfb7b9"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9894644579908345
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.912638583991793
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9547513339930447
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9269527910073521
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9367294170078821
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9774952090083389
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0565863749943674
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 0.9711395830090623,
+      "booking_id": "6bc0b7f2-b570-4652-add5-a5c46a497f29"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9825649579870515
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0138197079941165
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1220737080002436
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0239111249975394
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 0.9928031669987831
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0663166660087882
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0180944159947103
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0496715830086032
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0712253749952652
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.0334190409921575,
+      "booking_id": "f8a69959-5b34-45e2-911f-671ea48d3e71"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1443697500071721
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0982479579979554
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0599010000005364
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1032937090058113
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.0864922500040848
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.092037792011979
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1374253329995554
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.113871207999182
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1081166670046514
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.148871584009612
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1546318749897182
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.1248685000027763,
+      "booking_id": "43a63f42-5ebd-4b9b-bd52-1425bff00b8b"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1660703340021428
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1304752079886384
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1835004169988679
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1774353749933653
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1891295829991577
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1590272920002462
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.1950005830003647
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.1706325830018613,
+      "booking_id": "cf3d4d05-6a25-423d-996a-c3e537eedaf4"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.207130082999356
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.2191798749990994
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.2007142079964979
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.240283040999202
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.2125226659991313
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.2330990839982405
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.2247445000102744
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.258722291997401
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.245734916999936
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.2521460419957293,
+      "booking_id": "70af1d07-8438-4ccd-993f-15f1579889de"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.2980958749976708
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.264670707998448
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.2710532500059344
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.291120542009594
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.2844732499943348
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.2772857079980895
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3173374170000898
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3036726670106873
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.310162791996845
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.330588416007231
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.365414708998287,
+      "booking_id": "ac2cc7a0-2664-4a1f-87d1-fe939b1d76c4"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3440107909991639
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3230696660029935
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3367277919896878
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3576535000029253
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.350372957997024
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3931569999986095
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3715127500036033
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3856267079972895
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.3782705409976188,
+      "booking_id": "331a3b40-c881-4b49-8cb5-94c1685996b6"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4068766249984037
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4204352500091773
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.3994969999912428
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.427133083998342
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4130167080002138
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4552981669985456
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.433677125009126
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4407834169978742
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4476710419985466
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4911839159904048
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.4617635000031441,
+      "booking_id": "8b520ded-2c7c-4a56-ba00-20f77fe320b0"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4765679580013966
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4689733749983134
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4837612499977695
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.5050950000004377
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.5204455839993898
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.535806625004625
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.4971419579960639
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.527718208002625
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.5121421250078129,
+      "booking_id": "159ca483-36df-4c90-8381-d178fe59e003"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.5428685839870013
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.582525749996421
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.5583847500092816
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.550347583994153
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.5659177500056103
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.5737048750015674
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.5900613749981858
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.6064875830052188
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.61474933399586
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.5978405839996412,
+      "booking_id": "7dbd6a5e-041b-4c73-aad5-cd3dbb755f73"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.638088166990201
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.6456332079978893
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.653225416011992
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.6300196659867652
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.6220617080107331
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.6701395840063924
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.678029709000839
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.661843208989012
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.7018608749931445
+    },
+    {
+      "ok": true,
+      "status_code": 201,
+      "latency": 1.6857093750004424,
+      "booking_id": "b46fd3c9-3545-4082-a0f8-bf8066521f2f"
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.7342574579961365
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.6933232079900336
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.7511169999925187
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.7091133749927394
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.7169767080049496
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.7592771250056103
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.725037500000326
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.7417643750086427
+    },
+    {
+      "ok": false,
+      "status_code": 409,
+      "latency": 1.7673160419944907
+    }
+  ],
+  "immediate_release_latency": {
+    "hold_strategy": "redis",
+    "measured_seconds": 0.0007017500029178336,
+    "timed_out": false,
+    "skipped": false,
+    "trigger_write_seconds": 0.00676370901055634
+  }
+}

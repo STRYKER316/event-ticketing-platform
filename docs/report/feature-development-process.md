@@ -8,6 +8,17 @@ archived raw output from `benchmark/run_benchmark.py` run against the live
 compose stack. Per CLAUDE.md's Integrity rule, nothing here is estimated
 or placeholder.*
 
+*Revision note: a dedicated adversarial `/code-review` pass and an
+independent `/pre-pr` review both caught a real measurement bug in the
+first version of this analysis — the harness's HTTP client had a default
+100-connection cap that silently throttled the 300-request burst,
+counting client-side queueing as "hold-acquisition latency." Fixed, and
+every run below is from the corrected harness, repeated three times per
+strategy rather than once (a single run cannot support a "clean win"
+claim). The corrected numbers tell a different, more mixed story than the
+first version did — see `docs/benchmark-results/README.md`'s revision
+note for the full account.*
+
 ## The feature: dual seat-hold strategy (§6)
 
 The single hardest correctness problem in a reserved-seating ticketing
@@ -72,6 +83,25 @@ how long the *passive* release path takes to become observable; it does
 not change the contention-burst mechanism (hold-acquisition latency,
 throughput), which has no dependency on TTL at all.
 
+**HTTP client connection limit sized to the load profile.** `httpx`'s
+default `AsyncClient` caps at 100 concurrent connections; against a
+300-request burst, roughly two-thirds of requests would queue for a free
+connection before ever reaching the server. Since `attempt_booking`'s
+timer starts before the request is sent, that queueing time would be
+counted as server-side "hold-acquisition latency" rather than what it
+actually is — a client-side artifact. Fixed by sizing `httpx.Limits` to
+the load profile (`seat_pool_size * clients_per_seat + 20`), so every
+request in the burst can be in flight simultaneously, the same way 300
+independent real clients would be.
+
+**Each run repeated three times per strategy, not once.** A single run
+cannot distinguish "strategy A is genuinely faster" from "run-to-run
+noise happened to favor A" — this matters here specifically because the
+first version of this benchmark (a single run each) reported a clean
+cron win that a second and third run did not reproduce (see the revision
+note above). All aggregate numbers below are mean and range across three
+independent runs per strategy.
+
 **Three metrics measured, per run:**
 1. Successful/failed booking counts under the contention burst.
 2. Hold-acquisition latency (p50/p95/p99) for successful bookings.
@@ -88,116 +118,112 @@ strategies: `docs/benchmark-results/README.md`.
 
 ## Results
 
+All figures are mean (range) across three independent runs per strategy,
+identical load profile. Full per-run data: `docs/benchmark-results/`.
+
 ### Contention burst — hold acquisition
 
 | Metric | cron | redis |
 |---|---|---|
-| Successful bookings (of 30 contended seats) | 30/30 | 30/30 |
-| Failed bookings (409, lost the race) | 270/270 | 270/270 |
-| Hold-acquisition latency, mean | 0.551s | 0.741s |
-| Hold-acquisition latency, p50 | 0.593s | 0.824s |
-| Hold-acquisition latency, p95 | 0.835s | 1.021s |
-| Hold-acquisition latency, p99 | 0.848s | 1.026s |
+| Successful bookings (of 30 contended seats), each run | 30/30 (all 3 runs) | 30/30 (all 3 runs) |
+| Failed bookings, each run | 270/270, all real `409`s | 270/270, all real `409`s |
+| Hold-acquisition latency, p50 | 0.431s (0.267–0.524) | 0.446s (0.279–0.702) |
+| Hold-acquisition latency, p95 | 1.052s (0.731–1.233) | 1.257s (1.074–1.559) |
+| Hold-acquisition latency, p99 | 1.144s (0.830–1.333) | 1.417s (1.252–1.660) |
 
-Both strategies allocated the pool exactly correctly — 30 winners, one per
-seat, 270 losers — under identical 10-way-per-seat contention. This
-matches, rather than merely repeats, P3.T7's correctness proof: that test
-established *that* exactly one client wins; this run establishes *how
-fast* winners and losers alike are told the outcome, at a scale (300
-concurrent requests) an order of magnitude past P3.T7's 25.
+Both strategies allocated the pool exactly correctly, every run — 30
+winners, one per seat, 270 losers, all real `409`s (verified via the
+harness's status-code breakdown, not just an aggregate failure count) —
+under identical 10-way-per-seat contention. This matches, rather than
+merely repeats, P3.T7's correctness proof: that test established *that*
+exactly one client wins; this run establishes *how fast* winners and
+losers alike are told the outcome, at a scale (300 concurrent requests)
+an order of magnitude past P3.T7's 25.
 
-**cron wins on acquisition latency, consistently, across every
-percentile.** This is a real, measured difference, not noise — p50 is
-~39% higher under Redis, p95 ~22% higher. The mechanism explains it
-directly rather than leaving it a mystery: `CronHoldStrategy.acquire_hold`
-does its conditional `UPDATE` and `BookingManager`'s `Booking`-row insert
-in the same Postgres transaction, one round-trip to one datastore.
-`RedisHoldStrategy.acquire_hold` does its `SET NX EX` against Redis *and*
-still needs the identical Postgres `Booking`-row insert — an extra network
-hop to a second service on every single request, in this specific
-single-machine Docker Compose topology where Redis and Postgres are
-separate containers reached over the same loopback-routed bridge network.
-This is an environment-shaped cost, not an indictment of Redis's
-correctness mechanism (`SET NX EX` is not doing anything slower than
-Postgres's row lock at the operation level) — it is the honest, measured
-result of adding a service hop that the cron strategy's design avoids by
-construction. A deployment where Redis and Postgres sit at meaningfully
-different network distances from `booking-service` (e.g. one co-located,
-one not) could shift this number in either direction; this benchmark
-measures the topology it was actually run against, not a hypothetical one.
+**p50 is statistically indistinguishable between strategies at n=3** — the
+ranges overlap almost entirely (cron 0.267–0.524s, redis 0.279–0.702s),
+and the means (0.431s vs. 0.446s) differ by less than either strategy's
+own run-to-run variance. p95/p99 show a mild, consistent trend toward
+redis running slightly slower, but three samples is not enough to call
+that trend significant rather than noise. The honest conclusion: **at
+this benchmark's scale (300 requests, single machine, single
+`booking-service` instance), hold-acquisition latency does not
+meaningfully distinguish the two strategies.** Both mechanisms —
+`CronHoldStrategy`'s atomic Postgres `UPDATE` and `RedisHoldStrategy`'s
+`SET NX EX` plus the shared `Booking`-row insert — resolve fast enough
+relative to the request's other overhead (network, auth, FastAPI
+dispatch) that the difference between them gets lost in ordinary
+variance at this load level, not clearly demonstrated by it.
 
 ### Release latency — passive path (abandonment → sweep/TTL)
 
 | Metric | cron | redis |
 |---|---|---|
-| Measured release latency | 11.06s | 12.05s |
+| Measured release latency | 12.07s (11.07–13.08) | 12.73s (11.05–14.07) |
 
 Both fall inside their expected TTL-plus-one-sweep-interval window
 (`HOLD_TTL_SECONDS=10` + `HOLD_SWEEP_INTERVAL_SECONDS=5` → up to 15s
-worst case for cron's sweep-triggered release; Redis's own key TTL plus
-one `expire_stale_pending()` sweep interval for the `Booking` row →
-similarly up to 15s). cron is again marginally faster here (~8% less),
-consistent with the same "one fewer service hop" pattern as the
-acquisition numbers, though the gap is small enough relative to the
-5-second sweep granularity that it is better read as "both strategies'
-passive release is bounded by the *configured* TTL/sweep interval, not by
-a meaningful difference in mechanism speed" — this metric is dominated by
-a chosen configuration knob, not by cron vs. Redis as such.
+worst case for either mechanism's sweep-triggered release). The means are
+close enough (12.07s vs. 12.73s, a 5% gap smaller than the 5-second sweep
+granularity itself) that this metric is dominated by the *configured*
+TTL/sweep interval, not by a meaningful difference in mechanism speed —
+both strategies' passive release is, correctly, bounded by whatever
+interval an operator configures, not by which strategy is active.
 
-### Release latency — immediate trigger (§17)
+### Release latency — immediate trigger (§17, simulated)
 
 | Metric | cron | redis |
 |---|---|---|
-| Trigger-write time | 5.1ms | 5.9ms |
-| Time to observed release | <1ms | <1ms |
+| Trigger-write time | 4.28ms (3.58–4.89) | 6.69ms (4.87–8.42) |
 
-Both strategies release in single-digit milliseconds when triggered
-directly rather than waiting on the passive path — roughly **three orders
-of magnitude faster** than the ~11-12 second passive numbers above,
-independent of which hold strategy is active. This is the strongest,
-least ambiguous result in the whole benchmark: it confirms decisions-log
-§17's compensation-flow decision (build a real `payment.failed` →
-immediate-release path, not just rely on the timeout safety net) is worth
-its documented implementation cost (§17: "roughly 2-4 days for the
-retry/DLQ pattern, plus ~0.5-1 day for the payment-failure hold-release
-handler") regardless of which hold strategy eventually ships, since the
-gap between "customer sees the seat freed in milliseconds" and "customer
-waits up to a sweep interval" holds either way.
+This is the one metric where redis was slower in **all three** runs, not
+just on average — a small but consistent gap, plausibly the same extra
+network hop (a separate Redis container) discussed for acquisition
+latency above, though at this magnitude (single-digit milliseconds) three
+samples is suggestive rather than conclusive. What is conclusive,
+regardless of which strategy: **both release in single-digit
+milliseconds when triggered directly, versus ~12 seconds via the passive
+path — roughly three orders of magnitude faster, independent of hold
+strategy.** This confirms decisions-log §17's compensation-flow decision
+(build a real `payment.failed` → immediate-release path, not just rely on
+the timeout safety net) is worth its documented implementation cost (§17:
+"roughly 2-4 days for the retry/DLQ pattern, plus ~0.5-1 day for the
+payment-failure hold-release handler") regardless of which hold strategy
+eventually ships.
 
 ## Honest reading of the comparison
 
-Per the kickoff doc's own instruction: if one strategy wins cleanly across
-every metric, say so plainly rather than manufacturing a more balanced
-story than the data supports. **In this benchmark, cron won on every
-measured metric** — acquisition latency (all percentiles), passive release
-latency, and immediate-release trigger time. That is a genuinely clean
-result, not a mixed one, and it should be reported as such.
+Per the kickoff doc's own instruction: report a genuinely mixed result as
+mixed rather than manufacturing a cleaner story than the data supports —
+and this is a genuinely mixed result. **Hold-acquisition latency and
+passive release latency do not meaningfully distinguish cron from redis
+at this benchmark's scale; immediate-release trigger time shows a small,
+consistent edge for cron, on the order of a couple of milliseconds.**
 
-It does not, however, mean "cron is unconditionally the better strategy" —
-that would overclaim past what a single-machine, single-`booking-service`-
-instance benchmark can support. What it does show, precisely: **at this
-benchmark's scale and topology, the network hop Redis adds to every
-acquisition is a real, measurable cost that Redis's `SET NX EX` mechanism
-itself does not recoup anywhere in this test.** The scenario where Redis's
-usual advantages would be expected to show up — taking sweep/lock
-contention load off the primary relational database, or scaling the lock
-layer independently of Postgres connection-pool pressure — requires either
-a much larger seat pool/contention level, multiple concurrent
-`booking-service` instances sharing load, or a topology where Postgres
-itself is closer to saturated than it was at 300 requests against 30
-seats. None of those conditions held here; this benchmark measured a
-single moderate burst against a single service instance, which is exactly
-the regime where an extra network hop shows up as pure overhead with
-nothing to offset it.
+This report's *first* draft, built from a single run per strategy, claimed
+cron won cleanly on every metric. Running each strategy twice more
+changed that conclusion — the acquisition-latency "win" didn't reproduce;
+only the millisecond-scale trigger-write gap did. That reversal is itself
+worth stating plainly: it is direct evidence for why this phase's own
+process note ("never fabricate, estimate, or placeholder a number") and
+n=1 measurements are a bad combination — a single sample can look like a
+clean result purely by chance, and the fix wasn't a better story, it was
+more data.
 
 **Given the two strategies were also already established as equally
 correct** (P3.T7, and reconfirmed by this run's exact 30/30 successful
-allocation under both), and cron requires no second infrastructure
-dependency (no Redis container, one fewer moving part in the deployed
-system, §12's cost-management priorities), the measured evidence in this
-report favors `cron` as the default for the current single-instance
-deployment target (§12: AWS Elastic Beanstalk, one instance). Redis
-remains the documented alternative for a future multi-instance topology
-where its independent-scaling property would have a chance to pay for the
-hop cost measured here — a Future Work note (§26), not a claim this
-benchmark can make on its own.
+allocation under both strategies, all three runs each), and cron requires
+no second infrastructure dependency (no Redis container, one fewer moving
+part in the deployed system, §12's cost-management priorities), the
+measured evidence in this report mildly favors `cron` as the default for
+the current single-instance deployment target (§12: AWS Elastic
+Beanstalk, one instance) — not because it demonstrably outperforms redis
+at this scale (it doesn't, on the numbers), but because it wins the one
+metric that did show a consistent difference (immediate-release
+trigger time) and carries one fewer infrastructure dependency, with
+neither number strong enough to call the case closed. Redis remains a
+reasonable alternative, particularly for a future multi-instance topology
+where its independent-scaling property (taking lock contention off the
+primary relational database) has a chance to matter in a way this
+single-instance, 300-request benchmark could not exercise — a Future Work
+note (§26), not a claim this benchmark can make on its own.

@@ -2003,3 +2003,122 @@ Development Process moves from "Not started — blocked on P8" to "Draft
 Decisions-log delta: none — no new decision, this chapter interprets
 already-measured data and already-locked §6/§12 decisions.
 `CLAUDE.md` update: none needed.
+
+## 2026-08-16 — Phase 8 CHECKPOINT: dedicated review found a real measurement bug, benchmark re-run and corrected
+
+Ran the phase-end checklist: a dedicated adversarial `/code-review` pass
+(required for P8 same as P3) plus the routine `/pre-pr` gate
+(simplify → code-review → verify), both against the full phase diff since
+`5a59b96`.
+
+**`/pre-pr`'s simplify step (Sonnet) made four real improvements** to
+`benchmark/run_benchmark.py` — single-sort percentile computation instead
+of sorting per percentile, concurrent Keycloak token fetches via
+`asyncio.gather`, a shared `_create_pending_booking()` helper deduping
+identical logic in `measure_release_latency`/`simulate_immediate_release`,
+and routing every hardcoded credential through the existing `_env()`
+helper for consistency — **but that last change introduced a real
+regression**: it started reading `Config.keycloak_client_id`/
+`keycloak_client_secret` from the generic `KEYCLOAK_CLIENT_ID`/
+`KEYCLOAK_CLIENT_SECRET` env vars, which `.env` already sets for a
+*different* Keycloak client (`ticketing-frontend`, public/PKCE-only,
+can't do password grant) than the one this harness actually needs
+(`ticketing-service`, confidential). Broke authentication outright.
+Caught immediately via smoke test (a re-run after the simplify pass is
+exactly why smoke-testing after an automated fix isn't optional), fixed
+with harness-specific env var names (`BENCHMARK_KEYCLOAK_CLIENT_ID`/
+`_SECRET`) that can't collide with the general-purpose ones, re-verified
+working.
+
+**Both the `/pre-pr` code-review step (Opus) and the dedicated adversarial
+`/code-review` pass (independently) found the same critical bug**: the
+harness's `httpx.AsyncClient` used its default 100-connection cap, so
+against the 300-request contention burst, roughly two-thirds of requests
+queued client-side for a free connection *before* `attempt_booking`'s
+`time.perf_counter()` clock even reached the server — that queueing time
+was being counted as "hold-acquisition latency," contaminating the
+report's only Measured chapter with a client-harness artifact rather than
+genuine server/DB behavior. Fixed with an explicit `httpx.Limits` sized to
+the load profile.
+
+**The dedicated adversarial review also flagged one claim that turned out
+to be a false positive**, worth recording because it shows the
+verify-before-fixing discipline working both directions: it claimed no
+service's `/metrics` endpoint actually emits `http_requests_total`/
+`http_request_duration_seconds` because none of them call
+`Instrumentator().add(metrics.default())` explicitly. Traced the installed
+`prometheus_fastapi_instrumentator` library source directly
+(`middleware.py`, `PrometheusInstrumentatorMiddleware.__init__`): when no
+explicit `.add()` call populates `instrumentations`, the middleware falls
+back to `metrics.default(...)` itself — the finding's premise (`instrument()`
+alone leaves nothing wired) was wrong, contradicted by this session's own
+earlier live verification (P8.T1: real `http_requests_total` values
+queried directly off a running container, and real non-empty Grafana panel
+data). Rejected, not applied — the multi-agent code-review pass surfaces
+plausible-sounding findings that still need independent verification
+against the actual system, not agreement on confidence alone.
+
+**Real, applied fixes from the adversarial pass, beyond the connection-pool
+bug already covered above:**
+- `simulate_immediate_release` trusted the operator-supplied
+  `--hold-strategy` flag with no check that it matched what the server was
+  actually running — a mismatch would silently no-op the real release
+  write while the `Booking`-row update and poll still "succeeded,"
+  producing a plausible but meaningless fast-release number for a
+  mechanism that was never actually exercised. Fixed: the cron branch now
+  checks the `UPDATE`'s affected-row count and the redis branch checks
+  `DEL`'s return value, raising `RuntimeError` with a clear diagnostic on
+  a mismatch. Verified live: a deliberate `--hold-strategy redis` run
+  against a `HOLD_STRATEGY=cron` server now fails loudly instead of lying.
+- `attempt_booking` could raise past its own `httpx.HTTPError` catch (a
+  malformed/truncated 201 body hitting `response.json()['id']`) and
+  `asyncio.gather` without `return_exceptions=True` would let that crash
+  the whole burst, losing every other in-flight measurement. Fixed:
+  broadened the catch to `Exception`, so a client-side failure always
+  becomes a recorded failed attempt, never a crashed run.
+- Failures only bucketed as ok/not-ok, so a real `500` would be
+  indistinguishable from a correctly-rejected `409` in the summary. Added
+  a `failed_status_code_breakdown` to the output (confirmed clean: every
+  archived run's 270 failures are real `409`s, not masked errors).
+  `RESULTS_DIR.mkdir()` didn't cover a custom `--out` path either;
+  switched to `out_path.parent.mkdir(parents=True, exist_ok=True)`.
+- `make down` (no `--profile` flag) doesn't stop containers started via
+  `make bench-up --profile benchmark` — compose only warns about orphans
+  by default rather than removing them, so forgetting `bench-down` before
+  `down` would leave prometheus/grafana running silently. Fixed: `make down`
+  now passes `--remove-orphans`.
+- Commit-message rule violations flagged by both reviews independently
+  (phase/task IDs embedded in subject lines, a body paragraph, a docs-only
+  chapter riding silently inside a code commit's message) — addressed by
+  reorganizing this phase's still-unpushed local history into a clean set
+  of commits before anything is pushed (see the commit this build-log
+  entry itself lands in).
+
+**The connection-pool fix changed the numbers enough to justify re-running
+the whole benchmark, not just patching the archived JSON.** Removing the
+client's artificial 100-connection cap didn't lower latency — it raised
+p95/p99 (the cap had been accidentally smoothing the request pattern into
+sub-bursts of 100, which suppressed genuine tail-latency contention at the
+server/DB level). More importantly, **each strategy was re-run three times,
+not once** — a single run cannot support a "clean win" claim, and this
+turned out to matter directly: the corrected n=3 data shows hold-acquisition
+and passive-release latency as statistically indistinguishable between
+`cron` and `redis` at this benchmark's scale, reversing the original
+single-run report's "cron wins on every metric" conclusion. Only
+immediate-release trigger time showed a consistent (if small,
+millisecond-scale) edge for cron across all three runs. Full corrected
+numbers: `docs/benchmark-results/README.md`; full corrected analysis:
+`docs/report/feature-development-process.md`, both rewritten in place with
+the superseded single-run numbers explicitly called out rather than
+silently replaced — the reversal itself is documented as a finding, not
+scrubbed from the record, per the Integrity rule and this project's stated
+transparency stance on AI-assisted work.
+
+Also updated: `docs/decisions-log.md` §6/§17 (corrected measured numbers),
+`docs/architecture.html` §07 (corrected numbers, same "more data, not a
+better story" framing).
+
+Decisions-log delta: yes — §17's P8.T5 amendment corrected in place (same
+amendment, corrected numbers, not a new one) to match the re-run data.
+`CLAUDE.md` update: none needed — no new convention, this is a
+within-phase correction.
