@@ -385,4 +385,16 @@ Class Diagrams chapter for the tracked gap). Webhook idempotency
 (`handle_webhook_event` only transitioning a still-`pending` row) proven
 both by test and, for the Kafka side it feeds, live against the real
 running stack: a redelivered `payment.outcomes` message produced no second
-effect.
+effect. **Hardened further at CHECKPOINT**: the transition is now a
+rowcount-gated conditional `UPDATE` (`PaymentRepository
+.transition_if_pending`) rather than a read-then-write check, closing a
+race where two genuinely overlapping webhook deliveries could both pass
+the guard before either committed — proven with a concurrency integration
+test racing two real, independent sessions against the same delivery. The
+same review also moved the Kafka publish ahead of the status commit, since
+the original order could strand an outcome permanently if the publish
+itself failed (Stripe's retry would then hit the now-terminal row and
+no-op instead of retrying the publish). See the Class Diagrams chapter's
+Payment Service section and `build-log.md`'s 2026-08-17 CHECKPOINT entry
+for the full account, including the more severe authorization-bypass
+finding from the same review pass.

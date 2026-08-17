@@ -124,15 +124,23 @@ events, which can never have provisioned tickets, still delete freely.
 | `POST /payments/charge` (Payment Service, internal) | 401 | Allow* | Allow* |
 | `POST /payments/webhook` (Payment Service) | Allow (Stripe signature is the auth) | — | — |
 
-\* `/payments/charge` is never called by a browser client — only by Booking
-Service, which has already done the ownership check. It still requires a
-valid Keycloak token (the caller's own, forwarded unmodified), but not an
-ownership check of its own, since Payment Service has no access to
-`booking_db` to perform one (§8). This is the one endpoint in the system
-whose auth requirement is "authenticated, checked by a different service"
-rather than "authenticated and/or ownership-scoped, checked here" — worth
-stating explicitly per the auth-requirement convention rather than leaving
-it looking like an omission.
+\* `/payments/charge` is meant to be called only by Booking Service, which
+has already done the ownership check. It still requires a valid Keycloak
+token (the caller's own, forwarded unmodified), but not an ownership check
+of its own, since Payment Service has no access to `booking_db` to perform
+one (§8). This is the one endpoint in the system whose auth requirement is
+"authenticated, checked by a different service" rather than "authenticated
+and/or ownership-scoped, checked here" — worth stating explicitly per the
+auth-requirement convention rather than leaving it looking like an
+omission. **This "only Booking Service can reach it" premise was not
+actually true until a CHECKPOINT code-review pass caught it**: Traefik's
+original routing rule exposed the whole `/payments` prefix publicly, so
+any authenticated user could call this route directly with a fabricated
+`amount_cents` — a real authorization bypass, not a hypothetical one.
+Fixed by narrowing Traefik's rule to `/payments/webhook` only; see
+`build-log.md`'s 2026-08-17 CHECKPOINT entry and the Class Diagrams
+chapter's Payment Service section for the full account. The table above
+reflects the corrected, enforced state.
 
 **Ownership scoping on `/pay` works the same way as every other
 ownership-scoped route** (§15's pattern): the booking's stored

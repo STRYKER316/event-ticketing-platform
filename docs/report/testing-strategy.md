@@ -416,6 +416,52 @@ booking; redelivering the same `failed` message produced no second
 `payment_outcome_applied` log line; `POST /payments/webhook` with an
 invalid signature was rejected with 400 before touching any row.
 
+**The routine `/pre-pr` gate at CHECKPOINT (simplify → code-review →
+verify) caught what self-verification's live walkthrough didn't**, since
+neither pass is a substitute for the other — self-verification proves the
+golden path and the paths a human tester thinks to try; an adversarial
+code-review pass looks for what a malicious caller could do that a golden-
+path walkthrough would never attempt. The code-review step (Opus, reading
+`CLAUDE.md`'s conventions first, per this project's own review-prompt
+discipline) found six real issues, most severe first:
+
+1. **`/payments/charge` was reachable from outside the Docker network via
+   Traefik**, guarded only by "any valid Keycloak token" — meaning any
+   authenticated user, not just Booking Service, could submit an arbitrary
+   `booking_id` and `amount_cents`, bypassing the ownership check and
+   authoritative price lookup that only exist on Booking Service's side of
+   the call. This is exactly the failure mode decisions-log §9's amendment
+   assumed away ("Payment Service only needs to know the caller presented a
+   valid Keycloak token... since Booking Service already verified
+   ownership") without anything actually enforcing that only Booking
+   Service could reach it. Fixed by narrowing the Traefik router rule.
+2. Webhook handling committed the terminal status *before* publishing to
+   Kafka — a publish failure could strand a Payment permanently, since
+   Stripe's own retry would hit the already-terminal idempotency guard and
+   silently no-op. Fixed by publishing first.
+3. That same idempotency guard was read-check-then-write, not
+   rowcount-gated like every other idempotent-consumer guard in this
+   system (§7) — two overlapping webhook deliveries could both pass it.
+   Fixed with a conditional `UPDATE`, proven with a new concurrency
+   integration test (two real sessions racing the same delivery).
+4. Two concurrent first-time charge attempts for one booking crashed with
+   an unhandled `IntegrityError` instead of resolving idempotently. Fixed,
+   proven with a concurrent-attempt integration test.
+5. Both Kafka consumers in Booking Service shared one `group_id`, coupling
+   unrelated topics' rebalances. Fixed with a dedicated group id.
+6. A real error from Payment Service and a genuine connection failure both
+   read as the same misleading "payment service unreachable" message.
+   Fixed by forwarding the real status.
+
+All six fixed and live-verified before the checkpoint closed — see
+`build-log.md`'s 2026-08-17 CHECKPOINT entry for the full detail and the
+Class Diagrams chapter's Payment Service section for the architectural
+correction. This is worth stating plainly for the report's Testing
+Strategy chapter: the P3/P8-only dedicated-adversarial-pass rule
+(`CLAUDE.md`) doesn't mean every other phase's routine gate is a
+formality — this session is the evidence that it can still find a real
+security bug.
+
 **What wasn't live-verified this phase, tracked honestly rather than
 silently marked done**: a real Stripe charge succeeding and its webhook
 actually arriving — `.env` only has the placeholder
@@ -428,8 +474,11 @@ Tested (mocked/integration) but not yet Verified against the real Stripe
 API. Recorded on Phase 4's exit checklist as an open item, not glossed over.
 
 **Status:** Implemented, Tested, Verified (live, except the real-Stripe
-leg above). `payment-service`: 7/7 unit, 3/3 integration. `booking-service`:
-35/35 unit (+11 from Phase 3's 24), 24/24 integration (+3). `event-service`:
-44/44 unit, 11/11 integration (unaffected, spot-checked). `search-service`:
-16/16 unit (unaffected — silently ignores the new `price_cents` field on
-`event.events` it doesn't need, pydantic's default `extra="ignore"`).
+leg above). Final counts, after both self-verification's live-testing
+fixes and the CHECKPOINT `/pre-pr` code-review fixes above:
+`payment-service`: 7/7 unit, 5/5 integration (+2 concurrency tests from the
+CHECKPOINT review). `booking-service`: 36/36 unit (+12 from Phase 3's 24),
+24/24 integration (+3). `event-service`: 44/44 unit, 11/11 integration
+(unaffected, spot-checked). `search-service`: 16/16 unit (unaffected —
+silently ignores the new `price_cents` field on `event.events` it doesn't
+need, pydantic's default `extra="ignore"`).

@@ -388,6 +388,7 @@
       <line x1="550" y1="598" x2="550" y2="726" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)"/>
       <text x="558" y="656" text-anchor="start" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">sync POST /pay → /payments/charge</text>
       <text x="558" y="670" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">forwards caller's JWT + ticket price_cents — the one sync inter-service call (§9 amendment)</text>
+      <text x="558" y="682" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">internal Docker network only — Traefik never routes /payments/charge publicly (CHECKPOINT fix, was an authz bypass)</text>
 
       <!-- payment-service -->
       <rect x="460" y="726" width="180" height="76" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
@@ -778,6 +779,7 @@
         <li><span class="check">✓</span> <code>POST /payments/webhook</code> — signature-verified, idempotent, rejects a bad signature with 400 before touching any row</li>
         <li><span class="check">✓</span> Kafka #4 (<code>payment.outcomes</code>, one topic/two outcomes) — live-verified both branches: <code>succeeded</code> → <code>Booking</code> <code>CONFIRMED</code> + <code>Ticket</code> <code>BOOKED</code>; <code>failed</code> → <code>Booking</code> <code>EXPIRED</code> + immediate hold release; redelivery a proven no-op that doesn't touch a later booking's legitimate hold</li>
         <li><span class="check">✓</span> per-section ticket pricing, organizer-set, carried through Kafka #2 into <code>Ticket.price_cents</code> — live-verified end to end</li>
+        <li><span class="check">✓</span> CHECKPOINT <code>/pre-pr</code> code review found and fixed a real authz bypass on <code>/payments/charge</code> (was publicly reachable, letting any user submit an arbitrary <code>amount_cents</code>) plus a webhook publish-ordering bug, a non-atomic idempotency guard, an unhandled concurrent-insert race, a shared Kafka consumer group id, and a misleading error mapping — all fixed and live-verified, see <code>build-log.md</code>'s 2026-08-17 CHECKPOINT entry</li>
         <li><span class="check">✓</span> one command (<code>make up</code>) boots all 13 containers</li>
       </ul>
     </div>

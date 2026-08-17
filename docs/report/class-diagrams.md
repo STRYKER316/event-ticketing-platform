@@ -444,24 +444,43 @@ owns directly: the charge-initiation call and the webhook. No consumer
 class exists on this side — Payment Service is a Kafka *producer* for
 integration point #4, not a consumer of anything.
 
-**`create_charge` is called by Booking Service, not by a browser client**
-(decisions-log §9 amendment) — the one deliberate, narrow exception to
-"cross-service data only via Kafka" in this system, made because initiating
-a charge needs an immediate request/response result (did Stripe accept the
-attempt right now), which is a different shape of problem than the
-eventually-consistent facts the five Kafka integration points (§7) carry
-everywhere else. `PaymentManager` itself has no idea it's being called
-synchronously by another service rather than a route handler acting on a
-browser request — the ownership check that makes this safe lives entirely
-in `BookingManager.pay_booking`, on the other side of that call, where
-`booking_db` actually is (§8). Idempotency here is a defense-in-depth
-belt-and-suspenders pair: `create_charge` checks
+**`create_charge` is meant to be called by Booking Service, not by a
+browser client** (decisions-log §9 amendment) — the one deliberate, narrow
+exception to "cross-service data only via Kafka" in this system, made
+because initiating a charge needs an immediate request/response result
+(did Stripe accept the attempt right now), which is a different shape of
+problem than the eventually-consistent facts the five Kafka integration
+points (§7) carry everywhere else. `PaymentManager` itself has no idea
+it's being called synchronously by another service rather than a route
+handler acting on a browser request — the ownership check that makes this
+safe lives entirely in `BookingManager.pay_booking`, on the other side of
+that call, where `booking_db` actually is (§8). Idempotency here is a
+defense-in-depth belt-and-suspenders pair: `create_charge` checks
 `existing.stripe_charge_id is not None` before short-circuiting (a Payment
 row with no `stripe_charge_id` yet means a previous attempt never actually
 reached Stripe and must genuinely retry — a real bug caught by live testing
 this phase, not a hypothetical, see `build-log.md`'s 2026-08-17 entry), and
 Stripe's own `idempotency_key` (the booking ID) is the backstop if two
 requests somehow race past that check simultaneously.
+
+**A genuine authorization bypass in that design was found at CHECKPOINT,
+not by self-verification** — the routine `/pre-pr` code-review pass, not
+the initial self-verification, is what caught it. "`PaymentManager` trusts
+the caller already did the ownership check" is only actually true if
+`/payments/charge` is *unreachable* except from Booking Service — and it
+wasn't: Traefik's original `PathPrefix('/payments')` rule routed the whole
+service publicly, so any authenticated end user could `POST
+/payments/charge` directly with an arbitrary `booking_id` and
+`amount_cents`, bypassing both checks `BookingManager.pay_booking` exists
+to enforce. Fixed by narrowing the Traefik rule to
+`PathPrefix('/payments/webhook')` only (`infra/docker-compose.yml`) —
+`/payments/charge` is now reachable exclusively over the internal Docker
+network, which is how Booking Service already called it. Live-verified
+post-fix both directions: `POST localhost/payments/charge` through Traefik
+now 404s; the internal call from `booking-service` still succeeds. See
+`build-log.md`'s 2026-08-17 CHECKPOINT entry for the full list — this was
+the most severe of six findings that session, all fixed before this
+checkpoint closed.
 
 **Webhook-driven confirmation is the sole source of truth for a Payment's
 terminal status** (§9) — `create_charge`'s synchronous Stripe response is
@@ -470,9 +489,19 @@ never trusted for that, even though Stripe test mode often resolves a
 Stripe already processed the charge would otherwise be indistinguishable
 from a genuine failure. `handle_webhook_event` is idempotent the same way
 Booking Service's Kafka consumers are (§7's general rule, applied to a
-webhook instead of a Kafka redelivery): only transitions a `Payment` still
-`pending`, so a replayed webhook is a structural no-op, proven both by unit
-test (mocked) and integration test (real Postgres, `testcontainers`).
+webhook instead of a Kafka redelivery): a rowcount-gated conditional
+`UPDATE` (`PaymentRepository.transition_if_pending`, mirroring
+`BookingRepository`'s method of the same name) only transitions a `Payment`
+still `pending`, so a replayed webhook — or two genuinely overlapping
+deliveries racing each other — can't both win it, proven by a concurrency
+integration test opening two independent sessions and racing the same
+delivery. The original version used a read-then-write check instead
+(found in the same CHECKPOINT review) and also committed the terminal
+status *before* publishing to Kafka, which meant a publish failure could
+strand a Payment permanently — Stripe's own retry would hit the
+already-terminal guard and silently no-op, losing the outcome for good.
+Fixed by reordering to publish before commit, so a publish failure
+propagates uncommitted and Stripe's retry genuinely gets another attempt.
 
 **Status:** Implemented, Tested, Verified (live, except the final real-Stripe
 leg — see below) — reflects the actual class structure under
