@@ -365,13 +365,19 @@ issues worth locking in against:
 - **Integration tests use `testcontainers.community.*`, not the bare `testcontainers.*`
   namespace** — established in Phase 1 (`community.postgres`, `community.mongodb`) and
   extended in Phase 3 to `community.redis` and `community.kafka`. For Kafka
-  specifically: `community.kafka.KafkaContainer("apache/kafka:3.8.0")` — the same
-  image the compose stack actually runs — boots and works directly, no
-  `.with_kraft()` override needed, unlike `search-service`'s existing suite, which
-  uses a Confluent image (`confluentinc/cp-kafka`) plus `.with_kraft()` because that
-  was the working combination found in Phase 2 before this was known. Worth revisiting
-  `search-service`'s test infra to match at some point, but not a Phase 3 change — not
-  touched here.
+  specifically: `community.kafka.KafkaContainer` targets the Confluent image's
+  bootstrap scripts specifically — both its Zookeeper and KRaft boot paths shell out
+  to `/etc/confluent/docker/configure`, which the compose stack's `apache/kafka`
+  image doesn't ship, so the container exits immediately (code 2) regardless of
+  `.with_kraft()`. Use `KafkaContainer("confluentinc/cp-kafka:7.6.0").with_kraft()` —
+  the same combination `search-service`'s suite already used since Phase 2. **This
+  corrects an earlier version of this note**, which claimed the opposite
+  (`apache/kafka:3.8.0` working directly, no `.with_kraft()` needed) — that claim was
+  never actually exercised by a real test (`booking-service`'s own `kafka_container`
+  fixture sat unused from Phase 3 until Phase 6's P6.T4 became its first real caller
+  and hit the failure immediately), so the error went uncaught for three phases. Fixed
+  in both services' fixtures as of Phase 6; if a future service adds its own Kafka
+  testcontainer fixture, use the Confluent-image combination from the start.
 - **A Kafka consumer with its own DB write sets `enable_auto_commit=False` on the
   `AIOKafkaConsumer` and commits the offset manually, once per record, only after that
   record's handler has fully finished** — not on `aiokafka`'s default background timer,

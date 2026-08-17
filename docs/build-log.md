@@ -2656,3 +2656,60 @@ Decisions-log delta: none — this implements what the §22 amendment
 `CLAUDE.md` update: none needed — extends existing conventions (the
 publish-before-commit pattern, the resubmission-gate idempotency shape,
 manual-commit consumer retry).
+
+## 2026-08-17 — P6.T4: Kafka-transport test for booking.cancelled finds and fixes a three-phase-old test-infra bug
+
+Rounding out the test suite for this phase, added one integration test
+booking-service's existing suite didn't have any equivalent of yet:
+`test_cancel_booking_kafka.py` proves `BookingCancelledProducer`'s wire
+format against a **real** Kafka broker (not a mocked producer, not
+`_handle()` called directly against a hand-crafted payload) — seeds a
+`CONFIRMED` booking, cancels it through `BookingManager` with a real
+`AIOKafkaProducer`, and consumes the resulting message with a raw
+`AIOKafkaConsumer` to assert its exact shape. This is genuinely new
+territory for this codebase: every other Kafka consumer test in both
+`booking-service` and `payment-service` (including this phase's own
+`BookingCancelledConsumer` tests, P6.T2/T3) tests `_handle()` directly
+against a hand-crafted payload, bypassing the real broker entirely — this
+is the first test in the whole project to round-trip through one.
+
+**That's what surfaced a real, three-phase-old bug**: `booking-service`'s
+`kafka_container` fixture (`tests/integration/conftest.py`, added in
+Phase 3) had exactly zero callers before this test — `grep` across the
+whole test suite confirms it. `CLAUDE.md`'s Conventions section claimed
+`KafkaContainer("apache/kafka:3.8.0")` "boots and works directly, no
+`.with_kraft()` override needed," specifically contrasting it with
+`search-service`'s own fixture, which uses `confluentinc/cp-kafka` plus
+`.with_kraft()`. The first real caller hit an immediate container exit
+(code 2). Traced it to the actual boot script (dumped container logs
+before Ryuk cleanup ran): `testcontainers.community.kafka.KafkaContainer`
+shells out to `/etc/confluent/docker/configure` and
+`/etc/confluent/docker/bash-config` in **both** its Zookeeper and KRaft
+boot paths — Confluent-specific tooling the official `apache/kafka` image
+never ships, so the container fails to boot regardless of `.with_kraft()`.
+`search-service`'s own `conftest.py` already had a comment stating this
+exact incompatibility, correctly, since Phase 2 — `CLAUDE.md`'s note was
+simply wrong, and stayed wrong for three phases because nothing ever
+exercised the fixture it was describing.
+
+Fixed by switching `booking-service`'s `kafka_container` fixture to the
+same proven combination `search-service` already uses
+(`confluentinc/cp-kafka:7.6.0` + `.with_kraft()`), with a comment
+recording the actual finding rather than the old (wrong) claim. Corrected
+`CLAUDE.md`'s Conventions section to match, including removing the "worth
+revisiting search-service's test infra to match apache/kafka" suggestion,
+which was backwards — `search-service` had it right, `booking-service`'s
+claim was the error.
+
+Full suite after this task: `booking-service` 69/69 (up from 68 — the one
+new Kafka-transport test); `payment-service` unchanged at 21/21 (no new
+tests this task — its existing coverage from P6.T2/T3, plus this phase's
+live walkthrough, was judged sufficient; adding a symmetric real-Kafka
+producer test for `NotificationProducer` would be new territory there too,
+but no existing service in this codebase does that for any producer, so
+not adding it here keeps this fix scoped to what P6.T4 actually needed).
+
+Decisions-log delta: none — this is a test-infra correctness fix, not an
+architecture decision.
+`CLAUDE.md` update: yes — the Conventions section's Kafka-testcontainer
+note corrected (above), per the phase-end "`CLAUDE.md` self-update check."
