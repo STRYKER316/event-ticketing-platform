@@ -76,12 +76,19 @@ cron-vs-Redis comparison plus release-latency (immediate vs. passive), see
 `docs/benchmark-results/` and `docs/report/feature-development-process.md`
 — and Phase 4, which added organizer-set per-section ticket pricing
 (retroactively touching Event Service's seat map and Booking Service's
-`Ticket` model) and caught two real bugs via live testing against the
-running stack (a stuck payment-idempotency short-circuit, a Postgres
-bind-param overflow) — see `docs/build-log.md` for all of the above. Real
-Stripe test-mode credentials weren't available this session, so the
-charge→webhook→confirm round trip is Tested but not yet Verified against
-the real Stripe API — tracked on Phase 4's exit checklist, not silently
+`Ticket` model) and caught real bugs via live testing and a CHECKPOINT
+`/pre-pr` review — a stuck payment-idempotency short-circuit, a Postgres
+bind-param overflow, and (most severe) an authorization bypass where
+`/payments/charge` was reachable publicly through Traefik, letting any
+authenticated user submit an arbitrary charge amount for any booking; all
+fixed and live-verified, see `docs/build-log.md` for the full list.
+`/payments/webhook`'s own processing (signature verification, idempotency,
+Kafka publish) is fully live-verified end-to-end via a self-signed
+synthetic event, since signature verification only depends on the locally-
+configured webhook secret, not a real Stripe account. What's left needs an
+actual Stripe account specifically: a real charge succeeding against
+Stripe's API, and Stripe's own infrastructure delivering the resulting
+webhook — tracked precisely on Phase 4's exit checklist, not silently
 marked done. Phase 6 (Cancellation & Refunds) is next per the locked
 report-first build order; see `/docs/phases/` for task checklists and
 `/docs/architecture.html` for current system state.
