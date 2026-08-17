@@ -562,13 +562,71 @@ Stripe's own API boundary is live-verified; the genuine refund round trip
 is Tested (mocked/integration) but not yet Verified against the real
 Stripe API.
 
+**The routine `/pre-pr` gate at CHECKPOINT found a real fail-open bug
+self-verification's live walkthrough had missed** — the same lesson Phase
+4's CHECKPOINT review already taught (a golden-path walkthrough proves the
+paths a human tester thinks to try; an adversarial pass looks for what it
+wouldn't). The code-review step (Opus, CLAUDE.md's conventions read first)
+found six issues, most severe first:
+
+1. **The cancellation cutoff failed open, silently, for any booking whose
+   event predates the `events` table.** `_check_before_event_start`
+   treated a missing `Event` row as "before the cutoff, allow it," with no
+   log line — undetectable, and reachable for real (two events in the
+   running dev stack predate this phase's migration). This is precisely
+   the gap §22 amendment #2 exists to close, so leaving it open would have
+   meant the amendment's own fix wasn't actually enforced — exactly the
+   kind of claim the Integrity rule doesn't allow standing unverified.
+   Fixed to fail closed (409, logged). Live-verified both directions
+   against the real running stack: a `CONFIRMED` booking on a
+   pre-migration event now correctly 409s ("cannot verify the event's
+   start time"); a fresh booking on an event with a real `events` row
+   still cancels normally.
+2. A refund-notification publish failure could escape `refund_payment`
+   entirely and get misattributed by the consumer's retry wrapper as a DB
+   failure — logged under a `db_write_failed` event name, retried the
+   whole operation (safe but pointless, since it re-submits to Stripe with
+   the same idempotency key), then silently lost the notification anyway
+   once the retry budget ran out. Fixed by wrapping the publish in its own
+   try/except; renamed the retry-wrapper's log events to reflect that the
+   operation they wrap was never DB-only.
+3. `payment-service`'s copy of the Kafka-consumer retry helper had its
+   safety-net `commit()` removed during the routine simplify pass — correct
+   for the one current caller (which self-commits via `PaymentManager`),
+   but a landmine for any future handler wired through the same helper
+   without its own commit. Reverted.
+4. `EventUpsertedMessage.start_time`/`end_time` were bare `datetime`, not
+   `AwareDatetime` — harmless while merely logged, but `start_time` is now
+   load-bearing for the cutoff comparison, and a naive value would crash
+   it. Fixed at the DTO boundary, per the DTO-layer convention.
+5. Two residual gaps accepted rather than fixed, the same risk tolerance
+   already extended to `create_charge`'s own documented residual race:
+   `refund_payment`'s idempotency gate has no rowcount-gate/row-lock
+   backstop against a rebalance or a second replica racing two calls for
+   one booking (rests on Stripe's own idempotency key, same as
+   `create_charge`); that key's protection is also time-boxed to Stripe's
+   ~24h expiry window, not indefinite. Both now stated explicitly in
+   `refund_payment`'s docstring.
+6. `RedisHoldStrategy.release_booking`'s no-op is sound only within one
+   strategy's lifetime for a given booking — a booking confirmed under
+   `cron` then cancelled after a live switch to `redis` would leave its
+   ticket stuck `BOOKED`, permanently unbookable. Not fixed (the real fix
+   undoes that strategy's whole design); `HOLD_STRATEGY` switching with
+   in-flight bookings outstanding was never a supported operation anywhere
+   in this system. Recorded as a decisions-log §26 limitation.
+
+All six fixed (or, for #5/#6, explicitly documented as accepted) and
+re-verified before this checkpoint closed. Added test coverage for what
+was previously untested: `ProvisioningConsumer` writing the `events` row
+and its upsert-on-republish path (both integration, real Postgres); a
+unit test locking in the new fail-closed cutoff behavior; a unit test
+proving `refund_payment` doesn't raise when the notification publish
+itself fails.
+
 **Status:** Implemented, Tested, Verified (live, except the real-Stripe
 refund leg above, and except the `kafka_container` infrastructure fix,
 which is Verified in the sense that it now demonstrably works, not merely
-patched). Final counts: `booking-service` 69/69 (unit + integration, up
-from 60 before this phase — 8 new unit tests across
-`release_booking`/`cancel_booking`, 1 new real-Kafka-transport integration
-test); `payment-service` 21/21 (up from 12 before this phase — 5 new unit
-tests for `refund_payment`'s branches, 4 new integration tests including
-two exercising `BookingCancelledConsumer._handle` directly for redelivery
-and Stripe-failure behavior).
+patched). Final counts, after both self-verification's live-testing and
+the CHECKPOINT `/pre-pr` review above: `booking-service` 72/72 (unit +
+integration, up from 60 before this phase); `payment-service` 22/22 (up
+from 12 before this phase).

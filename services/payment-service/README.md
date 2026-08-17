@@ -19,6 +19,19 @@ webhook-driven: a successful or failed Stripe webhook publishes a message to
 the `payment.outcomes` Kafka topic (integration point #4), which Booking
 Service consumes to confirm the booking or release the hold immediately.
 
+**Phase 6 additions:** this service's first-ever Kafka consumer,
+`BookingCancelledConsumer`, subscribes to `booking.cancelled` (integration
+point #5, §22) — no equivalent API route, the Kafka message itself is the
+authorization, since Booking Service already checked ownership before
+publishing it. `PaymentManager.refund_payment` issues a Stripe refund
+(idempotency key `{booking_id}-refund`, §9's pattern applied to refunds),
+gated by `stripe_refund_id is None`, the same resubmission-gate shape
+`create_charge` already uses. On a Stripe failure, `Payment.status` stays
+`SUCCEEDED` (no re-lock, no rollback — §22's explicit scope boundary) and a
+message publishes to a new `notifications` topic — producer only this
+phase, since Notification Service (its consumer) doesn't exist until
+Phase 5.
+
 ## Local Stripe webhook forwarding
 
 Stripe's servers can't reach a local machine directly (decisions-log §24).

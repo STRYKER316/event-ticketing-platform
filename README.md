@@ -62,7 +62,7 @@ for now (§19), no SendGrid/etc. needed.
 
 ## Status
 
-Phases 0-4 and 8 complete: walking skeleton, Event Service, Search Service +
+Phases 0-4, 6, and 8 complete: walking skeleton, Event Service, Search Service +
 Kafka #1, Booking Service (dual hold strategy: cron sweep + Redis TTL,
 proven under real concurrent load), and Payment Service (Stripe test-mode
 charge + webhook, Kafka #4 payment-outcome confirm/release, the system's one
@@ -89,7 +89,23 @@ configured webhook secret, not a real Stripe account. What's left needs an
 actual Stripe account specifically: a real charge succeeding against
 Stripe's API, and Stripe's own infrastructure delivering the resulting
 webhook — tracked precisely on Phase 4's exit checklist, not silently
-marked done. Phase 6 (Cancellation & Refunds) is next per the locked
-report-first build order; see `/docs/phases/` for task checklists and
-`/docs/architecture.html` for current system state.
+marked done.
+
+**Phase 6** added `POST /bookings/{id}/cancel` (owner-scoped, before the
+event starts) and Kafka integration point #5 (`booking.cancelled` →
+Payment Service issues a Stripe refund), plus the producer-only half of
+integration point #3 (a `notifications` topic, no consumer until Phase 5).
+A CHECKPOINT `/pre-pr` review caught and fixed a real fail-open bug — the
+cancellation cutoff silently allowed cancelling past an event's start time
+for any booking whose event predated the new `events` reference table,
+now fails closed instead — plus five other issues (a refund-notification
+failure that could be misattributed as a DB error, a DTO gap that could
+crash the cutoff comparison on a naive datetime, and others); see
+`docs/build-log.md` for the full list. Same Stripe-account gap as Phase 4:
+everything up to Stripe's own API boundary is live-verified (a real
+refund attempt reaching `https://api.stripe.com/v1/refunds`, failing only
+on the placeholder credential), a real refund succeeding isn't yet. Phase
+5 (Notification Service) is next per the locked report-first build order;
+see `/docs/phases/` for task checklists and `/docs/architecture.html` for
+current system state.
 

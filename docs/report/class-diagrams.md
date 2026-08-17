@@ -445,7 +445,13 @@ subclass — `Event`'s primary key is `event_id`, not `id`, and this table
 exists solely so `cancel_booking` has a `start_time` to enforce §22's
 "before the event starts" cutoff against, populated by
 `ProvisioningConsumer` from the same Kafka message that already
-provisions tickets (no new integration point). `BookingCancelledProducer`
+provisions tickets (no new integration point). **A missing `Event` row
+fails the cutoff check closed (409), not open** — found at CHECKPOINT: the
+original version treated "no start time on record" as "before the
+cutoff," silently, for any booking whose event predates this table (real
+and reachable — two events in the dev stack). See the Testing Strategy
+chapter's Phase 6 CHECKPOINT section for the full finding and live
+verification both directions. `BookingCancelledProducer`
 is Booking Service's first-ever Kafka producer (integration point #5,
 §22) — the same thin `send_and_wait` wrapper shape `PaymentOutcomeProducer`
 already established on the Payment Service side, described below.

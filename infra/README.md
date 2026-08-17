@@ -3,7 +3,8 @@
 Shared local infrastructure (§20, §24) — data/broker/gateway layer, plus the
 app services wired in behind Traefik as each phase builds them: `event-service`
 (Phase 0-1), `search-service` (Phase 2), `booking-service` (Phase 3), and
-`payment-service` (Phase 4) so far.
+`payment-service` (Phase 4) so far — Phase 6 extended both `booking-service`
+and `payment-service` in place rather than adding a new container.
 
 Copy `../.env.example` to `../.env` and fill in values before running.
 
@@ -44,8 +45,8 @@ from `infra/grafana/provisioning/` on startup — no manual setup needed.
 | Keycloak | `keycloak` | `KEYCLOAK_PORT` (8081) | dev mode, embedded DB, imports `keycloak/realm-export.json` on startup (§5, §12, §15) |
 | event-service | `event-service` | routed via Traefik only (no direct host port) | events/venues/seat-maps API (§8, §15); `/healthz`, `/metrics`, `/events`, `/venues`, `/events/{id}/seat-map`, `/events/{id}/publish` |
 | search-service | `search-service` | routed via Traefik only (no direct host port) | public `GET /search` over Elasticsearch, populated via Kafka (§7.1, §8); `/healthz`, `/metrics` |
-| booking-service | `booking-service` | routed via Traefik only (no direct host port) | ticket provisioning consumer (Kafka #2, §7.2) + payment-outcome consumer (Kafka #4, §7.4) + `POST /bookings`/`POST /bookings/{id}/pay` over `booking_db` and (if `HOLD_STRATEGY=redis`) Redis (§6, §8); `/healthz`, `/metrics` |
-| payment-service | `payment-service` | routed via Traefik only (no direct host port) | Stripe test-mode charge (`POST /payments/charge`, called by booking-service only — §9 amendment) + webhook (`POST /payments/webhook`) over `payment_db`; publishes Kafka #4 (`payment.outcomes`); `/healthz`, `/metrics` |
+| booking-service | `booking-service` | routed via Traefik only (no direct host port) | ticket provisioning consumer (Kafka #2, §7.2) + payment-outcome consumer (Kafka #4, §7.4) + `POST /bookings`/`POST /bookings/{id}/pay`/`POST /bookings/{id}/cancel` over `booking_db` and (if `HOLD_STRATEGY=redis`) Redis (§6, §8); publishes Kafka #5 (`booking.cancelled`, its first-ever producer, §22); `/healthz`, `/metrics` |
+| payment-service | `payment-service` | routed via Traefik only (no direct host port) | Stripe test-mode charge (`POST /payments/charge`, called by booking-service only — §9 amendment) + webhook (`POST /payments/webhook`) + `booking.cancelled` consumer (Kafka #5, its first-ever consumer — issues Stripe refunds, §22) over `payment_db`; publishes Kafka #4 (`payment.outcomes`) and, on refund failure, `notifications` (producer only — no consumer until Phase 5, §22 amendment #3); `/healthz`, `/metrics` |
 | Traefik | `traefik` | 80 (entrypoint), `TRAEFIK_DASHBOARD_PORT` (8080, dashboard) | Docker-labels provider; `event-service` on `PathPrefix('/')`, `search-service` on `PathPrefix('/search')`, `booking-service` on `PathPrefix('/bookings')`, `payment-service` on `PathPrefix('/payments')` |
 | docker-socket-proxy | `docker-socket-proxy` | internal only | nginx proxy in front of the Docker socket — see note below |
 | Prometheus | `prometheus` | `PROMETHEUS_PORT` (9090) | `benchmark` profile only (`make bench-up`) — scrapes `event-service`/`search-service`/`booking-service`/`payment-service` `/metrics` every 5s (§11, §24) |

@@ -29,3 +29,15 @@ closing a gap where `TicketStatus.BOOKED` was checked but never actually
 set by any code path. `Ticket` gained `price_cents`, organizer-set per
 section and carried through the Kafka provisioning payload (§9/§16
 amendments).
+
+**Phase 6 additions:** `POST /bookings/{id}/cancel` — ownership-scoped,
+`CONFIRMED`-only, rejects a cancel attempt past the event's start time.
+`TicketHoldStrategy` gained a genuine third method, `release_booking`
+(distinct from `release_hold`, which only ever matches a `HELD` ticket) —
+same deliberate cron/redis asymmetry as the other methods. A new `events`
+reference table (`event_id`, `start_time`), written by the existing
+`ProvisioningConsumer` from the same Kafka message that already provisions
+tickets, exists solely to enforce the cancellation cutoff. This service's
+first-ever Kafka producer, `BookingCancelledProducer`, publishes
+`booking.cancelled` (integration point #5, §22) — Payment Service consumes
+it and issues a Stripe refund.
