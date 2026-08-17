@@ -15,7 +15,7 @@ pytestmark = pytest.mark.asyncio
 
 async def test_create_charge_persists_pending_payment_with_correct_amount(db_session: AsyncSession, monkeypatch):
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
-    monkeypatch.setattr(stripe.PaymentIntent, "create", MagicMock(return_value=MagicMock(id="pi_test_1")))
+    monkeypatch.setattr(stripe.PaymentIntent, "create_async", AsyncMock(return_value=MagicMock(id="pi_test_1")))
     manager = PaymentManager(session=db_session, payments=PaymentRepository(db_session))
 
     result = await manager.create_charge(
@@ -31,15 +31,15 @@ async def test_create_charge_persists_pending_payment_with_correct_amount(db_ses
 
 async def test_replayed_charge_against_real_db_does_not_double_charge(db_session: AsyncSession, monkeypatch):
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
-    create_mock = MagicMock(return_value=MagicMock(id="pi_test_2"))
-    monkeypatch.setattr(stripe.PaymentIntent, "create", create_mock)
+    create_mock = AsyncMock(return_value=MagicMock(id="pi_test_2"))
+    monkeypatch.setattr(stripe.PaymentIntent, "create_async", create_mock)
     manager = PaymentManager(session=db_session, payments=PaymentRepository(db_session))
     payload = ChargeRequest(booking_id=booking_id, ticket_id=ticket_id, amount_cents=5000, currency="usd")
 
     first = await manager.create_charge(payload)
     second = await manager.create_charge(payload)
 
-    create_mock.assert_called_once()
+    create_mock.assert_awaited_once()
     assert first.id == second.id
 
 

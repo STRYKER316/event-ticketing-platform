@@ -18,7 +18,7 @@ router = APIRouter()
 @router.post("/payments/charge", response_model=PaymentResponse, status_code=status.HTTP_201_CREATED)
 async def create_charge(
     payload: ChargeRequest,
-    user: Principal = Depends(get_current_user),
+    _user: Principal = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> PaymentResponse:
     """Authenticated-only, no ownership check here: this endpoint is called
@@ -28,7 +28,6 @@ async def create_charge(
     Service only needs to know the caller presented a valid Keycloak token
     (any token — it forwards the caller's own bearer token unmodified, so
     this validates the same way regardless of which service presents it)."""
-    del user  # required for auth enforcement only; not used in the charge logic
     manager = PaymentManager(session=session, payments=PaymentRepository(session))
     return await manager.create_charge(payload)
 

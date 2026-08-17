@@ -62,7 +62,7 @@ class PaymentManager:
         # sole source of truth is what makes a lost synchronous response (a
         # network blip after Stripe already processed the charge) safe.
         try:
-            intent = stripe.PaymentIntent.create(
+            intent = await stripe.PaymentIntent.create_async(
                 amount=payment.amount_cents,
                 currency=payment.currency,
                 payment_method=payload.payment_method,

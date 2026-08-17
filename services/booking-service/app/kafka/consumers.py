@@ -1,6 +1,8 @@
 import asyncio
 import json
 import uuid
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 import structlog
 from aiokafka import AIOKafkaConsumer
@@ -23,6 +25,47 @@ logger = structlog.get_logger()
 # succeeded, silently losing that event's tickets on the very first hiccup.
 DB_WRITE_MAX_ATTEMPTS = 3
 DB_WRITE_RETRY_BACKOFF_SECONDS = 1.0
+
+_T = TypeVar("_T")
+
+
+async def _run_with_retry(
+    session_factory: async_sessionmaker[AsyncSession],
+    operation: Callable[[AsyncSession], Awaitable[_T]],
+    *,
+    retrying_event: str,
+    failed_event: str,
+    **log_context: object,
+) -> _T | None:
+    """Shared by ProvisioningConsumer and PaymentOutcomeConsumer: runs
+    `operation` against a fresh session and commits, retrying a transient DB
+    failure DB_WRITE_MAX_ATTEMPTS times with backoff before giving up — see
+    DB_WRITE_MAX_ATTEMPTS's module docstring for why this exists. Returns
+    None only once every attempt has failed, at which point the caller
+    commits the Kafka offset anyway and moves on (logged at critical, not
+    silently)."""
+    for attempt in range(1, DB_WRITE_MAX_ATTEMPTS + 1):
+        try:
+            async with session_factory() as session:
+                result = await operation(session)
+                await session.commit()
+            return result
+        except Exception:
+            if attempt == DB_WRITE_MAX_ATTEMPTS:
+                logger.critical(failed_event, attempts=attempt, exc_info=True, **log_context)
+                return None
+            logger.warning(retrying_event, attempt=attempt, exc_info=True, **log_context)
+            await asyncio.sleep(DB_WRITE_RETRY_BACKOFF_SECONDS)
+    return None
+
+
+async def _consume_with_manual_commit(consumer: AIOKafkaConsumer, handle: Callable[[bytes], Awaitable[None]]) -> None:
+    """Shared by ProvisioningConsumer.run() and PaymentOutcomeConsumer.run() —
+    commits only after `handle` has fully finished with the record, see
+    build_kafka_consumer()'s enable_auto_commit note."""
+    async for record in consumer:
+        await handle(record.value)
+        await consumer.commit()
 
 
 def build_kafka_consumer() -> AIOKafkaConsumer:
@@ -56,11 +99,7 @@ class ProvisioningConsumer:
         self._session_factory = session_factory
 
     async def run(self) -> None:
-        async for record in self._consumer:
-            await self._handle(record.value)
-            # Commit only after _handle() has fully finished with this
-            # record — see build_kafka_consumer()'s enable_auto_commit note.
-            await self._consumer.commit()
+        await _consume_with_manual_commit(self._consumer, self._handle)
 
     async def _handle(self, raw: bytes) -> None:
         try:
@@ -104,37 +143,22 @@ class ProvisioningConsumer:
 
     async def _write_tickets(self, event_id: uuid.UUID, seats: list[tuple[str, str, str, int]]) -> int | None:
         """Retries a transient DB failure in place before giving up — see
-        DB_WRITE_MAX_ATTEMPTS's module-level docstring for why this exists.
-        Returns None only once every attempt has failed, at which point the
-        caller commits the Kafka offset anyway and moves on: an unhandled
-        exception here would escape run()'s `async for` loop and kill the
-        consumer task for good, silently stopping provisioning for every
-        future event too, which is worse than losing this one (logged at
-        critical, not silently) — same trade-off search-service's
-        EventConsumer makes for its own DB write."""
-        for attempt in range(1, DB_WRITE_MAX_ATTEMPTS + 1):
-            try:
-                async with self._session_factory() as session:
-                    inserted = await TicketRepository(session).bulk_upsert_available(event_id, seats)
-                    await session.commit()
-                return inserted
-            except Exception:
-                if attempt == DB_WRITE_MAX_ATTEMPTS:
-                    logger.critical(
-                        "provisioning_consumer_db_write_failed_permanently",
-                        event_id=str(event_id),
-                        attempts=attempt,
-                        exc_info=True,
-                    )
-                    return None
-                logger.warning(
-                    "provisioning_consumer_db_write_failed_retrying",
-                    event_id=str(event_id),
-                    attempt=attempt,
-                    exc_info=True,
-                )
-                await asyncio.sleep(DB_WRITE_RETRY_BACKOFF_SECONDS)
-        return None
+        _run_with_retry(). An unhandled exception here would escape run()'s
+        consume loop and kill the consumer task for good, silently stopping
+        provisioning for every future event too, which is worse than losing
+        this one — same trade-off search-service's EventConsumer makes for
+        its own DB write."""
+
+        async def _write(session: AsyncSession) -> int:
+            return await TicketRepository(session).bulk_upsert_available(event_id, seats)
+
+        return await _run_with_retry(
+            self._session_factory,
+            _write,
+            retrying_event="provisioning_consumer_db_write_failed_retrying",
+            failed_event="provisioning_consumer_db_write_failed_permanently",
+            event_id=str(event_id),
+        )
 
 
 def build_payment_outcome_consumer() -> AIOKafkaConsumer:
@@ -172,11 +196,7 @@ class PaymentOutcomeConsumer:
         self._redis = redis
 
     async def run(self) -> None:
-        async for record in self._consumer:
-            await self._handle(record.value)
-            # Commit only after _handle() has fully finished with this
-            # record — see build_payment_outcome_consumer()'s enable_auto_commit note.
-            await self._consumer.commit()
+        await _consume_with_manual_commit(self._consumer, self._handle)
 
     async def _handle(self, raw: bytes) -> None:
         try:
@@ -196,42 +216,27 @@ class PaymentOutcomeConsumer:
 
     async def _transition_with_retry(self, message: PaymentOutcomeMessage, new_status: BookingStatus) -> bool | None:
         """Retries a transient DB failure in place before giving up — same
-        shape as ProvisioningConsumer._write_tickets(), see
-        DB_WRITE_MAX_ATTEMPTS's module-level docstring for why this exists.
-        Returns None only once every attempt has failed, at which point the
-        caller commits the Kafka offset anyway and moves on (logged at
-        critical, not silently) — same trade-off as the provisioning path."""
-        for attempt in range(1, DB_WRITE_MAX_ATTEMPTS + 1):
-            try:
-                async with self._session_factory() as session:
-                    bookings = BookingRepository(session)
-                    transitioned = await bookings.transition_if_pending(message.booking_id, new_status)
-                    if transitioned:
-                        # Only touch the hold strategy if this call actually won
-                        # the transition — a redelivered message that matched zero
-                        # rows above must not release/confirm a hold a *different*,
-                        # later booking now legitimately holds on the same ticket.
-                        strategy = get_hold_strategy(session, self._redis)
-                        if message.action is PaymentOutcomeAction.SUCCEEDED:
-                            await strategy.confirm_hold(message.ticket_id)
-                        else:
-                            await strategy.release_hold(message.ticket_id)
-                    await session.commit()
-                return transitioned
-            except Exception:
-                if attempt == DB_WRITE_MAX_ATTEMPTS:
-                    logger.critical(
-                        "payment_outcome_consumer_db_write_failed_permanently",
-                        booking_id=str(message.booking_id),
-                        attempts=attempt,
-                        exc_info=True,
-                    )
-                    return None
-                logger.warning(
-                    "payment_outcome_consumer_db_write_failed_retrying",
-                    booking_id=str(message.booking_id),
-                    attempt=attempt,
-                    exc_info=True,
-                )
-                await asyncio.sleep(DB_WRITE_RETRY_BACKOFF_SECONDS)
-        return None
+        shape as ProvisioningConsumer._write_tickets(), see _run_with_retry()."""
+
+        async def _transition(session: AsyncSession) -> bool:
+            bookings = BookingRepository(session)
+            transitioned = await bookings.transition_if_pending(message.booking_id, new_status)
+            if transitioned:
+                # Only touch the hold strategy if this call actually won the
+                # transition — a redelivered message that matched zero rows
+                # above must not release/confirm a hold a *different*, later
+                # booking now legitimately holds on the same ticket.
+                strategy = get_hold_strategy(session, self._redis)
+                if message.action is PaymentOutcomeAction.SUCCEEDED:
+                    await strategy.confirm_hold(message.ticket_id)
+                else:
+                    await strategy.release_hold(message.ticket_id)
+            return transitioned
+
+        return await _run_with_retry(
+            self._session_factory,
+            _transition,
+            retrying_event="payment_outcome_consumer_db_write_failed_retrying",
+            failed_event="payment_outcome_consumer_db_write_failed_permanently",
+            booking_id=str(message.booking_id),
+        )

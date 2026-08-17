@@ -1,8 +1,9 @@
 import enum
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class KafkaAction(enum.Enum):
@@ -14,7 +15,8 @@ class EventSeat(BaseModel):
     section: str
     row: str
     label: str
-    price_cents: int
+    # Mirrors booking-service's consumer-side constraint (§9/§16 amendments).
+    price_cents: Annotated[int, Field(gt=0)]
 
 
 class EventUpsertedMessage(BaseModel):

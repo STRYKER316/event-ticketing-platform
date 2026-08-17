@@ -30,13 +30,13 @@ async def test_create_charge_calls_stripe_with_booking_id_as_idempotency_key(mon
     manager = PaymentManager(session=AsyncMock(), payments=payments)
 
     fake_intent = MagicMock(id="pi_123")
-    create_mock = MagicMock(return_value=fake_intent)
-    monkeypatch.setattr(stripe.PaymentIntent, "create", create_mock)
+    create_mock = AsyncMock(return_value=fake_intent)
+    monkeypatch.setattr(stripe.PaymentIntent, "create_async", create_mock)
 
     result = await manager.create_charge(_payload(booking_id))
 
     assert result.status is PaymentStatus.PENDING
-    create_mock.assert_called_once()
+    create_mock.assert_awaited_once()
     assert create_mock.call_args.kwargs["idempotency_key"] == str(booking_id)
 
 
@@ -59,13 +59,13 @@ async def test_create_charge_is_idempotent_on_replay_once_stripe_accepted_it(mon
     payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=existing))
     manager = PaymentManager(session=AsyncMock(), payments=payments)
 
-    create_mock = MagicMock()
-    monkeypatch.setattr(stripe.PaymentIntent, "create", create_mock)
+    create_mock = AsyncMock()
+    monkeypatch.setattr(stripe.PaymentIntent, "create_async", create_mock)
 
     first = await manager.create_charge(_payload(booking_id))
     second = await manager.create_charge(_payload(booking_id))
 
-    create_mock.assert_not_called()
+    create_mock.assert_not_awaited()
     assert first.id == second.id == existing.id
 
 
@@ -90,12 +90,12 @@ async def test_create_charge_retries_stripe_when_previous_attempt_never_reached_
     manager = PaymentManager(session=AsyncMock(), payments=payments)
 
     fake_intent = MagicMock(id="pi_now_succeeds")
-    create_mock = MagicMock(return_value=fake_intent)
-    monkeypatch.setattr(stripe.PaymentIntent, "create", create_mock)
+    create_mock = AsyncMock(return_value=fake_intent)
+    monkeypatch.setattr(stripe.PaymentIntent, "create_async", create_mock)
 
     result = await manager.create_charge(_payload(booking_id))
 
-    create_mock.assert_called_once()
+    create_mock.assert_awaited_once()
     assert result.id == existing.id
     assert existing.stripe_charge_id == "pi_now_succeeds"
 
@@ -167,10 +167,10 @@ async def test_create_charge_raises_502_when_stripe_unreachable(monkeypatch):
     payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=None), create=AsyncMock(side_effect=_stamp_generated_fields))
     manager = PaymentManager(session=AsyncMock(), payments=payments)
 
-    def _raise(*args, **kwargs):
+    async def _raise(*args, **kwargs):
         raise stripe.error.APIConnectionError("boom")
 
-    monkeypatch.setattr(stripe.PaymentIntent, "create", _raise)
+    monkeypatch.setattr(stripe.PaymentIntent, "create_async", _raise)
 
     with pytest.raises(HTTPException) as exc_info:
         await manager.create_charge(_payload(booking_id))
