@@ -277,6 +277,8 @@ Everything below is scattered through the sections above but consolidated here f
 - Notification Service sending to logs/console rather than a real email provider — §19
 - Single-instance EC2 deployment with no load balancer or auto-scaling, so no high availability — §12
 - Seat map refreshes via polling rather than real-time push — §23
+- No card-collection UI — Payment Service always uses a fixed Stripe test payment method rather than accepting real card details, since this project's scope (§10) never built a checkout form — §9
+- The synchronous Booking→Payment call for charge initiation, rather than a fully event-driven design — a deliberate, narrow exception to "cross-service data only via Kafka" (§9 amendment), justified for a request/response action needing an immediate result
 
 **Worth discussing on its own merits (not a limitation, an honest eventual-consistency trade-off):**
 - Brief window between event creation and ticket availability, since provisioning is asynchronous via Kafka (§7) — a legitimate talking point for the report's discussion of the event-driven design, not something to hide
