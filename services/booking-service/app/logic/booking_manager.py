@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 import httpx
 import structlog
@@ -10,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import BookingPayResponse, BookingResponse
 from app.core import get_settings
 from app.db.booking_repository import BookingRepository
+from app.db.event_repository import EventRepository
 from app.db.models import Booking, BookingStatus, Ticket, TicketStatus
 from app.db.ticket_repository import TicketRepository
 from app.logic.helpers.hold_strategy import TicketHoldStrategy
@@ -24,11 +26,13 @@ class BookingManager:
         tickets: TicketRepository,
         bookings: BookingRepository,
         hold_strategy: TicketHoldStrategy,
+        events: EventRepository,
     ):
         self._session = session
         self._tickets = tickets
         self._bookings = bookings
         self._hold_strategy = hold_strategy
+        self._events = events
 
     async def create_booking(self, user: Principal, ticket_id: uuid.UUID) -> BookingResponse:
         ticket = await self._fetch_bookable_ticket(ticket_id)
@@ -130,3 +134,45 @@ class BookingManager:
         return BookingPayResponse(
             payment_id=body["id"], status=body["status"], amount_cents=body["amount_cents"], currency=body["currency"]
         )
+
+    async def cancel_booking(self, user: Principal, booking_id: uuid.UUID) -> BookingResponse:
+        """Owner-only, CONFIRMED-only, full-refund cancellation (§22).
+        Optimistic immediate seat release — the ticket returns to AVAILABLE
+        as part of this same call, not deferred to any later sweep. Kafka
+        publish (booking.cancelled, integration point #5) is added in
+        P6.T2, not here."""
+        booking = await self._fetch_owned_confirmed_booking(user, booking_id)
+        await self._check_before_event_start(booking)
+        await self._transition_and_release(booking)
+        return self._build_response(booking)
+
+    async def _fetch_owned_confirmed_booking(self, user: Principal, booking_id: uuid.UUID) -> Booking:
+        booking = await self._bookings.get_by_id(booking_id)
+        if booking is None:
+            logger.warning("cancel_booking_not_found", booking_id=str(booking_id))
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "booking not found")
+        if booking.user_subject != user.subject:
+            logger.warning("cancel_booking_ownership_denied", booking_id=str(booking_id), subject=user.subject)
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your booking")
+        if booking.status is not BookingStatus.CONFIRMED:
+            logger.warning("cancel_booking_not_confirmed", booking_id=str(booking_id), status=booking.status.value)
+            raise HTTPException(status.HTTP_409_CONFLICT, "booking is not confirmed")
+        return booking
+
+    async def _check_before_event_start(self, booking: Booking) -> None:
+        start_time = await self._events.get_start_time(booking.event_id)
+        if start_time is not None and start_time <= datetime.now(timezone.utc):
+            logger.warning("cancel_booking_past_cutoff", booking_id=str(booking.id))
+            raise HTTPException(status.HTTP_409_CONFLICT, "event has already started")
+
+    async def _transition_and_release(self, booking: Booking) -> None:
+        transitioned = await self._bookings.transition_if_confirmed(booking.id, BookingStatus.CANCELLED)
+        if not transitioned:
+            # Lost a race to a concurrent cancel or expiry sweep — same
+            # defense-in-depth reasoning as _create_booking_row's own
+            # integrity-race handling.
+            logger.warning("cancel_booking_race_lost", booking_id=str(booking.id))
+            raise HTTPException(status.HTTP_409_CONFLICT, "booking is not confirmed")
+        booking.status = BookingStatus.CANCELLED
+        await self._hold_strategy.release_booking(booking.ticket_id)
+        await self._session.commit()

@@ -2,6 +2,7 @@ import asyncio
 import json
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import TypeVar
 
 import structlog
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import get_settings
 from app.db.booking_repository import BookingRepository
+from app.db.event_repository import EventRepository
 from app.db.models import BookingStatus
 from app.db.ticket_repository import TicketRepository
 from app.kafka.schemas import EventUpsertedMessage, KafkaAction, PaymentOutcomeAction, PaymentOutcomeMessage
@@ -131,7 +133,7 @@ class ProvisioningConsumer:
         # message on this topic already represents a published event, so there is
         # no separate "is this published" check to make here.
         seats = [(seat.section, seat.row, seat.label, seat.price_cents) for seat in message.seats]
-        inserted = await self._write_tickets(message.event_id, seats)
+        inserted = await self._write_tickets(message.event_id, message.start_time, seats)
         if inserted is None:
             return
         logger.info(
@@ -141,15 +143,20 @@ class ProvisioningConsumer:
             tickets_inserted=inserted,
         )
 
-    async def _write_tickets(self, event_id: uuid.UUID, seats: list[tuple[str, str, str, int]]) -> int | None:
+    async def _write_tickets(
+        self, event_id: uuid.UUID, start_time: datetime, seats: list[tuple[str, str, str, int]]
+    ) -> int | None:
         """Retries a transient DB failure in place before giving up — see
         _run_with_retry(). An unhandled exception here would escape run()'s
         consume loop and kill the consumer task for good, silently stopping
         provisioning for every future event too, which is worse than losing
         this one — same trade-off search-service's EventConsumer makes for
-        its own DB write."""
+        its own DB write. Also upserts the Event reference row (§22
+        amendment #2) in the same transaction as the ticket write, since
+        both come from the one message."""
 
         async def _write(session: AsyncSession) -> int:
+            await EventRepository(session).upsert_start_time(event_id, start_time)
             return await TicketRepository(session).bulk_upsert_available(event_id, seats)
 
         return await _run_with_retry(

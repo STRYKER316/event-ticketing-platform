@@ -48,6 +48,22 @@ async def test_cron_strategy_satisfies_the_shared_contract(db_session_factory: a
         ticket = await session.get(Ticket, ticket_id)
         assert ticket.status is TicketStatus.BOOKED
 
+    async with db_session_factory() as session:
+        strategy = CronHoldStrategy(session)
+        await strategy.release_booking(ticket_id)
+        await session.commit()
+
+    async with db_session_factory() as session:
+        ticket = await session.get(Ticket, ticket_id)
+        assert ticket.status is TicketStatus.AVAILABLE
+
+    async with db_session_factory() as session:
+        # Idempotent: releasing an already-AVAILABLE ticket (no BOOKED row to
+        # match) is a safe no-op, not an error.
+        strategy = CronHoldStrategy(session)
+        await strategy.release_booking(ticket_id)
+        await session.commit()
+
 
 async def test_redis_strategy_satisfies_the_shared_contract(redis_client: Redis):
     # Same contract, proven against real Redis — CronHoldStrategy and
@@ -66,3 +82,7 @@ async def test_redis_strategy_satisfies_the_shared_contract(redis_client: Redis)
     await strategy.acquire_hold(ticket_id, ttl_seconds=60)
     await strategy.confirm_hold(ticket_id)
     assert await strategy.is_held(ticket_id) is False
+
+    # No-op by design under this strategy — tickets.status is never written
+    # here (§6/§22), so there's nothing to assert beyond "doesn't raise".
+    await strategy.release_booking(ticket_id)

@@ -2494,3 +2494,82 @@ precisely rather than left implying the whole webhook path was untested.
 
 Decisions-log delta: none.
 `CLAUDE.md` update: none needed.
+
+## 2026-08-17 — Phase 6 kickoff generated; three gaps resolved before P6.T1; P6.T1: cancel endpoint + seat release
+
+`docs/phases/phase-6-kickoff.md` didn't exist yet, so it was generated from
+`master-development-plan.md`'s Phase 6 section and the relevant
+decisions-log sections (§6, §7, §17, §21, §22), following the same
+structure as Phases 0/1/2/3/4/8. Confirmed against the locked build order
+(§27: P8 → P4 → P6 → P5 → P7 → P10 → P9/P11) that Phase 6, not Phase 5,
+is next — the user's own request named Phase 5, flagged and redirected
+before any planning began.
+
+**Three gaps surfaced while drafting P6.T1's task description, before any
+code was written**, all flagged and resolved rather than guessed at
+silently (same practice as the §7.2/§9/§16 amendments):
+
+1. **§22's "reusing the exact same release mechanism" claim doesn't hold
+   at the code level** — `TicketHoldStrategy.release_hold()` only matches
+   a `HELD` ticket; a `CONFIRMED` booking's ticket is `BOOKED`. Resolved:
+   a new `release_booking(ticket_id)` method on the ABC, implemented
+   asymmetrically across `CronHoldStrategy` (a real `BOOKED` → `AVAILABLE`
+   conditional UPDATE) and `RedisHoldStrategy` (a documented no-op — that
+   strategy never writes `tickets.status`).
+2. **The "before the event's start time" cancellation cutoff had nowhere
+   to read a start time from** — `booking_db` never stored it. Resolved:
+   a small `Event(event_id, start_time)` reference table, written by
+   `ProvisioningConsumer` from the same Kafka message that already
+   provisions tickets (same shape as P4.T1's retroactive pricing touch).
+3. **Kafka #3's consumer (Notification Service) doesn't exist yet** at
+   this point in the build order. Resolved: this phase builds only the
+   `notifications` producer side (P6.T3); Phase 5 builds the consumer
+   later, an eventual-consistency trade-off already accepted for point #2.
+
+All three recorded as a decisions-log §22 amendment before `phase-6-kickoff.md`
+was written.
+
+**P6.T1 implementation** (Booking Service): added `TicketHoldStrategy
+.release_booking()` to the ABC and all three implementations
+(`CronHoldStrategy`, `RedisHoldStrategy`, `FakeHoldStrategy`); added the
+`Event` model + Alembic migration (`3cabba382c63`) and an `EventRepository`
+(not a `BaseRepository` subclass — the primary key is `event_id`, not `id`);
+wired `ProvisioningConsumer._write_tickets` to upsert the `Event` row
+(`ON CONFLICT DO UPDATE`, so a republished event's corrected start time
+stays current) in the same transaction as the ticket write; added
+`BookingRepository.transition_if_confirmed` (rowcount-gated, mirrors
+`transition_if_pending`); added `BookingManager.cancel_booking`
+(owner check → CONFIRMED-only check → cutoff check → rowcount-gated
+transition → `release_booking` → commit) and the ownership-scoped
+`POST /bookings/{id}/cancel` route. `BookingManager`'s constructor now
+takes an `EventRepository` unconditionally (every route already builds the
+full dependency set fresh per request, so this stays uniform rather than
+optional). Updated all existing `BookingManager(...)` construction sites
+across the test suite (9 unit, 1 integration) to supply it.
+
+**Live-verified end-to-end under both hold strategies**, not just via the
+test suite: created a real event/seat map/ticket, booked and paid as
+`alice` (charge fails at Stripe's placeholder-key boundary as expected,
+same as Phase 4), manually set the resulting `Payment` row's
+`stripe_charge_id` and POSTed a self-signed `payment_intent.succeeded`
+event to the real `/payments/webhook` route (same technique the Phase 4
+post-push session established) to reach a genuinely `CONFIRMED` booking
+without a real Stripe account. Under `cron`: cancel released the ticket
+`BOOKED` → `AVAILABLE`, confirmed via direct query; a non-owner's cancel
+attempt 403'd; a repeat cancel on the now-`CANCELLED` booking 409'd; the
+released seat was immediately rebookable; a cancel attempt against an
+event whose `start_time` was moved into the past 409'd. Under `redis`
+(toggled `HOLD_STRATEGY` in `infra/docker-compose.yml`, reverted after):
+same owner/cancel/rebook sequence, with `tickets.status` confirmed to stay
+`AVAILABLE` throughout (the documented asymmetry) rather than needing a
+Ticket-table write to permit re-booking.
+
+Full booking-service suite after this task: 68/68 (unit + testcontainers
+integration, up from 60 before this task's additions — confirmed via
+`git stash`).
+
+Decisions-log delta: yes — the §22 amendment (above), made before P6.T1's
+implementation rather than during it.
+`CLAUDE.md` update: none needed — no new convention, this extends existing
+ones (rowcount-gated transition pattern, event-carried-state-transfer
+Kafka payload reuse).

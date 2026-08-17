@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import BookingCreate, BookingPayResponse, BookingResponse
 from app.core import get_http_client, get_redis, get_session
 from app.db.booking_repository import BookingRepository
+from app.db.event_repository import EventRepository
 from app.db.ticket_repository import TicketRepository
 from app.logic.booking_manager import BookingManager
 from app.logic.helpers.hold_strategy_factory import get_hold_strategy
@@ -37,6 +38,7 @@ async def create_booking(
         tickets=TicketRepository(session),
         bookings=BookingRepository(session),
         hold_strategy=get_hold_strategy(session, redis),
+        events=EventRepository(session),
     )
     return await manager.create_booking(user, payload.ticket_id)
 
@@ -60,5 +62,26 @@ async def pay_booking(
         tickets=TicketRepository(session),
         bookings=BookingRepository(session),
         hold_strategy=get_hold_strategy(session, redis),
+        events=EventRepository(session),
     )
     return await manager.pay_booking(user, booking_id, credentials.credentials, http_client)
+
+
+@router.post("/bookings/{booking_id}/cancel", response_model=BookingResponse)
+async def cancel_booking(
+    booking_id: uuid.UUID,
+    user: Principal = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+    redis: Redis = Depends(get_redis),
+) -> BookingResponse:
+    """Authenticated, ownership-scoped: only the booking's own user may
+    cancel it (403 otherwise), and only while it's still CONFIRMED (409
+    otherwise) and before the event's start time (409 otherwise, §22)."""
+    manager = BookingManager(
+        session=session,
+        tickets=TicketRepository(session),
+        bookings=BookingRepository(session),
+        hold_strategy=get_hold_strategy(session, redis),
+        events=EventRepository(session),
+    )
+    return await manager.cancel_booking(user, booking_id)

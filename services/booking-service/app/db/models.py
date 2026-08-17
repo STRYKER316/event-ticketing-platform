@@ -45,6 +45,20 @@ class Ticket(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class Event(Base):
+    """Minimal reference row, not a copy of Event Service's own data (§8 —
+    that would be cross-service table duplication beyond what's needed
+    here). Written by ProvisioningConsumer from the same Kafka message
+    that already provisions Ticket rows (decisions-log §22 amendment #2)
+    — booking_db's only use for it is enforcing the cancellation cutoff
+    (§22), nothing else reads it."""
+
+    __tablename__ = "events"
+
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class Booking(Base):
     __tablename__ = "bookings"
 

@@ -29,3 +29,11 @@ class TicketHoldStrategy(ABC):
         """Mark a hold as fulfilled (payment succeeded, §21) rather than
         released back to available — the seat is now permanently booked, not
         up for grabs again. Idempotent, same contract as release_hold."""
+
+    @abstractmethod
+    async def release_booking(self, ticket_id: uuid.UUID) -> None:
+        """Release a *booked* ticket back to available on cancellation
+        (§22) — distinct from release_hold(), which only ever matches a
+        HELD ticket; a CONFIRMED booking's ticket is BOOKED, not HELD, so
+        release_hold() would silently no-op here. Idempotent, same
+        contract as release_hold."""

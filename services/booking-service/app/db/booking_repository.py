@@ -25,6 +25,19 @@ class BookingRepository(BaseRepository[Booking]):
         await self._session.flush()
         return result.rowcount > 0
 
+    async def transition_if_confirmed(self, booking_id: uuid.UUID, new_status: BookingStatus) -> bool:
+        """Same rowcount-gated "only transition if currently in state X"
+        shape as transition_if_pending, applied to cancellation (§22) — the
+        race backstop against a concurrent duplicate cancel or an
+        in-flight expiry sweep."""
+        result = await self._session.execute(
+            sa_update(Booking)
+            .where(Booking.id == booking_id, Booking.status == BookingStatus.CONFIRMED)
+            .values(status=new_status)
+        )
+        await self._session.flush()
+        return result.rowcount > 0
+
     async def expire_stale_pending(self, older_than_seconds: int) -> int:
         """Age-based fallback for the RedisHoldStrategy (§6): Redis expires
         its own hold key on its own, but never touches this Booking row —

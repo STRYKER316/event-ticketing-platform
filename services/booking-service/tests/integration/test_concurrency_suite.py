@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.booking_repository import BookingRepository
+from app.db.event_repository import EventRepository
 from app.db.models import Booking, Ticket, TicketStatus
 from app.db.ticket_repository import TicketRepository
 from app.logic.booking_manager import BookingManager
@@ -34,6 +35,7 @@ async def _attempt_booking(ticket_id: uuid.UUID, user_subject: str, session_fact
             tickets=TicketRepository(session),
             bookings=BookingRepository(session),
             hold_strategy=make_hold_strategy(session),
+            events=EventRepository(session),
         )
         try:
             await manager.create_booking(Principal(subject=user_subject, roles=[]), ticket_id)

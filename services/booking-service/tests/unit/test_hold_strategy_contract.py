@@ -73,3 +73,17 @@ async def test_confirm_hold_of_unheld_ticket_is_a_safe_no_op(strategy):
     ticket_id = uuid.uuid4()
     await strategy.confirm_hold(ticket_id)  # must not raise
     assert await strategy.is_held(ticket_id) is False
+
+
+async def test_release_booking_of_unbooked_ticket_is_a_safe_no_op(strategy):
+    ticket_id = uuid.uuid4()
+    await strategy.release_booking(ticket_id)  # must not raise
+    assert await strategy.is_held(ticket_id) is False
+
+
+async def test_release_booking_after_confirm_clears_tracking(strategy):
+    ticket_id = uuid.uuid4()
+    await strategy.acquire_hold(ticket_id, ttl_seconds=60)
+    await strategy.confirm_hold(ticket_id)
+    await strategy.release_booking(ticket_id)  # must not raise
+    assert await strategy.is_held(ticket_id) is False

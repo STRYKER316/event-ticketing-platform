@@ -31,3 +31,7 @@ class FakeHoldStrategy(TicketHoldStrategy):
     async def confirm_hold(self, ticket_id: uuid.UUID) -> None:
         async with self._lock:
             self._held.discard(ticket_id)
+
+    async def release_booking(self, ticket_id: uuid.UUID) -> None:
+        async with self._lock:
+            self._held.discard(ticket_id)

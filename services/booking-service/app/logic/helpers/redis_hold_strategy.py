@@ -40,3 +40,12 @@ class RedisHoldStrategy(TicketHoldStrategy):
         # docstring) — confirming just cleans up the now-superseded Redis
         # hold key rather than leaving it to sit until its own TTL expiry.
         await self._redis.delete(_key(ticket_id))
+
+    async def release_booking(self, ticket_id: uuid.UUID) -> None:
+        # No-op: tickets.status is never written under this strategy, so a
+        # CONFIRMED booking's ticket is already sitting at AVAILABLE. What
+        # actually re-permits booking it again is uq_bookings_active_ticket
+        # (scoped to PENDING/CONFIRMED bookings) no longer matching once
+        # this cancellation flips Booking.status to CANCELLED — not this
+        # method. Same asymmetry as confirm_hold/acquire_hold (§6).
+        pass
