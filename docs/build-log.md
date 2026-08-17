@@ -2713,3 +2713,116 @@ Decisions-log delta: none — this is a test-infra correctness fix, not an
 architecture decision.
 `CLAUDE.md` update: yes — the Conventions section's Kafka-testcontainer
 note corrected (above), per the phase-end "`CLAUDE.md` self-update check."
+
+## 2026-08-17 — Phase 6 CHECKPOINT: `/pre-pr` gate finds a real fail-open cutoff bug plus five other issues
+
+Ran `/pre-pr` (simplify → code-review → verify) against the diff since
+`e299021` (the commit Phase 6 started from), per the phase-end checklist's
+review-gate item.
+
+**Simplify (Sonnet)** deduped three internal repetitions this phase
+introduced: `BookingRepository.transition_if_pending`/
+`transition_if_confirmed` into a shared `_transition_if_status()`;
+`CronHoldStrategy.release_hold`/`confirm_hold`/`release_booking` into a
+shared `_transition()`; `BookingManager._fetch_owned_pending_booking`/
+`_fetch_owned_confirmed_booking` into a shared
+`_fetch_owned_booking_in_status()`; `PaymentOutcomeProducer`/
+`NotificationProducer` into a shared `_KafkaMessageProducer` base. Also
+moved `cancel_booking`'s `BookingCancelledProducer` from an `Optional`
+constructor field with a runtime `assert` to a required call-time
+parameter, matching `pay_booking`'s existing `http_client` pattern.
+Deliberately left alone, per instructions: booking-service's and
+payment-service's independent `_run_with_retry`/`_consume_with_manual_commit`
+Kafka-consumer helpers — intentional duplication, two independently
+deployable services.
+
+**Code review (Opus)** found six real issues, most severe first:
+
+1. **The cancellation cutoff failed open, silently, for any booking whose
+   event predates the `events` table** — `_check_before_event_start`
+   treated a missing `Event` row (`start_time is None`) as "before the
+   cutoff, allow it," with no log line, so it was undetectable. Reachable
+   for real: two events in the running dev stack predate this phase's
+   migration. This is exactly the gap §22 amendment #2 exists to close, so
+   leaving it open would have meant the amendment's own stated fix wasn't
+   actually enforced. Fixed to fail closed (409, logged) when the start
+   time can't be verified. Live-verified against the real dev stack both
+   ways: a `CONFIRMED` booking on one of the two pre-migration events now
+   correctly 409s ("cannot verify the event's start time"); a fresh
+   booking on an event with a real `events` row still cancels normally.
+2. **A refund-notification publish failure could escape `refund_payment`
+   entirely and get misattributed as a DB failure** — `publish_refund_failed`
+   was called directly inside the `stripe.error.StripeError` except block
+   with nothing catching its own failure; if the Kafka publish itself
+   failed, the exception propagated past `refund_payment` into the
+   consumer's `_run_with_retry`, which logged it under a `db_write_failed`
+   event name, retried the whole operation (safe but pointless — it
+   re-submits to Stripe with the same idempotency key), then silently lost
+   the notification anyway once the retry budget ran out. Fixed by wrapping
+   the publish in its own try/except inside a new
+   `_publish_refund_failed_notification` helper, logged and swallowed on
+   failure rather than escaping; also renamed the consumer's retry-wrapper
+   log events from `..._db_write_failed_...` to
+   `..._refund_processing_failed_...`, since the operation they wrap was
+   never DB-only.
+3. **`payment-service`'s copy of `_run_with_retry` had its safety-net
+   `commit()` removed during simplify**, reasoned as "redundant" since the
+   only current caller routes through a self-committing `PaymentManager`
+   method — true today, but a landmine for any future handler wired
+   through the same helper without its own commit, with no signal anything
+   was wrong. Reverted; the redundant commit is now back, with a comment
+   explaining why it's kept despite being a no-op for the current caller.
+4. **`EventUpsertedMessage.start_time`/`end_time` were bare `datetime`**,
+   not `AwareDatetime` — harmless when the field was only ever logged, but
+   `start_time` is now load-bearing for the cutoff comparison against
+   `datetime.now(timezone.utc)`, and a naive value would crash that
+   comparison rather than misbehave quietly. Fixed at the DTO boundary
+   (event-service's own producer-side schema already uses `AwareDatetime`),
+   per the DTO-layer convention — reject at the boundary, not several calls
+   deep.
+5. Two residual gaps accepted rather than fixed, same risk tolerance this
+   codebase already extends to `create_charge`'s own documented residual
+   race: `refund_payment`'s `stripe_refund_id is None` gate has no
+   rowcount-gate/row-lock backstop against a consumer-group rebalance or a
+   second replica racing two calls for one booking — correctness rests on
+   Stripe's own idempotency key, same as `create_charge` already accepts;
+   and that idempotency key's protection is time-boxed to Stripe's own
+   ~24h key-expiry window, not indefinite. Both now stated explicitly in
+   `refund_payment`'s docstring rather than left implicit.
+6. **`RedisHoldStrategy.release_booking`'s no-op is only sound within one
+   strategy's lifetime for a given booking** — a booking confirmed under
+   `cron` (leaving `tickets.status=BOOKED`) that's later cancelled after a
+   live switch to `redis` would no-op and leave the ticket permanently
+   unbookable, since `_fetch_bookable_ticket` rejects `BOOKED` regardless
+   of active strategy. Not fixed (a real fix means `RedisHoldStrategy`
+   writing `tickets.status` after all, undoing that strategy's whole
+   design) — `HOLD_STRATEGY` switching with in-flight bookings outstanding
+   was never a supported operation anywhere in this system (P8 only ever
+   flips it between benchmark runs against a fresh seat pool). Recorded as
+   a decisions-log §26 limitation instead of silently left undocumented.
+
+Also added test coverage for what was previously untested: `ProvisioningConsumer`
+writing the `events` row and its `ON CONFLICT DO UPDATE` upsert-on-republish
+path (both integration, real Postgres); a unit test locking in the new
+fail-closed cutoff behavior for a missing `Event` row; a unit test proving
+`refund_payment` doesn't raise when the notification publish itself fails.
+`booking-service`'s `db_session` integration fixture now also cleans up the
+`events` table between tests (was only `bookings`/`tickets`), matching the
+new table.
+
+Full suite after all fixes: `booking-service` 72/72 (unit + integration,
+up from 69); `payment-service` 22/22 (up from 21). `pyflakes` clean on
+every touched file across both the simplify and code-review passes.
+
+**Verify step**: skipped as a separate subagent pass — every fix above was
+already live-tested against the real running stack directly in this
+session (both cutoff-fix directions, see finding 1), which already covers
+what a `verify` pass would have re-derived.
+
+Decisions-log delta: yes — the §26 limitations pull-list gained the
+`HOLD_STRATEGY`-switching boundary (finding 6).
+`CLAUDE.md` update: none needed — every fix brings the implementation into
+compliance with conventions already stated (DTO-boundary validation,
+fail-closed-not-open on an unverifiable security-relevant check, the
+Manager-self-commits convention's rationale for `_run_with_retry`'s
+defense-in-depth commit).

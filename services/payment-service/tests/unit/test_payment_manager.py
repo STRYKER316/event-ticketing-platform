@@ -285,3 +285,25 @@ async def test_refund_payment_on_stripe_failure_publishes_notification_and_leave
     assert payment.stripe_refund_id is None
     notification_producer.publish_refund_failed.assert_awaited_once()
     assert notification_producer.publish_refund_failed.call_args.args[0] == booking_id
+
+
+async def test_refund_payment_notification_publish_failure_does_not_raise(monkeypatch):
+    # Found in code review: if publish_refund_failed itself raises (broker
+    # down), that must not escape refund_payment — a Kafka consumer's own
+    # retry wrapper would otherwise misattribute it as a DB failure and
+    # retry the whole operation (including a pointless re-submission to
+    # Stripe) before silently losing the notification anyway.
+    booking_id = uuid.uuid4()
+    payment = _succeeded_payment(booking_id)
+    payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=payment))
+    manager = PaymentManager(session=AsyncMock(), payments=payments)
+    notification_producer = AsyncMock(publish_refund_failed=AsyncMock(side_effect=RuntimeError("kafka down")))
+
+    async def _raise(*args, **kwargs):
+        raise stripe.error.APIConnectionError("boom")
+
+    monkeypatch.setattr(stripe.Refund, "create_async", _raise)
+
+    await manager.refund_payment(booking_id, notification_producer)  # must not raise
+
+    assert payment.status is PaymentStatus.SUCCEEDED

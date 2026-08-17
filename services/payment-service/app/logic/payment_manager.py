@@ -142,7 +142,17 @@ class PaymentManager:
         (this consumer processes one Kafka partition's records strictly
         sequentially), so only crash-then-restart redelivery is possible,
         not two overlapping deliveries — the same resubmission-gate
-        reasoning already proven correct for charges applies unchanged."""
+        reasoning already proven correct for charges applies unchanged.
+        Two residual gaps, same risk tolerance this pattern already accepts
+        for create_charge, not fixed here (found in code review): a
+        consumer-group rebalance or a second running replica could still
+        put two calls for one booking in flight, resting correctness
+        entirely on Stripe's own `{booking_id}-refund` idempotency key as
+        the backstop — same as create_charge's own documented residual
+        race; and that idempotency key's protection is time-boxed to
+        Stripe's own ~24h key-expiry window, not indefinite, if a crash
+        between Stripe accepting the refund and this method's commit is
+        followed by redelivery arriving after that window closes."""
         payment = await self._payments.get_by_booking_id(booking_id)
         if payment is None:
             logger.warning("refund_payment_not_found", booking_id=str(booking_id))
@@ -174,8 +184,25 @@ class PaymentManager:
             # exception handling shouldn't kill the background consumer
             # task over a Stripe-side failure that's already been surfaced.
             logger.warning("stripe_refund_submission_failed", booking_id=str(payment.booking_id), error=str(exc))
-            await notification_producer.publish_refund_failed(payment.booking_id, str(exc))
+            await self._publish_refund_failed_notification(payment.booking_id, str(exc), notification_producer)
             return
         payment.stripe_refund_id = refund.id
         payment.status = PaymentStatus.REFUNDED
         await self._session.commit()
+
+    async def _publish_refund_failed_notification(
+        self, booking_id: uuid.UUID, reason: str, notification_producer: NotificationProducer
+    ) -> None:
+        # A failure here (broker down, etc.) must not escape and be
+        # misattributed by the consumer's retry wrapper as a DB-write
+        # failure (found in code review) — it would trigger a pointless
+        # re-submission to Stripe on retry (safe, same idempotency key, but
+        # wasteful) and, after the retry budget is exhausted, silently lose
+        # the notification with a misleading log event name. Logged and
+        # swallowed instead: the refund failure itself is already recorded
+        # by the warning above; losing only the notification is the
+        # narrower, honestly-scoped failure.
+        try:
+            await notification_producer.publish_refund_failed(booking_id, reason)
+        except Exception:
+            logger.error("refund_failed_notification_publish_failed", booking_id=str(booking_id), exc_info=True)

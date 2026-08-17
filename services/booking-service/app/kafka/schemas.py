@@ -1,9 +1,8 @@
 import enum
 import uuid
-from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import AwareDatetime, BaseModel, Field, StringConstraints
 
 # This is the DTO validation boundary for this service (CLAUDE.md's "DTO
 # layer is a strict validation boundary" rule applies to a Kafka consumer's
@@ -37,8 +36,14 @@ class EventUpsertedMessage(BaseModel):
     event_id: uuid.UUID
     title: NonBlankStr
     description: str | None
-    start_time: datetime
-    end_time: datetime
+    # AwareDatetime, not bare datetime (found in code review): start_time is
+    # now load-bearing for the cancellation cutoff (§22 amendment #2),
+    # compared against datetime.now(timezone.utc) — a naive value would
+    # crash that comparison rather than silently misbehave, but rejecting
+    # it at the DTO boundary is still the right place per the DTO-layer
+    # convention, not a downstream check several calls deep.
+    start_time: AwareDatetime
+    end_time: AwareDatetime
     venue_name: NonBlankStr
     performer_names: list[str]
     seats: list[EventSeat]

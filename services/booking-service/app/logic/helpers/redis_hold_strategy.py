@@ -48,4 +48,19 @@ class RedisHoldStrategy(TicketHoldStrategy):
         # (scoped to PENDING/CONFIRMED bookings) no longer matching once
         # this cancellation flips Booking.status to CANCELLED — not this
         # method. Same asymmetry as confirm_hold/acquire_hold (§6).
+        #
+        # Known boundary, not fixed here (found in code review): this
+        # reasoning holds only within one strategy's whole lifetime for a
+        # given booking. HOLD_STRATEGY is a single config value fixed per
+        # deployment (§6) — a booking confirmed under `cron` (leaving
+        # tickets.status=BOOKED) that's later cancelled after a live switch
+        # to `redis` would no-op here and leave the ticket stuck at BOOKED,
+        # permanently unbookable, since _fetch_bookable_ticket rejects
+        # BOOKED regardless of which strategy is active. Switching
+        # HOLD_STRATEGY with in-flight bookings outstanding was never a
+        # supported operation (P8 only ever flips it between benchmark runs
+        # against a fresh seat pool, never mid-flight against live state) —
+        # documented here as an accepted limitation rather than papered
+        # over, consistent with how this class's own docstring already
+        # documents the confirm/acquire asymmetry.
         pass

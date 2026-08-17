@@ -239,6 +239,10 @@ def _confirmed_booking(booking_id: uuid.UUID, ticket_id: uuid.UUID, user_subject
     )
 
 
+def _future_start_time() -> datetime:
+    return datetime.now(timezone.utc) + timedelta(hours=2)
+
+
 async def test_cancel_booking_happy_path_releases_seat_and_cancels():
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     booking = _confirmed_booking(booking_id, ticket_id)
@@ -250,7 +254,7 @@ async def test_cancel_booking_happy_path_releases_seat_and_cancels():
             transition_if_confirmed=AsyncMock(return_value=True),
         ),
         hold_strategy=FakeHoldStrategy(),
-        events=AsyncMock(get_start_time=AsyncMock(return_value=None)),
+        events=AsyncMock(get_start_time=AsyncMock(return_value=_future_start_time())),
     )
     cancelled_producer = AsyncMock()
 
@@ -258,6 +262,26 @@ async def test_cancel_booking_happy_path_releases_seat_and_cancels():
 
     assert result.status is BookingStatus.CANCELLED
     cancelled_producer.publish_cancelled.assert_awaited_once_with(booking_id)
+
+
+async def test_cancel_booking_with_no_event_start_time_on_record_409s():
+    # Fail closed, not open (found in code review): a missing Event row
+    # (only reachable for a booking whose event predates this table) must
+    # not silently skip the cancellation-cutoff check §22 amendment #2
+    # exists to enforce.
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    booking = _confirmed_booking(booking_id, ticket_id)
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(),
+        bookings=AsyncMock(get_by_id=AsyncMock(return_value=booking)),
+        hold_strategy=FakeHoldStrategy(),
+        events=AsyncMock(get_start_time=AsyncMock(return_value=None)),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.cancel_booking(USER, booking_id, AsyncMock())
+    assert exc_info.value.status_code == 409
 
 
 async def test_cancel_booking_on_unknown_booking_404s():
@@ -336,7 +360,7 @@ async def test_cancel_booking_race_lost_409s():
             transition_if_confirmed=AsyncMock(return_value=False),
         ),
         hold_strategy=FakeHoldStrategy(),
-        events=AsyncMock(get_start_time=AsyncMock(return_value=None)),
+        events=AsyncMock(get_start_time=AsyncMock(return_value=_future_start_time())),
     )
 
     with pytest.raises(HTTPException) as exc_info:

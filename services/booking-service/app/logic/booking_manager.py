@@ -181,7 +181,15 @@ class BookingManager:
 
     async def _check_before_event_start(self, booking: Booking) -> None:
         start_time = await self._events.get_start_time(booking.event_id)
-        if start_time is not None and start_time <= datetime.now(timezone.utc):
+        if start_time is None:
+            # Fail closed, not open: a missing Event row (only reachable for
+            # a booking whose event predates this table, since
+            # ProvisioningConsumer writes it in the same transaction as the
+            # Ticket going forward) must not silently skip the cutoff check
+            # §22 amendment #2 exists to enforce — found in code review.
+            logger.warning("cancel_booking_no_event_start_time", booking_id=str(booking.id))
+            raise HTTPException(status.HTTP_409_CONFLICT, "cannot verify the event's start time")
+        if start_time <= datetime.now(timezone.utc):
             logger.warning("cancel_booking_past_cutoff", booking_id=str(booking.id))
             raise HTTPException(status.HTTP_409_CONFLICT, "event has already started")
 
@@ -197,11 +205,14 @@ class BookingManager:
             raise HTTPException(status.HTTP_409_CONFLICT, "booking is not confirmed")
         booking.status = BookingStatus.CANCELLED
         await self._hold_strategy.release_booking(booking.ticket_id)
-        # Publish before commit (§22, integration point #5) — same
-        # reasoning as the Phase 4 CHECKPOINT fix to handle_webhook_event:
-        # publishing after commit risks stranding a CANCELLED booking whose
-        # refund trigger never reached Payment Service if the publish
-        # itself fails. Publishing first means a publish failure propagates
-        # uncommitted and the whole request 5xx-and-retries, still CONFIRMED.
+        # Publish before commit (§22, integration point #5) — same ordering
+        # the Phase 4 CHECKPOINT fix applied to handle_webhook_event, though
+        # the recovery path is narrower here: a publish failure propagates
+        # uncommitted, so the booking stays CONFIRMED and the request
+        # 5xx's, but retrying is the caller's own choice, not a guaranteed
+        # redelivery the way Stripe's webhook retry is. A commit failure
+        # *after* a successful publish is the still-open, symmetric gap —
+        # no distributed transaction spans the Kafka publish and this
+        # commit (§8: no distributed transactions anywhere in this system).
         await cancelled_producer.publish_cancelled(booking.id)
         await self._session.commit()

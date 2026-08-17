@@ -35,15 +35,20 @@ async def _run_with_retry(
     failed_event: str,
     **log_context: object,
 ) -> _T | None:
-    # No commit() here, unlike booking-service's copy of this helper: this
-    # service's only caller (_refund) routes through PaymentManager, which
-    # already owns the commit per this project's "Manager methods that
-    # mutate always end with commit()" convention — a second commit on top
-    # would just be a redundant no-op, not a second real write.
+    # Unconditional commit() at the end, same as booking-service's copy of
+    # this helper — kept even though this service's only current caller
+    # (_refund) routes through PaymentManager, which already owns its own
+    # commit per this project's "Manager methods that mutate always end
+    # with commit()" convention, making this a harmless no-op today.
+    # Removing it was tried and reverted (found in code review): it would
+    # silently strand any *future* handler wired through this same helper
+    # that doesn't route through a self-committing Manager, with no signal
+    # that anything was wrong — a safety net worth the redundant call.
     for attempt in range(1, DB_WRITE_MAX_ATTEMPTS + 1):
         try:
             async with session_factory() as session:
                 result = await operation(session)
+                await session.commit()
             return result
         except Exception:
             if attempt == DB_WRITE_MAX_ATTEMPTS:
@@ -98,13 +103,18 @@ class BookingCancelledConsumer:
         await self._refund_with_retry(message.booking_id)
 
     async def _refund_with_retry(self, booking_id: uuid.UUID) -> None:
-        """Retries a transient DB failure in place before giving up — see
+        """Retries a transient failure in place before giving up — see
         _run_with_retry(). A Stripe-side failure is handled inside
-        refund_payment() itself and doesn't propagate here, so this retry
-        loop only ever re-runs on a genuine DB error — see
-        PaymentManager.refund_payment's own docstring for why a retried
-        Stripe call (if commit failed after a successful refund) is still
-        safe: same idempotency_key, no double refund."""
+        refund_payment() itself and doesn't propagate here (including its
+        own notification-publish attempt, wrapped separately — see
+        PaymentManager._publish_refund_failed_notification), so this retry
+        loop only ever re-runs on a genuine DB error or a
+        get_notification_producer() failure — the log event names below are
+        deliberately not "db_write" specific, unlike booking-service's copy
+        of this helper, since the operation this wraps isn't DB-only (found
+        in code review). See PaymentManager.refund_payment's own docstring
+        for why a retried Stripe call (if commit failed after a successful
+        refund) is still safe: same idempotency_key, no double refund."""
 
         async def _refund(session: AsyncSession) -> None:
             manager = PaymentManager(session=session, payments=PaymentRepository(session))
@@ -114,7 +124,7 @@ class BookingCancelledConsumer:
         await _run_with_retry(
             self._session_factory,
             _refund,
-            retrying_event="booking_cancelled_consumer_db_write_failed_retrying",
-            failed_event="booking_cancelled_consumer_db_write_failed_permanently",
+            retrying_event="booking_cancelled_consumer_refund_processing_failed_retrying",
+            failed_event="booking_cancelled_consumer_refund_processing_failed_permanently",
             booking_id=str(booking_id),
         )

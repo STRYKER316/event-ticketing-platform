@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.models import Ticket
+from app.db.models import Event, Ticket
 from app.kafka import consumers
 from app.kafka.consumers import ProvisioningConsumer
 from app.kafka.schemas import EventSeat, EventUpsertedMessage, KafkaAction
@@ -49,6 +49,51 @@ async def test_upserted_message_provisions_one_ticket_per_seat(
         assert await _count_tickets(session, event_id) == 2
         tickets = (await session.execute(select(Ticket).where(Ticket.event_id == event_id))).scalars().all()
         assert all(ticket.price_cents == 2500 for ticket in tickets)
+
+
+async def test_upserted_message_writes_the_event_start_time(
+    db_session_factory: async_sessionmaker[AsyncSession],
+):
+    # §22 amendment #2 — the cancellation-cutoff check depends on this row
+    # existing, written from the same message that already provisions
+    # tickets, no new Kafka point.
+    event_id = uuid.uuid4()
+    consumer = ProvisioningConsumer(consumer=None, session_factory=db_session_factory)
+
+    await consumer._handle(_message(event_id))
+
+    async with db_session_factory() as session:
+        event = await session.get(Event, event_id)
+        assert event is not None
+        assert event.start_time is not None
+
+
+async def test_republished_event_upserts_a_corrected_start_time(
+    db_session_factory: async_sessionmaker[AsyncSession],
+):
+    # ON CONFLICT DO UPDATE, not DO NOTHING (unlike the ticket insert) — a
+    # republished event's corrected start_time must stay current.
+    event_id = uuid.uuid4()
+    consumer = ProvisioningConsumer(consumer=None, session_factory=db_session_factory)
+    await consumer._handle(_message(event_id))
+
+    corrected_start = datetime.now(timezone.utc) + timedelta(days=30)
+    msg = EventUpsertedMessage(
+        action=KafkaAction.UPSERTED,
+        event_id=event_id,
+        title="Provisioning Test",
+        description=None,
+        start_time=corrected_start,
+        end_time=corrected_start + timedelta(hours=2),
+        venue_name="Test Arena",
+        performer_names=[],
+        seats=[EventSeat(section="A", row="1", label="A1", price_cents=2500)],
+    )
+    await consumer._handle(msg.model_dump_json().encode())
+
+    async with db_session_factory() as session:
+        event = await session.get(Event, event_id)
+        assert abs((event.start_time - corrected_start).total_seconds()) < 1
 
 
 async def test_redelivered_message_creates_no_duplicate_tickets(

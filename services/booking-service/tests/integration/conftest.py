@@ -56,7 +56,7 @@ async def db_session(_migrated_database_url: str) -> AsyncIterator[AsyncSession]
     async with session_factory() as session:
         yield session
     async with engine.begin() as conn:
-        for table in ("bookings", "tickets"):
+        for table in ("bookings", "tickets", "events"):
             await conn.execute(text(f"DELETE FROM {table}"))
     await engine.dispose()
 
