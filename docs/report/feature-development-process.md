@@ -191,6 +191,17 @@ the timeout safety net) is worth its documented implementation cost (§17:
 payment-failure hold-release handler") regardless of which hold strategy
 eventually ships.
 
+**Phase 4 built the real mechanism this table's numbers simulated.**
+`PaymentOutcomeConsumer` (`booking-service/app/kafka/consumers.py`)
+performs exactly the write this benchmark measured directly — the
+`release_hold()` call this table's "trigger-write time" timed is no longer
+a stand-in for a future handler, it's the real one, verified live against
+the running stack (see the Testing Strategy and Class Diagrams chapters'
+Payment Service sections). The numbers above were not re-measured, since
+the mechanism is identical either way (§17's original amendment already
+established this — simulating the call is a faithful measurement of the
+mechanism, not a placeholder for it).
+
 ## Honest reading of the comparison
 
 Per the kickoff doc's own instruction: report a genuinely mixed result as
