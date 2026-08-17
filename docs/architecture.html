@@ -235,17 +235,18 @@
 
 <header>
   <p class="eyebrow">event-ticketing-platform — capstone</p>
-  <h1>Event, Search &amp; Booking Services</h1>
-  <p>What Phase 3 built, and what Phase 8 measured on top of it. Booking Service provisions <code>Ticket</code> rows idempotently from Event Service's Kafka payload (integration point #2), and books a specific seat through one of <strong>two independently swappable hold mechanisms</strong> behind a single <code>TicketHoldStrategy</code> interface — a cron sweep over a Postgres column, or a self-expiring Redis <code>SET NX EX</code> lock — selected by one config value, never branched on in code. Both proven correct in Phase 3 (25 simulated clients racing one seat, exactly one wins, under each mechanism) and, as of Phase 8, both <strong>measured</strong> under a fixed 300-request contention burst, three runs per strategy: hold-acquisition and passive-release latency turned out statistically indistinguishable between strategies at this scale, with only immediate-release trigger time showing a small, consistent edge for <code>cron</code> (see §07 below and the Feature Development Process report chapter for the full analysis, including a real measurement bug a dedicated review caught and fixed along the way). Also closed a gap left open since Phase 1: <code>DELETE /events/{id}</code> now refuses a <code>PUBLISHED</code> event outright, since Event Service has no channel to check Booking Service for live bookings. Traced 2026-08-16 (Phase 3 sections), updated 2026-08-16 (Phase 8 benchmark).</p>
+  <h1>Event, Search, Booking &amp; Payment Services</h1>
+  <p>What Phase 3 built, what Phase 8 measured on top of it, and what Phase 4 added. Booking Service provisions <code>Ticket</code> rows idempotently from Event Service's Kafka payload (integration point #2), and books a specific seat through one of <strong>two independently swappable hold mechanisms</strong> behind a single <code>TicketHoldStrategy</code> interface — a cron sweep over a Postgres column, or a self-expiring Redis <code>SET NX EX</code> lock — selected by one config value, never branched on in code. Both proven correct in Phase 3 (25 simulated clients racing one seat, exactly one wins, under each mechanism) and, as of Phase 8, both <strong>measured</strong> under a fixed 300-request contention burst, three runs per strategy: hold-acquisition and passive-release latency turned out statistically indistinguishable between strategies at this scale, with only immediate-release trigger time showing a small, consistent edge for <code>cron</code> (see §07 below and the Feature Development Process report chapter for the full analysis, including a real measurement bug a dedicated review caught and fixed along the way). Also closed a gap left open since Phase 1: <code>DELETE /events/{id}</code> now refuses a <code>PUBLISHED</code> event outright, since Event Service has no channel to check Booking Service for live bookings. <strong>Phase 4</strong> added Payment Service (Stripe test-mode charges + webhook), a new <code>POST /bookings/{id}/pay</code> on Booking Service that makes the system's one synchronous inter-service call (forwarding the caller's JWT to Payment Service, since Payment Service has no access to <code>booking_db</code> to check ownership itself), and Kafka integration point #4 (<code>payment.outcomes</code>, one topic carrying both success and failure) — see §09 below. Traced 2026-08-16 (Phase 3 sections), updated 2026-08-16 (Phase 8 benchmark), updated 2026-08-17 (Phase 4).</p>
   <div class="badges">
     <span class="badge ok">Phase 0 complete</span>
     <span class="badge ok">Phase 1 complete</span>
     <span class="badge ok">Phase 2 complete</span>
     <span class="badge ok">Phase 3 complete</span>
     <span class="badge ok">Phase 8 complete</span>
-    <span class="badge">32 tasks · P0.T1–T7, P1.T1–T7, P2.T1–T5, P3.T1–T7, P8.T1–T6</span>
+    <span class="badge ok">Phase 4 complete (Stripe live-verification pending real credentials)</span>
+    <span class="badge">39 tasks · P0.T1–T7, P1.T1–T7, P2.T1–T5, P3.T1–T7, P8.T1–T6, P4.T1–T7</span>
     <span class="badge">+ P1 addendum: venue/seat-map write API</span>
-    <span class="badge">12 containers (+2, benchmark profile on demand)</span>
+    <span class="badge">13 containers (+2, benchmark profile on demand)</span>
   </div>
 </header>
 
@@ -255,7 +256,7 @@
   <p class="lede">Traefik routes to three services: <code>event-service</code> on its original catch-all label, <code>search-service</code> on <code>PathPrefix(/search)</code>, <code>booking-service</code> on <code>PathPrefix(/bookings)</code> — both more-specific rules outrank the catch-all by rule length, no explicit priority needed. Publishing an event triggers Kafka integration point #2 — <code>booking-service</code> runs a second, independent consumer group against the same <code>event.events</code> topic, provisioning <code>Ticket</code> rows idempotently. Redis backs one of Booking Service's two swappable hold mechanisms. <strong>Phase 8 addition, not pictured below (on-demand only, not part of the always-on topology):</strong> a <code>benchmark</code>-profiled <code>prometheus</code>+<code>grafana</code> pair (<code>make bench-up</code>/<code>make bench-down</code>), scraping every service's existing <code>/metrics</code> endpoint — see <code>infra/README.md</code> for the profile and <code>/benchmark</code> for the standalone Python load harness that drove the numbers in §08.</p>
 
   <figure>
-    <svg viewBox="0 0 900 680" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service by a catch-all rule, to search-service by a /search rule, and to booking-service by a /bookings rule; event-service queries Postgres and MongoDB and validates tokens against Keycloak, then publishes a keyed Kafka message on the event.events topic when an event is published or updated while published — a published event can no longer be deleted at all; search-service consumes that topic into Elasticsearch and serves GET /search; booking-service independently consumes the same topic to provision Ticket rows in its own booking_db Postgres database, and serves POST /bookings, acquiring a hold via either a Postgres-column cron strategy or a Redis SET NX EX strategy depending on configuration; booking-service also verifies JWTs against Keycloak like event-service does.">
+    <svg viewBox="0 0 900 920" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service by a catch-all rule, to search-service by a /search rule, and to booking-service by a /bookings rule; event-service queries Postgres and MongoDB and validates tokens against Keycloak, then publishes a keyed Kafka message on the event.events topic when an event is published or updated while published — a published event can no longer be deleted at all; search-service consumes that topic into Elasticsearch and serves GET /search; booking-service independently consumes the same topic to provision Ticket rows in its own booking_db Postgres database, and serves POST /bookings, acquiring a hold via either a Postgres-column cron strategy or a Redis SET NX EX strategy depending on configuration; booking-service also verifies JWTs against Keycloak like event-service does. Phase 4 adds payment-service: booking-service's POST /bookings/{id}/pay makes a synchronous call, forwarding the caller's JWT, to payment-service's POST /payments/charge, which creates a Stripe test-mode charge and stores a Payment row in its own payment_db Postgres database; Stripe's webhook, verified by signature, drives payment-service to publish a payment.outcomes Kafka message that booking-service consumes independently to confirm or release the booking — this is Kafka integration point #4.">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -378,9 +379,54 @@
       <rect x="620" y="626" width="140" height="52" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
       <text x="690" y="648" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">redis</text>
       <text x="690" y="664" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">redis strategy only</text>
+
+      <!-- payment-service row divider -->
+      <line x1="24" y1="700" x2="876" y2="700" stroke="var(--border)" stroke-width="1"/>
+      <text x="24" y="722" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">PHASE 4 — PAYMENT SERVICE, KAFKA INTEGRATION POINT #4</text>
+
+      <!-- booking-service down to payment-service: the one synchronous call -->
+      <line x1="550" y1="598" x2="550" y2="726" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="558" y="656" text-anchor="start" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">sync POST /pay → /payments/charge</text>
+      <text x="558" y="670" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">forwards caller's JWT + ticket price_cents — the one sync inter-service call (§9 amendment)</text>
+
+      <!-- payment-service -->
+      <rect x="460" y="726" width="180" height="76" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="550" y="754" text-anchor="middle" font-family="var(--mono)" font-size="13" font-weight="600" fill="currentColor">payment-service</text>
+      <text x="550" y="771" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">FastAPI /payments</text>
+      <text x="550" y="785" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--accent)">charge + webhook; verifies JWT via shared_auth</text>
+
+      <!-- payment-service down to postgres payment_db -->
+      <line x1="500" y1="802" x2="440" y2="830" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="410" y="820" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">payments</text>
+
+      <rect x="330" y="830" width="150" height="52" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+      <text x="405" y="852" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">postgres</text>
+      <text x="405" y="868" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">payment_db</text>
+
+      <!-- payment-service right to stripe (external) -->
+      <line x1="640" y1="750" x2="716" y2="750" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3" marker-end="url(#arrowDim)"/>
+      <text x="678" y="740" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--idle)">HTTPS</text>
+
+      <rect x="720" y="726" width="152" height="52" rx="8" fill="none" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3"/>
+      <text x="796" y="748" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="var(--idle)">stripe.com</text>
+      <text x="796" y="764" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--idle)">test mode; webhook via Stripe CLI locally</text>
+
+      <!-- payment-service down to kafka topic: publish payment.outcomes -->
+      <line x1="600" y1="802" x2="700" y2="830" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="700" y="820" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)">publish (Kafka #4)</text>
+
+      <rect x="680" y="830" width="160" height="52" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="760" y="852" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">kafka</text>
+      <text x="760" y="868" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">payment.outcomes</text>
+
+      <!-- kafka topic back up to booking-service: consume -->
+      <line x1="800" y1="830" x2="800" y2="560" stroke="var(--ok)" stroke-width="1.5"/>
+      <line x1="800" y1="560" x2="640" y2="560" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="796" y="694" text-anchor="end" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">consume (Kafka #4)</text>
+      <text x="796" y="708" text-anchor="end" font-family="var(--mono)" font-size="9" fill="var(--text-faint)">confirm booking + BOOKED ticket, or release hold immediately</text>
     </svg>
   </figure>
-  <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · mongo:7 · apache/kafka:3.8.0 (KRaft) · elasticsearch:8.15.0 · redis:7-alpine — 12 containers, one docker-compose network, host port 80 only.</figcaption>
+  <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · mongo:7 · apache/kafka:3.8.0 (KRaft) · elasticsearch:8.15.0 · redis:7-alpine — 13 containers, one docker-compose network, host port 80 only. Stripe (test mode) is an external HTTPS API, not a container.</figcaption>
 </section>
 
 <section>
@@ -725,16 +771,23 @@
         <li><span class="check">✓</span> standalone Python <code>asyncio</code> load harness (<code>/benchmark</code>) — self-contained seat pool per run, burst contention, structured archivable output</li>
         <li><span class="check">✓</span> hold-mechanism benchmark <strong>measured</strong> — cron vs. redis, identical 300-request load profile, real numbers archived (§08)</li>
         <li><span class="check">✓</span> release-latency measured both ways — passive (sweep/TTL) vs. simulated immediate trigger (§17), ~3 orders of magnitude apart, both strategies</li>
-        <li><span class="check">✓</span> one command (<code>make up</code>) boots all 12 containers</li>
+        <li><span class="check">✓</span> a fourth service (payment-service) coexists behind Traefik, its own Postgres — <code>payment_db</code></li>
+        <li><span class="check">✓</span> <code>POST /bookings/{id}/pay</code> — ownership-scoped (403/404/409), the system's one synchronous inter-service call, forwarding the caller's JWT</li>
+        <li><span class="check">✓</span> Stripe test-mode charge attempt, idempotency key = booking ID — real submission to Stripe's API verified live (failed only at Stripe's own auth boundary, no real test credentials available this session)</li>
+        <li><span class="check">✓</span> idempotent-replay bug (stuck on a never-submitted charge) found and fixed via live testing, not just the test suite</li>
+        <li><span class="check">✓</span> <code>POST /payments/webhook</code> — signature-verified, idempotent, rejects a bad signature with 400 before touching any row</li>
+        <li><span class="check">✓</span> Kafka #4 (<code>payment.outcomes</code>, one topic/two outcomes) — live-verified both branches: <code>succeeded</code> → <code>Booking</code> <code>CONFIRMED</code> + <code>Ticket</code> <code>BOOKED</code>; <code>failed</code> → <code>Booking</code> <code>EXPIRED</code> + immediate hold release; redelivery a proven no-op that doesn't touch a later booking's legitimate hold</li>
+        <li><span class="check">✓</span> per-section ticket pricing, organizer-set, carried through Kafka #2 into <code>Ticket.price_cents</code> — live-verified end to end</li>
+        <li><span class="check">✓</span> one command (<code>make up</code>) boots all 13 containers</li>
       </ul>
     </div>
     <div class="col">
       <h4><span class="dot idle"></span>provisioned, not built yet</h4>
       <ul>
-        <li><span class="dash">–</span> no payment/notification logic yet (Phases 4-5) — the immediate-release trigger measured in §08 is simulated, since its real producer (Payment Service's <code>payment.failed</code> event) doesn't exist yet</li>
+        <li><span class="dash">–</span> a real Stripe charge actually succeeding and its webhook actually arriving — <code>.env</code> only has a placeholder <code>STRIPE_SECRET_KEY</code>; everything up to Stripe's own API boundary is live-verified, the genuine round trip isn't yet (tracked on Phase 4's exit checklist, not silently marked done)</li>
+        <li><span class="dash">–</span> no notification logic yet (Phase 5)</li>
         <li><span class="dash">–</span> no cancellation/refund flow yet (Phase 6)</li>
-        <li><span class="dash">–</span> Booking never reaches <code>CONFIRMED</code> — that's Phase 4's payment webhook</li>
-        <li><span class="dash">–</span> only three of five backend services exist</li>
+        <li><span class="dash">–</span> only four of five backend services exist</li>
         <li><span class="dash">–</span> no frontend</li>
         <li><span class="dash">–</span> nothing deployed to AWS (Phase 10)</li>
       </ul>
