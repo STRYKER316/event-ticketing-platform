@@ -2334,3 +2334,111 @@ it also consumes `event.events` and silently ignores the new
 Decisions-log delta: none this task — implementation of amendments already
 made in the P4.T1 entry above, no new decision.
 `CLAUDE.md` update: none needed.
+
+## 2026-08-17 — Phase 4 CHECKPOINT: `/pre-pr` gate finds a real authz bypass plus three correctness bugs
+
+Ran the phase-end checklist's routine `/pre-pr` gate (simplify → code-review
+→ verify) against the full phase diff since `b4a4392`. Phase 4 doesn't get
+the dedicated adversarial `/code-review` pass P3/P8 get per `CLAUDE.md` —
+this routine gate is what it does get, and it earned its keep.
+
+**Simplify step (Sonnet)** applied four real fixes: switched Payment
+Service's Stripe charge submission from the blocking `stripe.PaymentIntent
+.create()` to `await stripe.PaymentIntent.create_async()` — a genuine
+violation of `CLAUDE.md`'s "no blocking calls in a request path" rule that
+had slipped through self-verification, since blocking the event loop
+inside an `async def` route doesn't fail any test, it just serializes
+concurrent requests silently; deduped the two Kafka consumers' identical
+bounded-retry-with-backoff and manual-commit loops
+(`booking-service/app/kafka/consumers.py`) into shared `_run_with_retry`/
+`_consume_with_manual_commit` helpers; added the missing `Field(gt=0)` to
+event-service's producer-side `EventSeat.price_cents` to match
+booking-service's consumer-side constraint on the same wire message; minor
+naming cleanup. One of the simplify subagent's own review passes had
+edited `docs/architecture.html` outside its scope — caught and reverted by
+the subagent itself before reporting back.
+
+**Code-review step (Opus)** found one critical and several real
+correctness issues, all fixed and re-verified live before this commit:
+
+1. **Authorization bypass on `/payments/charge` — the most severe finding.**
+   The route was reachable from outside via Traefik's `PathPrefix('/payments')`
+   rule, guarded only by "any valid Keycloak token." Since `amount_cents`
+   is caller-supplied and the route does no ownership check by design
+   (decisions-log §9 amendment assumes only Booking Service can reach it),
+   any authenticated user could `POST` an arbitrary `booking_id` with
+   `amount_cents=1`, bypassing both checks `BookingManager.pay_booking`
+   exists to enforce. Fixed by narrowing the Traefik router rule to
+   `PathPrefix('/payments/webhook')` only — `/payments/charge` is now
+   reachable exclusively over the internal Docker network, exactly how
+   `booking-service` already calls it (`PAYMENT_SERVICE_URL`, never through
+   Traefik). Live-verified both directions post-fix: `POST
+   localhost/payments/charge` through Traefik now 404s; `POST
+   localhost/payments/webhook` still works; `booking-service`'s internal
+   call to `payment-service:8004/payments/charge` still succeeds (confirmed
+   via `payment-service`'s own logs, request source IP is the Docker
+   network, not Traefik).
+2. **Commit-then-publish could lose a payment outcome permanently.**
+   `handle_webhook_event` committed the terminal status before publishing
+   to Kafka; if the publish itself failed, the Payment was already
+   terminal, so Stripe's own webhook retry would hit the "already
+   transitioned" guard and silently no-op — the outcome would never reach
+   Booking Service, and a genuinely successful payment's booking would sit
+   `PENDING` until the passive sweep eventually (and incorrectly) expired
+   it. Fixed by reordering: publish before commit, so a publish failure
+   propagates uncommitted (the request session rolls back), Stripe sees a
+   non-2xx and genuinely retries, and the retry finds the row still
+   `PENDING`.
+3. **The `PENDING` guard was read-check-then-write, not rowcount-gated** —
+   unlike every other idempotent-consumer guard in this system (§7's "only
+   transition if currently in state X" rule), so two genuinely overlapping
+   webhook deliveries could both pass the check before either committed.
+   Fixed with `PaymentRepository.transition_if_pending`, a single
+   conditional `UPDATE ... WHERE status = 'pending'` mirroring
+   `BookingRepository`'s own method of the same name. Proven with a new
+   integration test opening two concurrent sessions and racing the same
+   delivery — exactly one wins, exactly one Kafka publish.
+4. **Concurrent first-time charge attempts for one booking crashed with an
+   unhandled `IntegrityError`** (the unique index on `booking_id` catching
+   the loser) instead of resolving idempotently. Fixed: catch it, roll
+   back, re-fetch the winner's row, and let the existing
+   stripe_charge_id-is-`None` check decide whether it still needs
+   submitting. Proven with a concurrent-attempt integration test — exactly
+   one `Payment` row survives regardless of timing; Stripe's own
+   `idempotency_key` remains the backstop against an actual double charge
+   in the (low-severity, per the review) case where both branches still
+   end up calling Stripe.
+5. **Both Kafka consumers shared one `group_id`**, so a `payment.outcomes`
+   rebalance also rebalanced the unrelated `event.events` provisioning
+   subscription. Fixed with a second, dedicated
+   `payment_outcome_consumer_group_id` setting.
+6. **A real 4xx/5xx from Payment Service and a genuine connection/timeout
+   failure both collapsed into the same misleading "payment service
+   unreachable" 502** from `BookingManager._charge_via_payment_service`.
+   Fixed by catching `httpx.HTTPStatusError` separately and forwarding its
+   real status code, leaving the generic 502 for an actual
+   `httpx.RequestError`.
+
+Everything the reviewer checked clean stayed clean and is worth recording
+as verified, not just implied by omission: the rowcount-gate's interaction
+with `uq_bookings_active_ticket` genuinely prevents a stale message from
+touching a *different*, later booking's hold; ownership/httpx error
+handling in `pay_booking` was already correct and the bearer token is
+never logged; all three `TicketHoldStrategy.confirm_hold` implementations
+satisfy the widened interface identically; `BIND_PARAM_SAFE_BATCH_SIZE=4000`
+is genuinely safe (7 params/row × 4000 = 28,000 < 32,767); `pyflakes` over
+every touched file found nothing.
+
+Full suite after all fixes: `booking-service` 36/36 unit (+1), 24/24
+integration; `payment-service` 7/7 unit, 5/5 integration (+2, both new
+concurrency tests). Live-verified post-fix: the Traefik routing change
+(above), and a real `/pay` call through the full chain still correctly
+reaching Stripe and forwarding its real error status (502, since `.env`
+still only has a placeholder key) rather than the old generic message.
+
+Decisions-log delta: none — these are implementation-correctness fixes to
+already-decided architecture (§9's synchronous-call design and Kafka #4's
+idempotency requirement), not new decisions.
+`CLAUDE.md` update: none needed — no new convention, these fixes bring the
+implementation into compliance with conventions already stated (the
+async-only rule, the rowcount-gated idempotent-transition pattern).
