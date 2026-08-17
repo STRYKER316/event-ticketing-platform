@@ -2200,3 +2200,137 @@ Decisions-log delta: yes — §7/§9/§16 amendments (above), made before P4.T1'
 implementation rather than during it.
 `CLAUDE.md` update: none needed — no new convention, this extends an
 existing one (`BIND_PARAM_SAFE_BATCH_SIZE`'s value, not the pattern itself).
+
+## 2026-08-17 — P4.T2-T7: Payment Service, Booking Service `/pay`, Kafka #4 (payment outcome), live-verified
+
+Built out the rest of Phase 4 in one continuous session following P4.T1's
+kickoff-doc task list, committing at each service boundary (payment-service
+scaffold+charge+webhook; booking-service `/pay`+consumer; the bugfix+test
+commit below).
+
+**Payment Service** (`services/payment-service`): scaffolded from the
+`event-service` template — `payment_db` (single `Payment` table: booking
+ID, ticket ID, amount, currency, status, Stripe charge ID, idempotency key,
+unique index on booking_id as DB-level defense-in-depth), wired into the
+`uv` workspace, `infra/docker-compose.yml` (`PathPrefix('/payments')`,
+depends on postgres/keycloak/kafka), and `infra/prometheus/prometheus.yml`.
+`POST /payments/charge`: authenticated (any valid Keycloak token, no
+ownership check — see below for why), idempotency key = booking ID, calls
+`stripe.PaymentIntent.create` with `automatic_payment_methods` /
+`allow_redirects: never` for a synchronous test-mode confirmation without a
+card-collection UI (§10 doesn't build one). `POST /payments/webhook`:
+verifies Stripe's signature (this route's actual auth, not an open
+endpoint), idempotent by construction (only transitions a `Payment` that's
+still `PENDING`), publishes to the new `payment.outcomes` Kafka topic on
+transition.
+
+**Booking Service**: new ownership-scoped `POST /bookings/{id}/pay`
+(`BookingManager.pay_booking`) — 404/403/409 on missing/not-owned/non-pending
+booking, then a synchronous `httpx` call to Payment Service's charge
+endpoint, forwarding the caller's raw bearer token (recovered via a second
+`HTTPBearer` dependency alongside `get_current_user`'s own) and the ticket's
+already-known `price_cents`. This is the system's first synchronous
+inter-service call (decisions-log §9 amendment, made before this task —
+see the P4.T1 entry above). `httpx` moved from booking-service's dev-only
+dependencies to a real runtime dependency, per the kickoff doc's own note.
+New `PaymentOutcomeConsumer` (`app/kafka/consumers.py`), same shape as
+`ProvisioningConsumer` (`enable_auto_commit=False`, manual per-record
+commit, bounded DB-write retry): confirms (`PENDING`→`CONFIRMED`) or expires
++ releases (`PENDING`→`EXPIRED`) a booking based on the outcome, idempotent
+via a new `BookingRepository.transition_if_pending` (only transitions a row
+currently `PENDING`, matching rowcount) — critically, the hold
+strategy is only touched when the transition itself won the race, so a
+redelivered message for an already-terminal booking can't release/confirm a
+hold a *different*, later booking now legitimately holds on the same seat
+(live-verified below).
+
+**Closed a latent gap found while designing the confirm path**:
+`TicketHoldStrategy` had no method for "mark this hold fulfilled" —
+`_fetch_bookable_ticket` already checked for `TicketStatus.BOOKED`, but no
+code path anywhere had ever set it. Added `confirm_hold(ticket_id)` to the
+interface: `CronHoldStrategy` transitions `HELD`→`BOOKED` (clearing
+`hold_expires_at`, mirroring `release_hold`'s shape but to a different
+terminal state); `RedisHoldStrategy` deletes the now-superseded hold key
+(never writes `Ticket.status`, per its existing documented trade-off);
+`FakeHoldStrategy` mirrors `release_hold`. Extended both the unit
+(`FakeHoldStrategy`) and integration (real Postgres/Redis) hold-strategy
+contract test suites to cover it, proving all three implementations satisfy
+the widened interface, not just the two real ones compiling against it.
+
+**Live walkthrough against the real stack** (not just the test suite):
+brought up the full stack, discovered `make up` doesn't rebuild images on
+its own (a pre-existing gotcha, not new to this phase — `docker compose up
+-d` reuses whatever image already exists unless told to rebuild), so an
+explicit `docker compose build` was needed before the new code was actually
+running. That surfaced a real, live-only regression: existing MongoDB
+seat-map documents from before P4.T1 have no `price_cents` field, and since
+the field has no default, `GET /events/{id}/seat-map` 500'd reading them
+back. Fixed by wiping the local Postgres/Mongo/Kafka volumes and reseeding —
+this is disposable local dev/demo data, not anything worth a real migration
+path for, exactly the caveat P4.T1's own kickoff-doc prompt already flagged
+as the expected resolution.
+
+With fresh data: created a real venue/event/seat-map (`price_cents: 5000`)
+through the actual organizer API (not the seed script, which writes
+directly to the DB and never publishes to Kafka) and published it —
+confirmed the full event-carried pricing payload lands correctly on
+`booking-service`'s `Ticket.price_cents` via real Kafka. Booked it as
+`alice`, then exercised `/pay`: non-owner (`bob`) → 403; unknown booking ID
+→ 404; owner on a `PENDING` booking → the full synchronous chain (ownership
+check → ticket price lookup → forwarded-JWT call to Payment Service →
+Payment Service's own auth check → a real HTTPS call to Stripe) all worked
+correctly, failing only at the very last step with a genuine `401 Invalid
+API Key` from Stripe, since `.env` only has the placeholder
+`STRIPE_SECRET_KEY=sk_test_changeme` — confirmed via payment-service's logs,
+not just the 502 status code. Real Stripe test-mode credentials weren't
+available this session (flagged to the user, who chose to skip live Stripe
+verification for now rather than provide a key) — this is the one part of
+the phase's done-when criteria not proven against real Stripe, tracked as
+an open item on the exit checklist below rather than silently marked done.
+
+**That live retry attempt caught a real idempotency bug**: `create_charge`'s
+short-circuit treated *any* existing `Payment` row as "already submitted to
+Stripe," including one whose `stripe_charge_id` was still `None` because the
+previous attempt never actually reached Stripe (the 401 above). A second
+`/pay` call against the same booking returned the stale `PENDING` row
+directly instead of retrying — meaning a booking that failed to submit even
+once could never be paid again. Fixed: the idempotent short-circuit now
+checks `existing.stripe_charge_id is not None` specifically (Stripe
+genuinely accepted this idempotency key) rather than "a Payment row exists
+at all"; a row with no `stripe_charge_id` yet falls through and genuinely
+retries against Stripe. Re-verified live (retry now reaches Stripe and gets
+a fresh 401/502, not a silent stale 200) and added a unit test
+(`test_create_charge_retries_stripe_when_previous_attempt_never_reached_it`)
+alongside the existing idempotent-replay test, renamed to make clear it
+covers the *accepted* case specifically.
+
+**Kafka integration point #4 verified live end-to-end for both outcomes**,
+bypassing Stripe entirely by producing directly to the `payment.outcomes`
+topic (the mechanism under test is Booking Service's consumer, not Stripe's
+webhook delivery, which the webhook-signature-rejection test below covers
+separately): a `succeeded` message flipped a real `PENDING` booking to
+`CONFIRMED` and its `Ticket` to `BOOKED`; a `failed` message against a
+second booking flipped it to `EXPIRED` and released the ticket back to
+`AVAILABLE` immediately (not waiting for the 600s `HOLD_TTL_SECONDS`);
+redelivering the same `failed` message a second time produced no second
+`payment_outcome_applied` log line and left both rows untouched — the
+idempotent no-op contract, proven against the real running consumer, not
+just the mocked unit test. Also live-verified: `POST /payments/webhook`
+with an invalid `stripe-signature` header is rejected with 400 before
+touching any `Payment` row.
+
+**Test suite added** (P4.T7): payment-service integration tests
+(`testcontainers` Postgres) covering charge persistence, replay-does-not-
+double-charge, and webhook transition + replay idempotency; booking-service
+integration tests (`testcontainers` Postgres + Redis) covering
+`PaymentOutcomeConsumer`'s both branches plus the "redelivered message must
+not touch a different booking's legitimate later hold" case. Full suite
+after this task: event-service 44/44 unit + 11/11 integration;
+booking-service 35/35 unit + 24/24 integration; payment-service 7/7 unit +
+3/3 integration; search-service 16/16 unit (unaffected, spot-checked since
+it also consumes `event.events` and silently ignores the new
+`price_cents` field it doesn't need, pydantic's default `extra="ignore"`).
+
+Decisions-log delta: none this task — implementation of amendments already
+made in the P4.T1 entry above, no new decision.
+`CLAUDE.md` update: none needed.
