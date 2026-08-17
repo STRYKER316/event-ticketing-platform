@@ -28,18 +28,12 @@ class BookingManager:
         bookings: BookingRepository,
         hold_strategy: TicketHoldStrategy,
         events: EventRepository,
-        cancelled_producer: BookingCancelledProducer | None = None,
     ):
         self._session = session
         self._tickets = tickets
         self._bookings = bookings
         self._hold_strategy = hold_strategy
         self._events = events
-        # Only cancel_booking needs this — unlike `events` (cheap to always
-        # construct), the producer requires an async Kafka connection, so
-        # create_booking/pay_booking callers shouldn't be forced to pay for
-        # or supply one.
-        self._cancelled_producer = cancelled_producer
 
     async def create_booking(self, user: Principal, ticket_id: uuid.UUID) -> BookingResponse:
         ticket = await self._fetch_bookable_ticket(ticket_id)
@@ -97,17 +91,15 @@ class BookingManager:
         return await self._charge_via_payment_service(booking, ticket, bearer_token, http_client)
 
     async def _fetch_owned_pending_booking(self, user: Principal, booking_id: uuid.UUID) -> Booking:
-        booking = await self._bookings.get_by_id(booking_id)
-        if booking is None:
-            logger.warning("pay_booking_not_found", booking_id=str(booking_id))
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "booking not found")
-        if booking.user_subject != user.subject:
-            logger.warning("pay_booking_ownership_denied", booking_id=str(booking_id), subject=user.subject)
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your booking")
-        if booking.status is not BookingStatus.PENDING:
-            logger.warning("pay_booking_not_pending", booking_id=str(booking_id), status=booking.status.value)
-            raise HTTPException(status.HTTP_409_CONFLICT, "booking is not pending payment")
-        return booking
+        return await self._fetch_owned_booking_in_status(
+            user,
+            booking_id,
+            BookingStatus.PENDING,
+            not_found_event="pay_booking_not_found",
+            ownership_denied_event="pay_booking_ownership_denied",
+            wrong_status_event="pay_booking_not_pending",
+            wrong_status_detail="booking is not pending payment",
+        )
 
     async def _charge_via_payment_service(
         self, booking: Booking, ticket: Ticket, bearer_token: str, http_client: httpx.AsyncClient
@@ -142,26 +134,49 @@ class BookingManager:
             payment_id=body["id"], status=body["status"], amount_cents=body["amount_cents"], currency=body["currency"]
         )
 
-    async def cancel_booking(self, user: Principal, booking_id: uuid.UUID) -> BookingResponse:
+    async def cancel_booking(
+        self, user: Principal, booking_id: uuid.UUID, cancelled_producer: BookingCancelledProducer
+    ) -> BookingResponse:
         """Owner-only, CONFIRMED-only, full-refund cancellation (§22).
         Optimistic immediate seat release — the ticket returns to AVAILABLE
         as part of this same call, not deferred to any later sweep."""
         booking = await self._fetch_owned_confirmed_booking(user, booking_id)
         await self._check_before_event_start(booking)
-        await self._transition_and_release(booking)
+        await self._transition_and_release(booking, cancelled_producer)
         return self._build_response(booking)
 
     async def _fetch_owned_confirmed_booking(self, user: Principal, booking_id: uuid.UUID) -> Booking:
+        return await self._fetch_owned_booking_in_status(
+            user,
+            booking_id,
+            BookingStatus.CONFIRMED,
+            not_found_event="cancel_booking_not_found",
+            ownership_denied_event="cancel_booking_ownership_denied",
+            wrong_status_event="cancel_booking_not_confirmed",
+            wrong_status_detail="booking is not confirmed",
+        )
+
+    async def _fetch_owned_booking_in_status(
+        self,
+        user: Principal,
+        booking_id: uuid.UUID,
+        expected_status: BookingStatus,
+        *,
+        not_found_event: str,
+        ownership_denied_event: str,
+        wrong_status_event: str,
+        wrong_status_detail: str,
+    ) -> Booking:
         booking = await self._bookings.get_by_id(booking_id)
         if booking is None:
-            logger.warning("cancel_booking_not_found", booking_id=str(booking_id))
+            logger.warning(not_found_event, booking_id=str(booking_id))
             raise HTTPException(status.HTTP_404_NOT_FOUND, "booking not found")
         if booking.user_subject != user.subject:
-            logger.warning("cancel_booking_ownership_denied", booking_id=str(booking_id), subject=user.subject)
+            logger.warning(ownership_denied_event, booking_id=str(booking_id), subject=user.subject)
             raise HTTPException(status.HTTP_403_FORBIDDEN, "not your booking")
-        if booking.status is not BookingStatus.CONFIRMED:
-            logger.warning("cancel_booking_not_confirmed", booking_id=str(booking_id), status=booking.status.value)
-            raise HTTPException(status.HTTP_409_CONFLICT, "booking is not confirmed")
+        if booking.status is not expected_status:
+            logger.warning(wrong_status_event, booking_id=str(booking_id), status=booking.status.value)
+            raise HTTPException(status.HTTP_409_CONFLICT, wrong_status_detail)
         return booking
 
     async def _check_before_event_start(self, booking: Booking) -> None:
@@ -170,7 +185,9 @@ class BookingManager:
             logger.warning("cancel_booking_past_cutoff", booking_id=str(booking.id))
             raise HTTPException(status.HTTP_409_CONFLICT, "event has already started")
 
-    async def _transition_and_release(self, booking: Booking) -> None:
+    async def _transition_and_release(
+        self, booking: Booking, cancelled_producer: BookingCancelledProducer
+    ) -> None:
         transitioned = await self._bookings.transition_if_confirmed(booking.id, BookingStatus.CANCELLED)
         if not transitioned:
             # Lost a race to a concurrent cancel or expiry sweep — same
@@ -186,6 +203,5 @@ class BookingManager:
         # refund trigger never reached Payment Service if the publish
         # itself fails. Publishing first means a publish failure propagates
         # uncommitted and the whole request 5xx-and-retries, still CONFIRMED.
-        assert self._cancelled_producer is not None, "cancel_booking requires a BookingCancelledProducer"
-        await self._cancelled_producer.publish_cancelled(booking.id)
+        await cancelled_producer.publish_cancelled(booking.id)
         await self._session.commit()

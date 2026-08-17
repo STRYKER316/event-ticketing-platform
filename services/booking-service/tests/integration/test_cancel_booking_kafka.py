@@ -61,9 +61,8 @@ async def test_cancel_booking_publishes_a_real_message_on_the_real_topic(
                 bookings=BookingRepository(session),
                 hold_strategy=CronHoldStrategy(session),
                 events=EventRepository(session),
-                cancelled_producer=BookingCancelledProducer(producer, TOPIC),
             )
-            result = await manager.cancel_booking(USER, booking_id)
+            result = await manager.cancel_booking(USER, booking_id, BookingCancelledProducer(producer, TOPIC))
 
         assert result.status is BookingStatus.CANCELLED
 

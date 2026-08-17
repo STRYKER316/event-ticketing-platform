@@ -17,22 +17,21 @@ class BookingRepository(BaseRepository[Booking]):
         currently in state X" rule, applied here to the payment-outcome
         consumer, §7 point #4/§21): a redelivered message for an
         already-terminal booking matches zero rows and is a safe no-op."""
-        result = await self._session.execute(
-            sa_update(Booking)
-            .where(Booking.id == booking_id, Booking.status == BookingStatus.PENDING)
-            .values(status=new_status)
-        )
-        await self._session.flush()
-        return result.rowcount > 0
+        return await self._transition_if_status(booking_id, BookingStatus.PENDING, new_status)
 
     async def transition_if_confirmed(self, booking_id: uuid.UUID, new_status: BookingStatus) -> bool:
         """Same rowcount-gated "only transition if currently in state X"
         shape as transition_if_pending, applied to cancellation (§22) — the
         race backstop against a concurrent duplicate cancel or an
         in-flight expiry sweep."""
+        return await self._transition_if_status(booking_id, BookingStatus.CONFIRMED, new_status)
+
+    async def _transition_if_status(
+        self, booking_id: uuid.UUID, from_status: BookingStatus, new_status: BookingStatus
+    ) -> bool:
         result = await self._session.execute(
             sa_update(Booking)
-            .where(Booking.id == booking_id, Booking.status == BookingStatus.CONFIRMED)
+            .where(Booking.id == booking_id, Booking.status == from_status)
             .values(status=new_status)
         )
         await self._session.flush()

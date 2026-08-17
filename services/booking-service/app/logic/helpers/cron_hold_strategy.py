@@ -33,26 +33,19 @@ class CronHoldStrategy(TicketHoldStrategy):
         return result.rowcount > 0
 
     async def release_hold(self, ticket_id: uuid.UUID) -> None:
-        await self._session.execute(
-            sa_update(Ticket)
-            .where(Ticket.id == ticket_id, Ticket.status == TicketStatus.HELD)
-            .values(status=TicketStatus.AVAILABLE, hold_expires_at=None)
-        )
-        await self._session.flush()
+        await self._transition(ticket_id, TicketStatus.HELD, TicketStatus.AVAILABLE)
 
     async def confirm_hold(self, ticket_id: uuid.UUID) -> None:
-        await self._session.execute(
-            sa_update(Ticket)
-            .where(Ticket.id == ticket_id, Ticket.status == TicketStatus.HELD)
-            .values(status=TicketStatus.BOOKED, hold_expires_at=None)
-        )
-        await self._session.flush()
+        await self._transition(ticket_id, TicketStatus.HELD, TicketStatus.BOOKED)
 
     async def release_booking(self, ticket_id: uuid.UUID) -> None:
+        await self._transition(ticket_id, TicketStatus.BOOKED, TicketStatus.AVAILABLE)
+
+    async def _transition(self, ticket_id: uuid.UUID, from_status: TicketStatus, to_status: TicketStatus) -> None:
         await self._session.execute(
             sa_update(Ticket)
-            .where(Ticket.id == ticket_id, Ticket.status == TicketStatus.BOOKED)
-            .values(status=TicketStatus.AVAILABLE, hold_expires_at=None)
+            .where(Ticket.id == ticket_id, Ticket.status == from_status)
+            .values(status=to_status, hold_expires_at=None)
         )
         await self._session.flush()
 

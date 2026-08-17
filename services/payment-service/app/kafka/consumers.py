@@ -35,11 +35,15 @@ async def _run_with_retry(
     failed_event: str,
     **log_context: object,
 ) -> _T | None:
+    # No commit() here, unlike booking-service's copy of this helper: this
+    # service's only caller (_refund) routes through PaymentManager, which
+    # already owns the commit per this project's "Manager methods that
+    # mutate always end with commit()" convention — a second commit on top
+    # would just be a redundant no-op, not a second real write.
     for attempt in range(1, DB_WRITE_MAX_ATTEMPTS + 1):
         try:
             async with session_factory() as session:
                 result = await operation(session)
-                await session.commit()
             return result
         except Exception:
             if attempt == DB_WRITE_MAX_ATTEMPTS:
@@ -103,11 +107,6 @@ class BookingCancelledConsumer:
         safe: same idempotency_key, no double refund."""
 
         async def _refund(session: AsyncSession) -> None:
-            # PaymentManager.refund_payment already commits internally, per
-            # this project's "Manager methods that mutate always end with
-            # commit()" convention — _run_with_retry's own commit() below is
-            # then a harmless no-op on an already-clean session, not a
-            # second real write.
             manager = PaymentManager(session=session, payments=PaymentRepository(session))
             notification_producer = await get_notification_producer()
             await manager.refund_payment(booking_id, notification_producer)

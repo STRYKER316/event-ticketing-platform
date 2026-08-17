@@ -85,6 +85,5 @@ async def cancel_booking(
         bookings=BookingRepository(session),
         hold_strategy=get_hold_strategy(session, redis),
         events=EventRepository(session),
-        cancelled_producer=cancelled_producer,
     )
-    return await manager.cancel_booking(user, booking_id)
+    return await manager.cancel_booking(user, booking_id, cancelled_producer)

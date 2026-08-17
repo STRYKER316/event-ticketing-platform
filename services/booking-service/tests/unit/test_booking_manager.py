@@ -251,13 +251,13 @@ async def test_cancel_booking_happy_path_releases_seat_and_cancels():
         ),
         hold_strategy=FakeHoldStrategy(),
         events=AsyncMock(get_start_time=AsyncMock(return_value=None)),
-        cancelled_producer=AsyncMock(),
     )
+    cancelled_producer = AsyncMock()
 
-    result = await manager.cancel_booking(USER, booking_id)
+    result = await manager.cancel_booking(USER, booking_id, cancelled_producer)
 
     assert result.status is BookingStatus.CANCELLED
-    manager._cancelled_producer.publish_cancelled.assert_awaited_once_with(booking_id)
+    cancelled_producer.publish_cancelled.assert_awaited_once_with(booking_id)
 
 
 async def test_cancel_booking_on_unknown_booking_404s():
@@ -270,7 +270,7 @@ async def test_cancel_booking_on_unknown_booking_404s():
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await manager.cancel_booking(USER, uuid.uuid4())
+        await manager.cancel_booking(USER, uuid.uuid4(), AsyncMock())
     assert exc_info.value.status_code == 404
 
 
@@ -286,7 +286,7 @@ async def test_cancel_booking_by_non_owner_403s():
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await manager.cancel_booking(USER, booking_id)
+        await manager.cancel_booking(USER, booking_id, AsyncMock())
     assert exc_info.value.status_code == 403
 
 
@@ -302,7 +302,7 @@ async def test_cancel_booking_on_non_confirmed_booking_409s():
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await manager.cancel_booking(USER, booking_id)
+        await manager.cancel_booking(USER, booking_id, AsyncMock())
     assert exc_info.value.status_code == 409
 
 
@@ -318,7 +318,7 @@ async def test_cancel_booking_past_event_start_409s():
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await manager.cancel_booking(USER, booking_id)
+        await manager.cancel_booking(USER, booking_id, AsyncMock())
     assert exc_info.value.status_code == 409
 
 
@@ -340,5 +340,5 @@ async def test_cancel_booking_race_lost_409s():
     )
 
     with pytest.raises(HTTPException) as exc_info:
-        await manager.cancel_booking(USER, booking_id)
+        await manager.cancel_booking(USER, booking_id, AsyncMock())
     assert exc_info.value.status_code == 409
