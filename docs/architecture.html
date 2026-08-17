@@ -252,8 +252,8 @@
 
 <section>
   <h2><span class="num">01</span> — Topology</h2>
-  <h3>One entrypoint, three services — Kafka now fans out to two independent consumers</h3>
-  <p class="lede">Traefik routes to three services: <code>event-service</code> on its original catch-all label, <code>search-service</code> on <code>PathPrefix(/search)</code>, <code>booking-service</code> on <code>PathPrefix(/bookings)</code> — both more-specific rules outrank the catch-all by rule length, no explicit priority needed. Publishing an event triggers Kafka integration point #2 — <code>booking-service</code> runs a second, independent consumer group against the same <code>event.events</code> topic, provisioning <code>Ticket</code> rows idempotently. Redis backs one of Booking Service's two swappable hold mechanisms. <strong>Phase 8 addition, not pictured below (on-demand only, not part of the always-on topology):</strong> a <code>benchmark</code>-profiled <code>prometheus</code>+<code>grafana</code> pair (<code>make bench-up</code>/<code>make bench-down</code>), scraping every service's existing <code>/metrics</code> endpoint — see <code>infra/README.md</code> for the profile and <code>/benchmark</code> for the standalone Python load harness that drove the numbers in §08.</p>
+  <h3>One entrypoint, four services — Kafka fans out to two independent consumers, plus one synchronous call</h3>
+  <p class="lede">Traefik routes to four services: <code>event-service</code> on its original catch-all label, <code>search-service</code> on <code>PathPrefix(/search)</code>, <code>booking-service</code> on <code>PathPrefix(/bookings)</code>, <code>payment-service</code> on <code>PathPrefix(/payments)</code> — all three more-specific rules outrank the catch-all by rule length, no explicit priority needed. Publishing an event triggers Kafka integration point #2 — <code>booking-service</code> runs a second, independent consumer group against the same <code>event.events</code> topic, provisioning <code>Ticket</code> rows idempotently. Redis backs one of Booking Service's two swappable hold mechanisms. Paying for a booking (<code>POST /bookings/{id}/pay</code>) makes the system's one synchronous inter-service call into <code>payment-service</code>; Stripe's webhook then drives Kafka integration point #4 (<code>payment.outcomes</code>), which <code>booking-service</code> consumes independently to confirm or release the booking — see the Phase 4 row below. <strong>Phase 8 addition, not pictured below (on-demand only, not part of the always-on topology):</strong> a <code>benchmark</code>-profiled <code>prometheus</code>+<code>grafana</code> pair (<code>make bench-up</code>/<code>make bench-down</code>), scraping every service's existing <code>/metrics</code> endpoint — see <code>infra/README.md</code> for the profile and <code>/benchmark</code> for the standalone Python load harness that drove the numbers in §08.</p>
 
   <figure>
     <svg viewBox="0 0 900 920" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service by a catch-all rule, to search-service by a /search rule, and to booking-service by a /bookings rule; event-service queries Postgres and MongoDB and validates tokens against Keycloak, then publishes a keyed Kafka message on the event.events topic when an event is published or updated while published — a published event can no longer be deleted at all; search-service consumes that topic into Elasticsearch and serves GET /search; booking-service independently consumes the same topic to provision Ticket rows in its own booking_db Postgres database, and serves POST /bookings, acquiring a hold via either a Postgres-column cron strategy or a Redis SET NX EX strategy depending on configuration; booking-service also verifies JWTs against Keycloak like event-service does. Phase 4 adds payment-service: booking-service's POST /bookings/{id}/pay makes a synchronous call, forwarding the caller's JWT, to payment-service's POST /payments/charge, which creates a Stripe test-mode charge and stores a Payment row in its own payment_db Postgres database; Stripe's webhook, verified by signature, drives payment-service to publish a payment.outcomes Kafka message that booking-service consumes independently to confirm or release the booking — this is Kafka integration point #4.">
@@ -828,7 +828,7 @@
   <h2><span class="num">08</span> — Reproduce this yourself</h2>
   <p class="lede">Every command below is real — this is exactly what was run to trace the diagrams above. Takes a couple of minutes.</p>
   <pre><span class="c"># from repo root</span>
-make up                                    <span class="c"># boots all 12 containers</span>
+make up                                    <span class="c"># boots all 13 containers</span>
 make seed                                  <span class="c"># baseline venues/performers/events + one seat map</span>
 
 <span class="c"># public read — hits real postgres, paged + sorted</span>
@@ -850,9 +850,10 @@ TOKEN=$(./get-token.sh carol)
 curl -X PATCH localhost/events/&lt;bob's event id&gt; -H "Authorization: Bearer $TOKEN" ...
 <span class="out">{"detail":"not the owning organizer"}</span>             <span class="fail">403</span>
 
-<span class="c"># bob attaches a seat map over HTTP — no seed script, no manual Mongo write</span>
+<span class="c"># bob attaches a seat map over HTTP — no seed script, no manual Mongo write
+# price_cents is organizer-set per section (Phase 4) — required, not optional</span>
 curl -X PUT localhost/events/&lt;bob's event id&gt;/seat-map -H "Authorization: Bearer $TOKEN" \
-  -d '{"sections":[{"name":"A","rows":[{"name":"1","seats":[{"label":"A1","x":0,"y":0}]}]}]}'
+  -d '{"sections":[{"name":"A","price_cents":5000,"rows":[{"name":"1","seats":[{"label":"A1","x":0,"y":0}]}]}]}'
 <span class="out">{"event_id":"...", "sections":[...]}</span>               <span class="ok">200</span>
 
 <span class="c"># bob publishes his event — this is what triggers the Kafka message</span>
@@ -891,6 +892,31 @@ curl -X POST localhost/bookings -H "Authorization: Bearer $TOKEN" \
 <span class="c"># bob tries to delete his now-published event — refused outright (§15 amendment)</span>
 curl -X DELETE localhost/events/&lt;bob's event id&gt; -H "Authorization: Bearer $TOKEN"
 <span class="out">{"detail":"cannot delete a published event"}</span>          <span class="fail">409</span>
+
+<span class="c"># Phase 4: alice tries to pay for a booking that isn't hers — ownership-scoped, not just role</span>
+BOB_TOKEN=$(./get-token.sh bob)
+curl -X POST localhost/bookings/&lt;alice's booking id&gt;/pay -H "Authorization: Bearer $BOB_TOKEN"
+<span class="out">{"detail":"not your booking"}</span>                        <span class="fail">403</span>
+
+<span class="c"># alice pays her own PENDING booking — the one synchronous inter-service call in this system:
+# booking-service forwards her JWT + the ticket's price_cents to payment-service, which
+# submits a real HTTPS request to Stripe. Fails only at Stripe's own auth boundary here,
+# since .env only has a placeholder STRIPE_SECRET_KEY — confirmed via payment-service's
+# own logs (a genuine "Invalid API Key" from Stripe), not a bug in this system.</span>
+ALICE_TOKEN=$(./get-token.sh alice)
+curl -X POST localhost/bookings/&lt;alice's booking id&gt;/pay -H "Authorization: Bearer $ALICE_TOKEN"
+<span class="out">{"detail":"payment service unreachable"}</span>            <span class="fail">502</span>
+
+<span class="c"># Kafka #4 verified directly, bypassing Stripe (the mechanism under test is the consumer,
+# not Stripe's delivery) — produce a real payment.outcomes message for a real PENDING booking</span>
+uv run --package payment-service python produce_outcome.py &lt;booking id&gt; &lt;ticket id&gt; succeeded
+docker exec -it postgres psql -U booking_service -d booking_db \
+  -c "SELECT status FROM bookings WHERE id = '&lt;booking id&gt;'; SELECT status FROM tickets WHERE id = '&lt;ticket id&gt;';"
+<span class="out">CONFIRMED / BOOKED</span>                                    <span class="ok">live-verified</span>
+
+<span class="c"># the same message redelivered — the idempotent no-op contract, not just a unit-test claim</span>
+uv run --package payment-service python produce_outcome.py &lt;booking id&gt; &lt;ticket id&gt; succeeded
+<span class="out">no second "payment_outcome_applied" log line; booking/ticket unchanged</span>
 
 <span class="c"># Phase 8: reproduce the hold-mechanism benchmark (§07 above)</span>
 make bench-up                              <span class="c"># prometheus + grafana, on demand only</span>

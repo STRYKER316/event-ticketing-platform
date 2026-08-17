@@ -31,8 +31,9 @@ architectural or scope decision.
 
 ```sh
 make up             # copies .env.example -> .env if missing, boots the compose stack
-make migrate         # applies event-service's and booking-service's Alembic migrations
-                      # (required once against a fresh stack -- nothing runs this automatically)
+make migrate         # applies event-service's, booking-service's, and payment-service's
+                      # Alembic migrations (required once against a fresh stack --
+                      # nothing runs this automatically)
 make seed            # populates baseline demo events/venues/seat maps
 ./get-token.sh       # prints an access token for seed user alice (pass a different user/pass as args)
 curl "localhost/events"                                              # public read
@@ -53,23 +54,35 @@ Seed users (see `infra/keycloak/realm-export.json`), all password `changeme`:
 | `bob` | `user`, `organizer` |
 | `carol` | `organizer` |
 
-**Stripe CLI** (`stripe listen --forward-to ...`) isn't needed yet — that's P4
-(§24). Notifications are log-only for now (§19), no SendGrid/etc. needed.
+**Stripe CLI** (`stripe listen --forward-to ...`) is needed for local webhook
+forwarding (§24, `services/payment-service/README.md`) — `.env` currently
+only has a placeholder `STRIPE_SECRET_KEY`, so a real charge round-trip
+needs a real Stripe test-mode key supplied first. Notifications are log-only
+for now (§19), no SendGrid/etc. needed.
 
 ## Status
 
-Phases 0-3 and 8 complete: walking skeleton, Event Service, Search Service +
-Kafka #1, and Booking Service (dual hold strategy: cron sweep + Redis TTL,
-proven under real concurrent load) — plus a P1 addendum (venue/seat-map
-write API), a pre-Phase-3 hardening pass (adversarial testing, 5 bugs found
-and fixed), a Phase 3 checkpoint with two review passes (a dedicated
-adversarial one on top of the routine gate, since the dual hold strategy is
-the one bug class that silently corrupts the product's core guarantee), and
-Phase 8 (Hold-Mechanism Benchmark, the report's centerpiece) — a measured
+Phases 0-4 and 8 complete: walking skeleton, Event Service, Search Service +
+Kafka #1, Booking Service (dual hold strategy: cron sweep + Redis TTL,
+proven under real concurrent load), and Payment Service (Stripe test-mode
+charge + webhook, Kafka #4 payment-outcome confirm/release, the system's one
+synchronous inter-service call) — plus a P1 addendum (venue/seat-map write
+API), a pre-Phase-3 hardening pass (adversarial testing, 5 bugs found and
+fixed), a Phase 3 checkpoint with two review passes (a dedicated adversarial
+one on top of the routine gate, since the dual hold strategy is the one bug
+class that silently corrupts the product's core guarantee), Phase 8
+(Hold-Mechanism Benchmark, the report's centerpiece) — a measured
 cron-vs-Redis comparison plus release-latency (immediate vs. passive), see
 `docs/benchmark-results/` and `docs/report/feature-development-process.md`
-— see `docs/build-log.md` for all of the above. Phase 4 (Payment Service +
-Stripe + Confirmation) is next per the locked report-first build order; see
-`/docs/phases/` for task checklists and `/docs/architecture.html` for
-current system state.
+— and Phase 4, which added organizer-set per-section ticket pricing
+(retroactively touching Event Service's seat map and Booking Service's
+`Ticket` model) and caught two real bugs via live testing against the
+running stack (a stuck payment-idempotency short-circuit, a Postgres
+bind-param overflow) — see `docs/build-log.md` for all of the above. Real
+Stripe test-mode credentials weren't available this session, so the
+charge→webhook→confirm round trip is Tested but not yet Verified against
+the real Stripe API — tracked on Phase 4's exit checklist, not silently
+marked done. Phase 6 (Cancellation & Refunds) is next per the locked
+report-first build order; see `/docs/phases/` for task checklists and
+`/docs/architecture.html` for current system state.
 

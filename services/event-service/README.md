@@ -14,6 +14,11 @@ event-carried seat list on every visibility-affecting mutation. Hardened via a
 pre-Phase-3 adversarial testing pass (DTO bounds, a concurrent-delete race, a Kafka
 producer timeout — see `docs/build-log.md`).
 
+**Phase 4 addition:** each seat-map section carries an organizer-set
+`price_cents` (`Field(gt=0)`), carried through the event-carried Kafka
+payload into Booking Service's `Ticket.price_cents` — what Payment Service
+charges against (decisions-log §9/§16 amendments).
+
 ## Run locally
 
 ```sh
