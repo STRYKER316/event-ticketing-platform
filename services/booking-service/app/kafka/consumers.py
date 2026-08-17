@@ -166,7 +166,7 @@ def build_payment_outcome_consumer() -> AIOKafkaConsumer:
     return AIOKafkaConsumer(
         settings.payment_outcomes_topic,
         bootstrap_servers=settings.kafka_bootstrap_servers,
-        group_id=settings.kafka_consumer_group_id,
+        group_id=settings.payment_outcome_consumer_group_id,
         auto_offset_reset="earliest",
         # Same reasoning as build_kafka_consumer() above — manual, per-record
         # offset commit only after _handle() has fully finished.

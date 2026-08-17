@@ -116,13 +116,16 @@ async def test_webhook_success_transitions_pending_payment_and_publishes():
         idempotency_key="k",
         created_at=datetime.now(timezone.utc),
     )
-    payments = AsyncMock(get_by_stripe_charge_id=AsyncMock(return_value=payment))
+    payments = AsyncMock(
+        get_by_stripe_charge_id=AsyncMock(return_value=payment), transition_if_pending=AsyncMock(return_value=True)
+    )
     manager = PaymentManager(session=AsyncMock(), payments=payments)
     producer = AsyncMock()
 
     await manager.handle_webhook_event(_webhook_event("payment_intent.succeeded", "pi_123"), producer)
 
     assert payment.status is PaymentStatus.SUCCEEDED
+    payments.transition_if_pending.assert_awaited_once_with("pi_123", PaymentStatus.SUCCEEDED)
     producer.publish_outcome.assert_awaited_once_with(payment)
 
 
@@ -142,7 +145,9 @@ async def test_replayed_webhook_on_already_terminal_payment_is_a_safe_no_op():
         idempotency_key="k",
         created_at=datetime.now(timezone.utc),
     )
-    payments = AsyncMock(get_by_stripe_charge_id=AsyncMock(return_value=payment))
+    payments = AsyncMock(
+        get_by_stripe_charge_id=AsyncMock(return_value=payment), transition_if_pending=AsyncMock(return_value=False)
+    )
     manager = PaymentManager(session=AsyncMock(), payments=payments)
     producer = AsyncMock()
 

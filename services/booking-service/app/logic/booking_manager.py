@@ -111,6 +111,18 @@ class BookingManager:
         try:
             response = await http_client.post(url, json=payload, headers={"Authorization": f"Bearer {bearer_token}"})
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            # Payment Service was reachable and answered with a real error of
+            # its own (e.g. its own 502 when Stripe is unreachable) — not the
+            # same failure as a connection/timeout below (found in code
+            # review: both used to collapse into the same misleading
+            # "unreachable" message). Forward its status verbatim.
+            logger.error(
+                "pay_booking_payment_service_rejected",
+                booking_id=str(booking.id),
+                status_code=exc.response.status_code,
+            )
+            raise HTTPException(exc.response.status_code, "payment service rejected the charge attempt") from exc
         except httpx.HTTPError as exc:
             logger.error("pay_booking_payment_service_call_failed", booking_id=str(booking.id), error=str(exc))
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "payment service unreachable") from exc

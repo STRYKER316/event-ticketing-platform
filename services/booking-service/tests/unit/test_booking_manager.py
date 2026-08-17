@@ -190,3 +190,29 @@ async def test_pay_booking_502s_when_payment_service_unreachable():
     with pytest.raises(HTTPException) as exc_info:
         await manager.pay_booking(USER, booking_id, "token", http_client)
     assert exc_info.value.status_code == 502
+
+
+async def test_pay_booking_forwards_payment_service_status_when_it_answers_with_an_error():
+    # Payment Service being reachable and rejecting the request (e.g. its
+    # own 502 when Stripe is down) is a different failure than a connection
+    # error — must not collapse into the same misleading "unreachable" 502
+    # regardless of what Payment Service actually said (found in code review).
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    booking = _pending_booking(booking_id, ticket_id)
+    ticket = Ticket(id=ticket_id, event_id=booking.event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.HELD)
+    error_response = httpx.Response(422, request=httpx.Request("POST", "http://payment-service/payments/charge"))
+    http_client = AsyncMock(
+        post=AsyncMock(
+            return_value=MagicMock(raise_for_status=MagicMock(side_effect=httpx.HTTPStatusError("bad", request=error_response.request, response=error_response)))
+        )
+    )
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(get_by_id=AsyncMock(return_value=ticket)),
+        bookings=AsyncMock(get_by_id=AsyncMock(return_value=booking)),
+        hold_strategy=FakeHoldStrategy(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.pay_booking(USER, booking_id, "token", http_client)
+    assert exc_info.value.status_code == 422

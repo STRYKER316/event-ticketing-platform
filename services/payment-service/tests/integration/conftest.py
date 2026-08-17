@@ -33,3 +33,12 @@ async def db_session(_migrated_database_url: str) -> AsyncIterator[AsyncSession]
     async with engine.begin() as conn:
         await conn.execute(text("DELETE FROM payments"))
     await engine.dispose()
+
+
+@pytest.fixture
+def db_session_factory(_migrated_database_url: str) -> async_sessionmaker[AsyncSession]:
+    """For tests needing multiple independent, concurrently-open sessions
+    (e.g. a real race between two overlapping webhook deliveries) — a
+    single shared `db_session` can't model that."""
+    engine: AsyncEngine = create_async_engine(_migrated_database_url)
+    return async_sessionmaker(engine, expire_on_commit=False)

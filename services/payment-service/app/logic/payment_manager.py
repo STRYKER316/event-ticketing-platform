@@ -1,6 +1,7 @@
 import stripe
 import structlog
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import ChargeRequest, PaymentResponse
@@ -22,27 +23,25 @@ class PaymentManager:
         self._payments = payments
 
     async def create_charge(self, payload: ChargeRequest) -> PaymentResponse:
-        existing = await self._payments.get_by_booking_id(payload.booking_id)
-        if existing is not None and existing.stripe_charge_id is not None:
-            # Idempotent by construction (§9): a retried charge attempt for a
-            # booking Stripe already accepted (stripe_charge_id set) returns
-            # it as-is rather than calling Stripe again — Stripe's own
-            # idempotency_key (booking ID) would also prevent a double
-            # charge, but this avoids the extra API call and makes the no-op
-            # explicit. A Payment row with no stripe_charge_id yet means the
-            # previous attempt never actually reached Stripe (see
-            # _submit_to_stripe's error path) — that case falls through
-            # below and genuinely retries, rather than getting stuck replaying
-            # a charge Stripe never received.
+        payment = await self._resolve_payment_row(payload)
+        if payment.stripe_charge_id is None:
+            # A row with no stripe_charge_id yet means either this is a
+            # brand-new attempt, or a previous one never actually reached
+            # Stripe (see _submit_to_stripe's error path) — either way this
+            # genuinely (re)submits, rather than getting stuck replaying a
+            # charge Stripe never received. A row that already has one is
+            # skipped entirely: idempotent by construction (§9), Stripe
+            # already accepted this idempotency_key, no second API call.
+            await self._submit_to_stripe(payment, payload)
+            await self._session.commit()
+        else:
             logger.info("charge_idempotent_replay", booking_id=str(payload.booking_id))
-            return self._build_response(existing)
-
-        payment = existing or await self._create_pending_payment(payload)
-        await self._submit_to_stripe(payment, payload)
-        await self._session.commit()
         return self._build_response(payment)
 
-    async def _create_pending_payment(self, payload: ChargeRequest) -> Payment:
+    async def _resolve_payment_row(self, payload: ChargeRequest) -> Payment:
+        existing = await self._payments.get_by_booking_id(payload.booking_id)
+        if existing is not None:
+            return existing
         payment = Payment(
             booking_id=payload.booking_id,
             ticket_id=payload.ticket_id,
@@ -50,9 +49,21 @@ class PaymentManager:
             currency=payload.currency,
             idempotency_key=str(payload.booking_id),
         )
-        await self._payments.create(payment)
-        await self._session.commit()
-        return payment
+        try:
+            await self._payments.create(payment)
+            await self._session.commit()
+            return payment
+        except IntegrityError:
+            # Lost a race to a concurrent first-time charge attempt for the
+            # same booking — the unique index on booking_id caught it
+            # (found in code review: this was previously unhandled, a 500
+            # instead of a clean idempotent resolution). Use the winner's
+            # row instead of erroring out; create_charge's caller-side check
+            # on stripe_charge_id decides whether it still needs submitting.
+            await self._session.rollback()
+            winner = await self._payments.get_by_booking_id(payload.booking_id)
+            assert winner is not None, "IntegrityError on booking_id implies a row now exists"
+            return winner
 
     async def _submit_to_stripe(self, payment: Payment, payload: ChargeRequest) -> None:
         # This call only *initiates* the charge attempt (§9 amendment) —
@@ -83,8 +94,18 @@ class PaymentManager:
         truth for a Payment's terminal status, not create_charge()'s
         synchronous Stripe response. Idempotent by construction (§7's
         general rule, applied to a webhook the same as a Kafka consumer):
-        only transitions a Payment that's still PENDING, so a redelivered
-        webhook for an already-terminal Payment is a safe no-op."""
+        a rowcount-gated conditional UPDATE only transitions a Payment
+        that's still PENDING, so a redelivered webhook — or two overlapping
+        deliveries racing each other — can't both win it.
+
+        Publishes *before* committing (found in code review): the reverse
+        order let a Kafka-publish failure strand a Payment in its new
+        terminal status with no way to retry the publish — Stripe's own
+        webhook retry would hit the PENDING guard and silently no-op,
+        losing the outcome for good. Publishing first means a failure here
+        propagates uncommitted (the request handler's session rolls back on
+        exception), Stripe sees a non-2xx and genuinely retries, and the
+        next attempt finds the row still PENDING and tries again."""
         new_status = _WEBHOOK_OUTCOME_BY_EVENT_TYPE.get(event["type"])
         if new_status is None:
             return
@@ -93,11 +114,12 @@ class PaymentManager:
         if payment is None:
             logger.warning("webhook_payment_not_found", stripe_charge_id=intent_id)
             return
-        if payment.status is not PaymentStatus.PENDING:
+        transitioned = await self._payments.transition_if_pending(intent_id, new_status)
+        if not transitioned:
             logger.info(
                 "webhook_replay_no_op", booking_id=str(payment.booking_id), current_status=payment.status.value
             )
             return
         payment.status = new_status
-        await self._session.commit()
         await producer.publish_outcome(payment)
+        await self._session.commit()

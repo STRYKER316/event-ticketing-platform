@@ -27,7 +27,16 @@ async def create_charge(
     verified the caller owns the booking before making this call; Payment
     Service only needs to know the caller presented a valid Keycloak token
     (any token — it forwards the caller's own bearer token unmodified, so
-    this validates the same way regardless of which service presents it)."""
+    this validates the same way regardless of which service presents it).
+    A valid token alone is *not* sufficient to trust `amount_cents` — this
+    route's real access control is that Traefik never exposes it publicly
+    (`infra/docker-compose.yml`'s router rule covers only `/payments/webhook`,
+    deliberately narrower than every other service's), so it's reachable
+    only over the internal Docker network, by booking-service, which is
+    the thing that actually enforces ownership and looks up the
+    authoritative price (found missing in code review — a valid JWT alone
+    would otherwise let any user submit an arbitrary amount for any
+    booking)."""
     manager = PaymentManager(session=session, payments=PaymentRepository(session))
     return await manager.create_charge(payload)
 
