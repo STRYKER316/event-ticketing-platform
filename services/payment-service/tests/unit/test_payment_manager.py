@@ -180,3 +180,108 @@ async def test_create_charge_raises_502_when_stripe_unreachable(monkeypatch):
     with pytest.raises(HTTPException) as exc_info:
         await manager.create_charge(_payload(booking_id))
     assert exc_info.value.status_code == 502
+
+
+def _succeeded_payment(booking_id: uuid.UUID, stripe_charge_id: str = "pi_123") -> Payment:
+    return Payment(
+        id=uuid.uuid4(),
+        booking_id=booking_id,
+        ticket_id=uuid.uuid4(),
+        amount_cents=2500,
+        currency="usd",
+        status=PaymentStatus.SUCCEEDED,
+        stripe_charge_id=stripe_charge_id,
+        idempotency_key=str(booking_id),
+        stripe_refund_id=None,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+async def test_refund_payment_happy_path_calls_stripe_with_booking_refund_idempotency_key(monkeypatch):
+    booking_id = uuid.uuid4()
+    payment = _succeeded_payment(booking_id)
+    payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=payment))
+    manager = PaymentManager(session=AsyncMock(), payments=payments)
+    notification_producer = AsyncMock()
+
+    fake_refund = MagicMock(id="re_123")
+    refund_mock = AsyncMock(return_value=fake_refund)
+    monkeypatch.setattr(stripe.Refund, "create_async", refund_mock)
+
+    await manager.refund_payment(booking_id, notification_producer)
+
+    refund_mock.assert_awaited_once()
+    assert refund_mock.call_args.kwargs["idempotency_key"] == f"{booking_id}-refund"
+    assert refund_mock.call_args.kwargs["payment_intent"] == "pi_123"
+    assert payment.status is PaymentStatus.REFUNDED
+    assert payment.stripe_refund_id == "re_123"
+    notification_producer.publish_refund_failed.assert_not_awaited()
+
+
+async def test_refund_payment_on_unknown_booking_is_a_safe_no_op():
+    payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=None))
+    manager = PaymentManager(session=AsyncMock(), payments=payments)
+    notification_producer = AsyncMock()
+
+    await manager.refund_payment(uuid.uuid4(), notification_producer)
+
+    notification_producer.publish_refund_failed.assert_not_awaited()
+
+
+async def test_refund_payment_replay_after_success_is_a_safe_no_op(monkeypatch):
+    # The correctness contract this exists to satisfy (§7's general
+    # idempotent-consumer rule, applied to a Kafka consumer instead of a
+    # webhook): a redelivered booking.cancelled message for an
+    # already-refunded Payment must not call Stripe a second time.
+    booking_id = uuid.uuid4()
+    payment = _succeeded_payment(booking_id)
+    payment.stripe_refund_id = "re_already_done"
+    payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=payment))
+    manager = PaymentManager(session=AsyncMock(), payments=payments)
+    notification_producer = AsyncMock()
+
+    refund_mock = AsyncMock()
+    monkeypatch.setattr(stripe.Refund, "create_async", refund_mock)
+
+    await manager.refund_payment(booking_id, notification_producer)
+
+    refund_mock.assert_not_awaited()
+
+
+async def test_refund_payment_on_non_succeeded_payment_is_a_safe_no_op(monkeypatch):
+    booking_id = uuid.uuid4()
+    payment = _succeeded_payment(booking_id)
+    payment.status = PaymentStatus.PENDING
+    payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=payment))
+    manager = PaymentManager(session=AsyncMock(), payments=payments)
+    notification_producer = AsyncMock()
+
+    refund_mock = AsyncMock()
+    monkeypatch.setattr(stripe.Refund, "create_async", refund_mock)
+
+    await manager.refund_payment(booking_id, notification_producer)
+
+    refund_mock.assert_not_awaited()
+
+
+async def test_refund_payment_on_stripe_failure_publishes_notification_and_leaves_status_unchanged(monkeypatch):
+    # §22's explicit scope boundary: a failed refund is logged and surfaced,
+    # not rolled back — Payment.status must stay SUCCEEDED, not flip to any
+    # terminal-looking state, so a future retry can still attempt it again.
+    booking_id = uuid.uuid4()
+    payment = _succeeded_payment(booking_id)
+    payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=payment))
+    manager = PaymentManager(session=AsyncMock(), payments=payments)
+    notification_producer = AsyncMock()
+
+    async def _raise(*args, **kwargs):
+        raise stripe.error.APIConnectionError("boom")
+
+    monkeypatch.setattr(stripe.Refund, "create_async", _raise)
+
+    await manager.refund_payment(booking_id, notification_producer)
+
+    assert payment.status is PaymentStatus.SUCCEEDED
+    assert payment.stripe_refund_id is None
+    notification_producer.publish_refund_failed.assert_awaited_once()
+    assert notification_producer.publish_refund_failed.call_args.args[0] == booking_id

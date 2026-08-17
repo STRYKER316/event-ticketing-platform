@@ -1,3 +1,5 @@
+import uuid
+
 import stripe
 import structlog
 from fastapi import HTTPException, status
@@ -7,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import ChargeRequest, PaymentResponse
 from app.db.models import Payment, PaymentStatus
 from app.db.payment_repository import PaymentRepository
-from app.kafka.producers import PaymentOutcomeProducer
+from app.kafka.producers import NotificationProducer, PaymentOutcomeProducer
 
 logger = structlog.get_logger()
 
@@ -122,4 +124,58 @@ class PaymentManager:
             return
         payment.status = new_status
         await producer.publish_outcome(payment)
+        await self._session.commit()
+
+    async def refund_payment(
+        self, booking_id: uuid.UUID, notification_producer: NotificationProducer
+    ) -> None:
+        """Cancellation-triggered refund (§22, integration point #5) —
+        called from BookingCancelledConsumer, no equivalent API route (this
+        service has no access to booking_db to check ownership, §8; the
+        booking.cancelled message is itself the authorization — Booking
+        Service already enforced ownership before publishing it).
+
+        Idempotency gate mirrors create_charge's "resubmit only if the
+        provider-side ID column is still NULL" pattern rather than a
+        rowcount-gated status transition: a genuinely concurrent redelivery
+        race isn't reachable here the way it was for the webhook route
+        (this consumer processes one Kafka partition's records strictly
+        sequentially), so only crash-then-restart redelivery is possible,
+        not two overlapping deliveries — the same resubmission-gate
+        reasoning already proven correct for charges applies unchanged."""
+        payment = await self._payments.get_by_booking_id(booking_id)
+        if payment is None:
+            logger.warning("refund_payment_not_found", booking_id=str(booking_id))
+            return
+        if payment.stripe_refund_id is not None:
+            logger.info("refund_replay_no_op", booking_id=str(booking_id))
+            return
+        if payment.status is not PaymentStatus.SUCCEEDED:
+            logger.warning(
+                "refund_payment_unexpected_status", booking_id=str(booking_id), status=payment.status.value
+            )
+            return
+        await self._submit_refund_to_stripe(payment, notification_producer)
+
+    async def _submit_refund_to_stripe(self, payment: Payment, notification_producer: NotificationProducer) -> None:
+        try:
+            refund = await stripe.Refund.create_async(
+                payment_intent=payment.stripe_charge_id,
+                idempotency_key=f"{payment.booking_id}-refund",
+            )
+        except stripe.error.StripeError as exc:
+            # Refund-failure path (§22's explicit scope boundary — no
+            # re-lock, no rollback): logged as a warning, not an error —
+            # this is Stripe/the card network declining, an expected,
+            # handled failure per the log-level-discipline convention, not
+            # a system incident. Payment.status stays SUCCEEDED so a future
+            # redelivery or manual retry can still attempt the refund
+            # again; do not re-raise, a Kafka consumer's per-message
+            # exception handling shouldn't kill the background consumer
+            # task over a Stripe-side failure that's already been surfaced.
+            logger.warning("stripe_refund_submission_failed", booking_id=str(payment.booking_id), error=str(exc))
+            await notification_producer.publish_refund_failed(payment.booking_id, str(exc))
+            return
+        payment.stripe_refund_id = refund.id
+        payment.status = PaymentStatus.REFUNDED
         await self._session.commit()

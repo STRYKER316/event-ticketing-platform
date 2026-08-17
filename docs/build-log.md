@@ -2573,3 +2573,86 @@ implementation rather than during it.
 `CLAUDE.md` update: none needed — no new convention, this extends existing
 ones (rowcount-gated transition pattern, event-carried-state-transfer
 Kafka payload reuse).
+
+## 2026-08-17 — P6.T2+T3: Kafka #5 (booking.cancelled → Stripe refund) and the refund-failure notification producer
+
+Implemented together, not as two separate commits — `PaymentManager
+.refund_payment`'s success and failure branches are two ends of one
+method, and splitting them would have meant an intermediate commit where a
+Stripe failure crashed the consumer with an unhandled exception. Both are
+still separately evidenced below and in `phase-6-kickoff.md`'s exit
+checklist.
+
+**Booking Service** (its first-ever Kafka producer): added `get_kafka_producer
+`/`close_kafka_producer` to `core.py`, mirroring payment-service's own
+singleton exactly; a new `kafka/producers.py` with `BookingCancelledProducer`
+(thin `send_and_wait` wrapper, keyed by booking ID, mirroring
+`PaymentOutcomeProducer`); a `BookingCancelledMessage` schema
+(`booking_id` only — Payment Service already holds everything else keyed
+off that ID). Wired into `BookingManager.cancel_booking`: publish
+*before* `session.commit()`, same reasoning as the Phase 4 CHECKPOINT fix
+to `handle_webhook_event` — a publish failure must propagate uncommitted
+so the whole cancel request fails and retries cleanly, rather than
+stranding a `CANCELLED` booking whose refund trigger never reached
+Payment Service.
+
+**Payment Service** (its first-ever Kafka consumer): added
+`PaymentStatus.REFUNDED` and a `stripe_refund_id` column (migration
+`0c1c541204d5` — the Postgres `ALTER TYPE ... ADD VALUE` had to run in
+its own `op.get_context().autocommit_block()`, separate from the column
+addition, since it can't share a transaction with a statement that uses
+the new value); `PaymentManager.refund_payment`, gated by
+`stripe_refund_id is None` — deliberately the same "resubmit only if the
+provider-side ID column is still NULL" shape `create_charge` already uses,
+not a rowcount-gated transition, since a genuinely concurrent redelivery
+race isn't reachable here the way it was for the webhook route (this
+consumer's records are processed strictly sequentially, so only
+crash-then-restart redelivery is possible). On a `stripe.error.StripeError`:
+logged at `warning` (an expected, handled failure per the log-level
+convention, not an incident), `Payment.status` stays `SUCCEEDED` — no
+re-lock, no rollback, per §22's explicit scope boundary — and a
+`NotificationMessage` (`action=refund_failed`) publishes to a new
+`notifications` topic. Added `BookingCancelledConsumer`
+(`kafka/consumers.py`, new file) and its `main.py` lifespan wiring,
+following the same `enable_auto_commit=False` + manual per-record commit +
+bounded DB-write retry shape as booking-service's own consumers (the
+retry/backoff constants and helpers are duplicated locally rather than
+shared — these are two independently deployable services, same reasoning
+Kafka schemas are always independently defined on each side already).
+
+**Live-verified end-to-end through the real HTTP/Kafka path**, not a
+bypass: created a real booking, paid (fails at Stripe's placeholder-key
+boundary as expected), reached `CONFIRMED` via the same self-signed-webhook
+technique Phase 4 established, then cancelled it through the real
+`/bookings/{id}/cancel` route. `payment-service`'s own logs show the full
+chain firing: `booking.cancelled` consumed, a real
+`POST https://api.stripe.com/v1/refunds` request reaching Stripe's actual
+API boundary (401 on the placeholder key, same expected failure mode as
+Phase 4's charge flow — not a bypass or a mock), the refund-failure branch
+triggering, and `notification_published` logged. Verified the
+`notifications` topic directly with a throwaway `kafka-console-consumer`
+— the message landed with the correct shape (`refund_failed`, correct
+`booking_id`, Stripe's real error message as `reason`). Verified
+redelivery live too: hand-crafted the identical `booking.cancelled`
+message via `kafka-console-producer` and replayed it — since the first
+attempt's refund never actually succeeded (`stripe_refund_id` stayed
+`NULL`, only reachable outcome without real Stripe credentials), the
+redelivery correctly *retried* the refund rather than silently no-op'ing,
+exactly the resubmission-gate semantics documented above; the true
+"already-refunded redelivery is a no-op" case is covered by the mocked
+integration test (`test_refund_payment_replay_against_real_db_does_not_double_refund`)
+since it needs a real Stripe success to observe live. What's left needs a
+real Stripe account specifically: a real refund succeeding against
+Stripe's API — same precisely-scoped gap Phase 4's charge flow carries.
+
+Full suite after this task: `booking-service` 68/68 (unchanged from
+P6.T1); `payment-service` 21/21 (up from 12 before this task — 5 new unit
+tests for `refund_payment`'s branches plus 4 new integration tests,
+including two against `BookingCancelledConsumer._handle` directly for
+redelivery and Stripe-failure behavior).
+
+Decisions-log delta: none — this implements what the §22 amendment
+(recorded before P6.T1) already specified.
+`CLAUDE.md` update: none needed — extends existing conventions (the
+publish-before-commit pattern, the resubmission-gate idempotency shape,
+manual-commit consumer retry).

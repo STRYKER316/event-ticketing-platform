@@ -10,7 +10,15 @@ from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api import bookings, health
-from app.core import close_http_client, close_redis, configure_logging, dispose_engine, get_redis, get_session_factory
+from app.core import (
+    close_http_client,
+    close_kafka_producer,
+    close_redis,
+    configure_logging,
+    dispose_engine,
+    get_redis,
+    get_session_factory,
+)
 from app.kafka.consumers import (
     PaymentOutcomeConsumer,
     ProvisioningConsumer,
@@ -77,7 +85,9 @@ async def lifespan(app: FastAPI):
             if consumer is not None:
                 await consumer.stop()
         # Independent teardowns — no ordering dependency between them.
-        await asyncio.gather(dispose_engine(), close_redis(), close_http_client(), shared_auth.aclose())
+        await asyncio.gather(
+            dispose_engine(), close_redis(), close_http_client(), close_kafka_producer(), shared_auth.aclose()
+        )
 
 
 def create_app() -> FastAPI:

@@ -184,6 +184,7 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       EVENTS_TOPIC: event.events
       PAYMENT_OUTCOMES_TOPIC: payment.outcomes
+      CANCELLED_BOOKINGS_TOPIC: booking.cancelled
       HOLD_STRATEGY: cron
       PAYMENT_SERVICE_URL: http://payment-service:8004
       AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
@@ -220,6 +221,8 @@ services:
       PAYMENT_SERVICE_PORT: 8004
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       PAYMENT_OUTCOMES_TOPIC: payment.outcomes
+      CANCELLED_BOOKINGS_TOPIC: booking.cancelled
+      NOTIFICATIONS_TOPIC: notifications
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
       AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}

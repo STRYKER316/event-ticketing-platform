@@ -17,3 +17,30 @@ class PaymentOutcomeMessage(BaseModel):
     action: PaymentOutcomeAction
     booking_id: uuid.UUID
     ticket_id: uuid.UUID
+
+
+class BookingCancelledMessage(BaseModel):
+    """Consumer-side schema for integration point #5 (§22) — mirrors
+    booking-service's producer-side schema, independently defined on this
+    side same as PaymentOutcomeMessage's own pattern is mirrored the other
+    direction in booking-service/app/kafka/schemas.py."""
+
+    booking_id: uuid.UUID
+
+
+class NotificationAction(enum.Enum):
+    # Only REFUND_FAILED exists this phase — BOOKING_CONFIRMED/
+    # PAYMENT_CONFIRMED are Phase 5's job, added alongside their own
+    # producer call sites and the consumer that will finally read all
+    # three (§22 amendment #3).
+    REFUND_FAILED = "refund_failed"
+
+
+class NotificationMessage(BaseModel):
+    """Producer side only this phase (§22 amendment #3) — integration
+    point #3's consumer (Notification Service) doesn't exist until Phase
+    5."""
+
+    action: NotificationAction
+    booking_id: uuid.UUID
+    reason: str

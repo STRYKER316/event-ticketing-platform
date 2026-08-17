@@ -24,6 +24,12 @@ class Settings(BaseSettings):
 
     kafka_bootstrap_servers: str = "localhost:9094"
     payment_outcomes_topic: str = "payment.outcomes"
+    # Integration point #5 (§22) — this service's first-ever Kafka consumer.
+    cancelled_bookings_topic: str = "booking.cancelled"
+    cancelled_bookings_consumer_group_id: str = "payment-service-cancelled-bookings"
+    # Integration point #3, producer side only this phase (§22 amendment #3)
+    # — Notification Service doesn't exist yet to consume it.
+    notifications_topic: str = "notifications"
 
     stripe_secret_key: str = "sk_test_changeme"
     stripe_webhook_secret: str = "whsec_changeme"

@@ -251,11 +251,13 @@ async def test_cancel_booking_happy_path_releases_seat_and_cancels():
         ),
         hold_strategy=FakeHoldStrategy(),
         events=AsyncMock(get_start_time=AsyncMock(return_value=None)),
+        cancelled_producer=AsyncMock(),
     )
 
     result = await manager.cancel_booking(USER, booking_id)
 
     assert result.status is BookingStatus.CANCELLED
+    manager._cancelled_producer.publish_cancelled.assert_awaited_once_with(booking_id)
 
 
 async def test_cancel_booking_on_unknown_booking_404s():

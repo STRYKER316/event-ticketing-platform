@@ -12,6 +12,7 @@ from app.core import get_http_client, get_redis, get_session
 from app.db.booking_repository import BookingRepository
 from app.db.event_repository import EventRepository
 from app.db.ticket_repository import TicketRepository
+from app.kafka.producers import BookingCancelledProducer, get_booking_cancelled_producer
 from app.logic.booking_manager import BookingManager
 from app.logic.helpers.hold_strategy_factory import get_hold_strategy
 
@@ -73,6 +74,7 @@ async def cancel_booking(
     user: Principal = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
+    cancelled_producer: BookingCancelledProducer = Depends(get_booking_cancelled_producer),
 ) -> BookingResponse:
     """Authenticated, ownership-scoped: only the booking's own user may
     cancel it (403 otherwise), and only while it's still CONFIRMED (409
@@ -83,5 +85,6 @@ async def cancel_booking(
         bookings=BookingRepository(session),
         hold_strategy=get_hold_strategy(session, redis),
         events=EventRepository(session),
+        cancelled_producer=cancelled_producer,
     )
     return await manager.cancel_booking(user, booking_id)

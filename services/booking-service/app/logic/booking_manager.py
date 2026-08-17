@@ -14,6 +14,7 @@ from app.db.booking_repository import BookingRepository
 from app.db.event_repository import EventRepository
 from app.db.models import Booking, BookingStatus, Ticket, TicketStatus
 from app.db.ticket_repository import TicketRepository
+from app.kafka.producers import BookingCancelledProducer
 from app.logic.helpers.hold_strategy import TicketHoldStrategy
 
 logger = structlog.get_logger()
@@ -27,12 +28,18 @@ class BookingManager:
         bookings: BookingRepository,
         hold_strategy: TicketHoldStrategy,
         events: EventRepository,
+        cancelled_producer: BookingCancelledProducer | None = None,
     ):
         self._session = session
         self._tickets = tickets
         self._bookings = bookings
         self._hold_strategy = hold_strategy
         self._events = events
+        # Only cancel_booking needs this — unlike `events` (cheap to always
+        # construct), the producer requires an async Kafka connection, so
+        # create_booking/pay_booking callers shouldn't be forced to pay for
+        # or supply one.
+        self._cancelled_producer = cancelled_producer
 
     async def create_booking(self, user: Principal, ticket_id: uuid.UUID) -> BookingResponse:
         ticket = await self._fetch_bookable_ticket(ticket_id)
@@ -138,9 +145,7 @@ class BookingManager:
     async def cancel_booking(self, user: Principal, booking_id: uuid.UUID) -> BookingResponse:
         """Owner-only, CONFIRMED-only, full-refund cancellation (§22).
         Optimistic immediate seat release — the ticket returns to AVAILABLE
-        as part of this same call, not deferred to any later sweep. Kafka
-        publish (booking.cancelled, integration point #5) is added in
-        P6.T2, not here."""
+        as part of this same call, not deferred to any later sweep."""
         booking = await self._fetch_owned_confirmed_booking(user, booking_id)
         await self._check_before_event_start(booking)
         await self._transition_and_release(booking)
@@ -175,4 +180,12 @@ class BookingManager:
             raise HTTPException(status.HTTP_409_CONFLICT, "booking is not confirmed")
         booking.status = BookingStatus.CANCELLED
         await self._hold_strategy.release_booking(booking.ticket_id)
+        # Publish before commit (§22, integration point #5) — same
+        # reasoning as the Phase 4 CHECKPOINT fix to handle_webhook_event:
+        # publishing after commit risks stranding a CANCELLED booking whose
+        # refund trigger never reached Payment Service if the publish
+        # itself fails. Publishing first means a publish failure propagates
+        # uncommitted and the whole request 5xx-and-retries, still CONFIRMED.
+        assert self._cancelled_producer is not None, "cancel_booking requires a BookingCancelledProducer"
+        await self._cancelled_producer.publish_cancelled(booking.id)
         await self._session.commit()

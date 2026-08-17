@@ -7,6 +7,7 @@ from typing import Literal
 
 import httpx
 import structlog
+from aiokafka import AIOKafkaProducer
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -30,6 +31,8 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = "localhost:9094"
     events_topic: str = "event.events"
     payment_outcomes_topic: str = "payment.outcomes"
+    # Integration point #5 (§22) — this service's first-ever Kafka producer.
+    cancelled_bookings_topic: str = "booking.cancelled"
     kafka_consumer_group_id: str = "booking-service"
     # Separate from kafka_consumer_group_id (found in code review): sharing
     # one group id across both consumers meant every payment.outcomes
@@ -173,3 +176,29 @@ async def close_http_client() -> None:
     if _http_client is not None:
         await _http_client.aclose()
         _http_client = None
+
+
+_kafka_producer: AIOKafkaProducer | None = None
+_kafka_producer_lock = asyncio.Lock()
+
+
+async def get_kafka_producer() -> AIOKafkaProducer:
+    """This service has only ever consumed Kafka until now (§22, integration
+    point #5) — mirrors payment-service/app/core.py's own producer
+    singleton exactly."""
+    global _kafka_producer
+    async with _kafka_producer_lock:
+        if _kafka_producer is None:
+            producer = AIOKafkaProducer(
+                bootstrap_servers=get_settings().kafka_bootstrap_servers, request_timeout_ms=10_000
+            )
+            await producer.start()
+            _kafka_producer = producer
+    return _kafka_producer
+
+
+async def close_kafka_producer() -> None:
+    global _kafka_producer
+    if _kafka_producer is not None:
+        await _kafka_producer.stop()
+        _kafka_producer = None

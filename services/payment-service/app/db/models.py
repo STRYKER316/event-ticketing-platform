@@ -15,6 +15,7 @@ class PaymentStatus(enum.Enum):
     PENDING = "pending"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
+    REFUNDED = "refunded"
 
 
 class Payment(Base):
@@ -35,6 +36,10 @@ class Payment(Base):
     # rather than re-derived, so a replayed charge attempt can be recognized
     # without assuming booking_id and idempotency_key will always be identical.
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Resubmission gate for refund_payment (§22), same shape as
+    # stripe_charge_id's own "NULL means not yet submitted" role in
+    # create_charge.
+    stripe_refund_id: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()

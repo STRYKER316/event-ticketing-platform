@@ -57,3 +57,12 @@ class PaymentOutcomeMessage(BaseModel):
     action: PaymentOutcomeAction
     booking_id: uuid.UUID
     ticket_id: uuid.UUID
+
+
+class BookingCancelledMessage(BaseModel):
+    """Producer-side schema for integration point #5 (§22) — this
+    service's first-ever Kafka message. Payment Service already holds
+    everything else it needs (amount, Stripe charge ID) keyed off this ID
+    in its own payment_db."""
+
+    booking_id: uuid.UUID
