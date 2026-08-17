@@ -324,7 +324,7 @@
       <!-- event-service down to kafka: publish -->
       <line x1="540" y1="128" x2="540" y2="298" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
       <text x="548" y="270" text-anchor="start" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">publish (Kafka #1)</text>
-      <text x="548" y="284" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">keyed by event_id, on publish/update while PUBLISHED (delete is refused, §02)</text>
+      <text x="548" y="284" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">keyed by event_id, on publish/update while PUBLISHED (§02)</text>
 
       <!-- kafka -->
       <rect x="460" y="300" width="160" height="60" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
@@ -343,7 +343,7 @@
 
       <!-- search-service down to elasticsearch -->
       <line x1="760" y1="360" x2="760" y2="410" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
-      <text x="768" y="388" text-anchor="start" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">upsert/delete by ID, query</text>
+      <text x="768" y="388" text-anchor="start" font-family="var(--mono)" font-size="10.5" fill="var(--text-muted)">upsert/delete by ID</text>
 
       <rect x="680" y="414" width="160" height="52" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
       <text x="760" y="436" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="currentColor">elasticsearch</text>
@@ -356,14 +356,14 @@
       <!-- kafka down to booking-service: second, independent consumer group -->
       <line x1="540" y1="360" x2="540" y2="518" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
       <text x="548" y="490" text-anchor="start" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">consume (Kafka #2, provisioning)</text>
-      <text x="548" y="504" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">group_id=booking-service — independent of search-service's group</text>
+      <text x="548" y="504" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">group_id=booking-service (its own, separate group)</text>
 
       <!-- booking-service -->
       <rect x="460" y="522" width="180" height="76" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
       <text x="550" y="550" text-anchor="middle" font-family="var(--mono)" font-size="13" font-weight="600" fill="currentColor">booking-service</text>
       <text x="550" y="567" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">FastAPI /bookings</text>
-      <text x="550" y="581" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--accent)">also routed here via Traefik; verifies JWT via shared_auth</text>
-      <text x="550" y="593" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--accent)">TicketHoldStrategy: cron (Postgres) or redis (below), by config</text>
+      <text x="550" y="581" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--accent)">via Traefik; JWT: shared_auth</text>
+      <text x="550" y="592" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--accent)">strategy: cron or redis, by config</text>
 
       <!-- booking-service down to postgres booking_db -->
       <line x1="500" y1="598" x2="440" y2="626" stroke="currentColor" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -387,9 +387,7 @@
 
       <!-- booking-service down to payment-service: the one synchronous call -->
       <line x1="550" y1="598" x2="550" y2="726" stroke="var(--accent)" stroke-width="1.5" marker-end="url(#arrow)"/>
-      <text x="558" y="656" text-anchor="start" font-family="var(--mono)" font-size="11" fill="var(--text-muted)">sync POST /pay → /payments/charge</text>
-      <text x="558" y="670" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">forwards caller's JWT + ticket price_cents — the one sync inter-service call (§9 amendment)</text>
-      <text x="558" y="682" text-anchor="start" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">internal Docker network only — Traefik never routes /payments/charge publicly (CHECKPOINT fix, was an authz bypass)</text>
+      <text x="470" y="690" text-anchor="start" font-family="var(--mono)" font-size="9" fill="var(--text-muted)">sync POST /pay → /payments/charge</text>
 
       <!-- payment-service -->
       <rect x="460" y="726" width="180" height="76" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
@@ -411,7 +409,7 @@
 
       <rect x="720" y="726" width="152" height="52" rx="8" fill="none" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3"/>
       <text x="796" y="748" text-anchor="middle" font-family="var(--mono)" font-size="13" fill="var(--idle)">stripe.com</text>
-      <text x="796" y="764" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--idle)">test mode; webhook via Stripe CLI locally</text>
+      <text x="796" y="764" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--idle)">test mode; Stripe CLI webhook</text>
 
       <!-- payment-service down to kafka topic: publish payment.outcomes -->
       <line x1="600" y1="802" x2="700" y2="830" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
@@ -425,7 +423,7 @@
       <line x1="800" y1="830" x2="800" y2="560" stroke="var(--ok)" stroke-width="1.5"/>
       <line x1="800" y1="560" x2="640" y2="560" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
       <text x="796" y="694" text-anchor="end" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">consume (Kafka #4)</text>
-      <text x="796" y="708" text-anchor="end" font-family="var(--mono)" font-size="9" fill="var(--text-faint)">confirm booking + BOOKED ticket, or release hold immediately</text>
+      <text x="796" y="708" text-anchor="end" font-family="var(--mono)" font-size="9" fill="var(--text-faint)">confirm booking, or release hold</text>
 
       <!-- Phase 6 row divider -->
       <line x1="24" y1="900" x2="876" y2="900" stroke="var(--border)" stroke-width="1"/>
@@ -451,7 +449,8 @@
       <text x="585" y="977" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--text-faint)">refund_payment — calls stripe.com/v1/refunds (box above)</text>
 
       <line x1="670" y1="965" x2="726" y2="965" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3" marker-end="url(#arrowDim)"/>
-      <text x="698" y="957" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--idle)">publish, on refund failure</text>
+      <text x="698" y="951" text-anchor="middle" font-family="var(--mono)" font-size="8" fill="var(--idle)">publish</text>
+      <text x="698" y="960" text-anchor="middle" font-family="var(--mono)" font-size="7" fill="var(--idle)">on failure</text>
 
       <rect x="730" y="940" width="146" height="50" rx="8" fill="none" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3"/>
       <text x="803" y="962" text-anchor="middle" font-family="var(--mono)" font-size="12" fill="var(--idle)">kafka</text>
@@ -515,28 +514,28 @@
       <text x="770" y="253" text-anchor="middle" font-family="var(--mono)" font-size="10.5" fill="currentColor">iss, aud, exp</text>
 
       <!-- branch point -->
-      <line x1="760" y1="262" x2="760" y2="290" stroke="currentColor" stroke-width="1.3"/>
-      <polygon points="760,290 780,308 760,326 740,308" fill="none" stroke="currentColor" stroke-width="1.3"/>
-      <text x="760" y="312" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="currentColor">has role</text>
-      <text x="760" y="323" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="currentColor">organizer?</text>
+      <line x1="760" y1="262" x2="760" y2="283" stroke="currentColor" stroke-width="1.3"/>
+      <polygon points="760,283 795,308 760,333 725,308" fill="none" stroke="currentColor" stroke-width="1.3"/>
+      <text x="760" y="304" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="currentColor">has role</text>
+      <text x="760" y="316" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="currentColor">organizer?</text>
 
       <!-- fail branch: alice -->
-      <line x1="740" y1="308" x2="600" y2="360" stroke="var(--fail)" stroke-width="1.4" marker-end="url(#arrow)"/>
-      <rect x="560" y="368" width="200" height="56" rx="8" fill="var(--fail-soft)" stroke="var(--fail)" stroke-width="1.3"/>
-      <text x="660" y="390" text-anchor="middle" font-family="var(--mono)" font-size="12" font-weight="600" fill="var(--fail)">403 alice</text>
-      <text x="660" y="406" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--fail)">roles=[user] — no</text>
-      <text x="660" y="417" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--fail)">organizer claim</text>
+      <line x1="725" y1="308" x2="590" y2="360" stroke="var(--fail)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <rect x="490" y="368" width="200" height="56" rx="8" fill="var(--fail-soft)" stroke="var(--fail)" stroke-width="1.3"/>
+      <text x="590" y="390" text-anchor="middle" font-family="var(--mono)" font-size="12" font-weight="600" fill="var(--fail)">403 alice</text>
+      <text x="590" y="406" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--fail)">roles=[user] — no</text>
+      <text x="590" y="417" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--fail)">organizer claim</text>
 
       <!-- ok branch: bob -->
-      <line x1="780" y1="308" x2="800" y2="360" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
-      <rect x="700" y="368" width="180" height="56" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.3"/>
-      <text x="790" y="390" text-anchor="middle" font-family="var(--mono)" font-size="12" font-weight="600" fill="var(--ok)">201 bob</text>
-      <text x="790" y="406" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ok)">roles=[user,</text>
-      <text x="790" y="417" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ok)">organizer]</text>
+      <line x1="795" y1="308" x2="800" y2="360" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <rect x="710" y="368" width="180" height="56" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.3"/>
+      <text x="800" y="390" text-anchor="middle" font-family="var(--mono)" font-size="12" font-weight="600" fill="var(--ok)">201 bob</text>
+      <text x="800" y="406" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ok)">roles=[user,</text>
+      <text x="800" y="417" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--ok)">organizer]</text>
 
       <!-- return arrows -->
-      <line x1="660" y1="424" x2="300" y2="466" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="2,3" marker-end="url(#arrow)"/>
-      <line x1="790" y1="424" x2="90" y2="480" stroke="var(--ok)" stroke-width="1.2" stroke-dasharray="2,3" marker-end="url(#arrow)"/>
+      <line x1="590" y1="424" x2="300" y2="466" stroke="var(--fail)" stroke-width="1.2" stroke-dasharray="2,3" marker-end="url(#arrow)"/>
+      <line x1="800" y1="424" x2="90" y2="480" stroke="var(--ok)" stroke-width="1.2" stroke-dasharray="2,3" marker-end="url(#arrow)"/>
       <text x="185" y="452" text-anchor="middle" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">response, either way, back through traefik</text>
     </svg>
   </figure>
@@ -652,13 +651,13 @@
 
       <!-- publish (same event as §03) -->
       <line x1="70" y1="86" x2="312" y2="86" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
-      <text x="195" y="80" text-anchor="middle" font-family="var(--mono)" font-size="10">send(key=event_id, action=upserted, seats=[...]) — same message as §03</text>
+      <text x="195" y="80" text-anchor="middle" font-family="var(--mono)" font-size="10">send(key=event_id, seats=[...])</text>
 
       <line x1="320" y1="110" x2="562" y2="110" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
       <text x="440" y="104" text-anchor="middle" font-family="var(--mono)" font-size="10">deliver — group_id=booking-service (independent of search-service's group)</text>
 
       <line x1="570" y1="134" x2="812" y2="134" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
-      <text x="695" y="128" text-anchor="middle" font-family="var(--mono)" font-size="10">INSERT ... ON CONFLICT (event_id,section,row_name,seat_label) DO NOTHING</text>
+      <text x="695" y="128" text-anchor="middle" font-family="var(--mono)" font-size="10">INSERT ... ON CONFLICT (event_id,section,row,seat) DO NOTHING</text>
 
       <rect x="660" y="150" width="220" height="46" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.3"/>
       <text x="770" y="170" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="600" fill="var(--ok)">one Ticket row per seat</text>
@@ -676,9 +675,10 @@
 
       <rect x="640" y="300" width="260" height="46" rx="8" fill="var(--idle-soft)" stroke="var(--idle)" stroke-width="1.1"/>
       <text x="770" y="320" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="600" fill="var(--idle)">0 rows inserted this time</text>
-      <text x="770" y="334" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--idle)">no per-row check needed — the constraint is the mechanism</text>
+      <text x="770" y="334" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--idle)">the constraint is the mechanism</text>
 
-      <text x="30" y="368" font-family="var(--mono)" font-size="10" fill="var(--text-faint)">A DELETED message is a no-op here too: event-service now refuses to delete a PUBLISHED event at all (§02), so one should never arrive for a provisioned event — EventProducer.publish_deleted no longer even exists.</text>
+      <text x="30" y="358" font-family="var(--mono)" font-size="10" fill="var(--text-faint)">A DELETED message is a no-op here too: event-service now refuses to delete a PUBLISHED event at all (§02),</text>
+      <text x="30" y="372" font-family="var(--mono)" font-size="10" fill="var(--text-faint)">so one should never arrive for a provisioned event — EventProducer.publish_deleted no longer even exists.</text>
     </svg>
   </figure>
   <figcaption>Verified live: publishing a real event through Event Service provisioned real <code>Ticket</code> rows in <code>booking_db</code> within seconds. Same pattern proven in <code>tests/integration/test_provisioning_consumer.py</code> (redelivery leaves the count unchanged) and re-exercised in <code>tests/integration/test_concurrency_suite.py</code> alongside the race proofs below.</figcaption>
@@ -723,11 +723,11 @@
 
       <line x1="700" y1="174" x2="480" y2="204" stroke="var(--ok)" stroke-width="1.4" marker-end="url(#arrow)"/>
       <text x="560" y="196" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--ok)">True (A)</text>
-      <line x1="700" y1="174" x2="920" y2="204" stroke="var(--fail)" stroke-width="1.4" marker-end="url(#arrow)"/>
-      <text x="850" y="196" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--fail)">False (B)</text>
+      <line x1="700" y1="174" x2="890" y2="204" stroke="var(--fail)" stroke-width="1.4" marker-end="url(#arrow)"/>
+      <text x="865" y="196" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--fail)">False (B)</text>
 
-      <line x1="460" y1="212" x2="832" y2="212" stroke="var(--ok)" stroke-width="1.3" marker-end="url(#arrow)"/>
-      <text x="640" y="206" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)">A's winning path: insert Booking(status=PENDING), commit</text>
+      <line x1="500" y1="212" x2="832" y2="212" stroke="var(--ok)" stroke-width="1.3" marker-end="url(#arrow)"/>
+      <text x="666" y="206" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)">A's winning path: insert Booking(status=PENDING), commit</text>
 
       <rect x="30" y="230" width="220" height="60" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.3"/>
       <text x="140" y="250" text-anchor="middle" font-family="var(--mono)" font-size="11" font-weight="600" fill="var(--ok)">A: 201 PENDING</text>

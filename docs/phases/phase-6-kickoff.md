@@ -347,37 +347,66 @@ Report evidence: testing-chapter material (§18).
 
 ## Phase 6 exit checklist (all must pass before P5)
 
-- [ ] Cancel endpoint live-verified under both `cron` and `redis` hold
+- [x] Cancel endpoint live-verified under both `cron` and `redis` hold
       strategies: owner-only (403 non-owner), `CONFIRMED`-only (409
       otherwise), past-event-cutoff (409), seat immediately rebookable
-      after cancel.
-- [ ] Kafka #5 (`booking.cancelled`) live-verified end-to-end: a real
-      cancel produces a real Stripe test-mode refund, reachable at least
-      as far as Stripe's own API boundary (state precisely how far,
-      per the Integrity rule — same caveat Phase 4 carries for a real
-      Stripe account). Redelivery proven a safe no-op.
-- [ ] Refund-failure path live-verified: a simulated Stripe failure
-      produces a correctly-shaped message on `notifications`, observed
-      via a throwaway consumer (Notification Service doesn't exist yet).
-      `Payment.status` provably unchanged (stays `SUCCEEDED`) after a
+      after cancel. Done during P6.T1 (both strategies) and re-verified
+      after the CHECKPOINT fail-open fix, including the specific
+      pre-migration-event case that fix was for — see `build-log.md`'s
+      2026-08-17 P6.T1 and CHECKPOINT entries.
+- [x] Kafka #5 (`booking.cancelled`) live-verified end-to-end: a real
+      cancel through `POST /bookings/{id}/cancel` produced a real
+      `booking.cancelled` message, consumed by `BookingCancelledConsumer`,
+      reaching a genuine `POST https://api.stripe.com/v1/refunds` call —
+      failing only at Stripe's placeholder-key boundary (401), same
+      tracked gap Phase 4 carries for a real Stripe account, not reached
+      further this session. **Redelivery**: precisely scoped, not
+      overclaimed — a hand-crafted duplicate correctly *re-attempted* the
+      refund (since the first attempt never actually succeeded,
+      `stripe_refund_id` stayed `NULL`, the only reachable outcome without
+      real Stripe credentials), matching the resubmission-gate design, not
+      a strict no-op. The true already-refunded-redelivery no-op case is
+      proven in the automated integration suite with a mocked Stripe
+      success (`test_refund_payment_replay_against_real_db_does_not_double_refund`),
+      not reproduced live.
+- [x] Refund-failure path live-verified: the real failed-refund attempt
+      above produced a correctly-shaped `refund_failed` message on
+      `notifications`, verified directly with a throwaway
+      `kafka-console-consumer` (correct `booking_id`, Stripe's real error
+      text as `reason`). `Payment.status` confirmed `SUCCEEDED`,
+      `stripe_refund_id` confirmed `NULL`, via direct query after the
       failed attempt.
-- [ ] Full test suite green (unit + testcontainers integration) — record
-      exact counts per service in the build-log CHECKPOINT entry.
-- [ ] Live walkthrough done at CHECKPOINT; `docs/architecture.html`
-      updated to current state (topology, integration-point #5, the new
-      `Event` reference table, proven/not-built lists); `docs/build-log.md`
-      entries appended for each task and the CHECKPOINT review;
-      decisions-log delta logged (the §22 amendment made before
-      implementation began, plus any further delta found during CHECKPOINT
-      review).
-- [ ] Phase-end checklist items 1-9 from `CLAUDE.md` run in full — see
-      Phase 4's own kickoff doc for the shape this takes; this phase's
-      cross-doc staleness sweep (item 8) should specifically check
-      `docs/report/README.md`'s chapter table, `infra/README.md`, and
-      both services' own READMEs for the new `Event` table,
-      `notifications` topic, and Booking Service's first-ever Kafka
-      producer.
-- [ ] This checklist itself — every box above flipped to `[x]` with a
+- [x] Full test suite green (unit + testcontainers integration) — final
+      counts after CHECKPOINT fixes: `booking-service` 72/72,
+      `payment-service` 22/22. See `build-log.md`'s 2026-08-17 CHECKPOINT
+      entry.
+- [x] Live walkthrough done at CHECKPOINT (see the two items above);
+      `docs/architecture.html` updated to current state (topology,
+      integration-point #5 row, the new `Event` reference table note,
+      proven/not-built lists, the CHECKPOINT fail-open finding);
+      `docs/build-log.md` entries appended for P6.T1, P6.T2+T3, P6.T4, and
+      the CHECKPOINT review; decisions-log delta logged (the §22 amendment
+      made before implementation began, plus the §26 `HOLD_STRATEGY`
+      limitation added during CHECKPOINT review).
+- [x] Phase-end checklist items 1-9 from `CLAUDE.md` run in full: (1)
+      end-to-end live walkthrough — see above; (2) report chapters drafted
+      then corrected post-CHECKPOINT (Requirement Gathering, Class
+      Diagrams, Database Schema Design, Testing Strategy, `README.md`
+      chapter-status table); (3) commit history scanned — ten commits
+      this phase, each a real unit of work, no bare mechanical tweaks, no
+      phase/task IDs in messages; academic-presentation scan (emoji/TODO/
+      casual language) clean; (4) `architecture.html` updated (above); (5)
+      decisions-log delta logged (above); (6) `CLAUDE.md` self-update
+      done — the Kafka-testcontainer note corrected during P6.T4; (7)
+      `/pre-pr` run against the diff since `e299021` — simplify (4 real
+      dedups) and code-review (6 findings, most severe a fail-open
+      cancellation-cutoff bug, all fixed) both ran; `verify` skipped as a
+      separate subagent pass since every fix was already live-tested
+      directly in this session against the real running stack; (8)
+      cross-doc staleness sweep — root `README.md`, `infra/README.md`,
+      both services' own READMEs, `docs/report/README.md`'s chapter table,
+      and the affected report chapters all found stale and fixed.
+- [x] This checklist itself — every box above flipped to `[x]` with a
       one-line note pointing at actual evidence, not left unchecked
       despite genuinely-done work (the failure mode Phase 3's own kickoff
       doc had, per `CLAUDE.md`'s phase-end checklist item 9).

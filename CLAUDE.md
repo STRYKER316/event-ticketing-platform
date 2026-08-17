@@ -96,6 +96,16 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   `docs/build-log.md` — what was built, what failed and why, what fixed it, any ad
   hoc decision too small for the decisions log) →
   CHECKPOINT (tag/merge at the phase boundary).
+- **Context-usage check between IMPLEMENT/TEST and REVIEW.** Before kicking off the
+  REVIEW step's `/pre-pr` pass (or the dedicated adversarial `/code-review` pass on
+  P3/P8), check current context usage. If it's materially built up (rough threshold:
+  over ~50% used), flag it and suggest running `/compact` before proceeding, rather
+  than continuing straight into review on a heavily-loaded session — the `pre-pr`
+  skill's own review step already dispatches to a fresh subagent for unbiased eyes
+  on the diff, so this isn't about review rigor, it's about keeping headroom for the
+  triage/fix back-and-forth that follows findings. This is a suggestion, not an
+  auto-action — `/compact` is a user-run command. Below the threshold, proceed
+  straight into review without asking.
 - **A `docs/phases/phase-N-kickoff.md` that already exists for the phase being
   started IS the completed PLAN step — do not re-plan it.** When the user kicks off
   a phase this file already covers, don't invoke `superpowers:brainstorming` or
