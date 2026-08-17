@@ -366,3 +366,70 @@ Redis, not just the test suite.
 refuses to delete a `PUBLISHED` event outright, per the §15 Phase 3
 amendment, so the message and its producer method were never reachable).
 `cd services/booking-service && uv run pytest`.
+
+## Phase 4 — Payment Service, no dedicated adversarial pass, but a live-testing bug caught anyway
+
+Only P3 and P8 get a dedicated adversarial `/code-review` pass on top of
+self-verification (`CLAUDE.md`) — Phase 4 relies on self-verification plus
+the routine `/pre-pr` gate at CHECKPOINT. Test-first was used specifically
+for the two correctness-critical idempotency contracts this phase adds
+(§9): the charge idempotency test
+(`test_create_charge_calls_stripe_with_booking_id_as_idempotency_key` and
+its replay counterpart) and the webhook replay test, both written before
+their respective handlers.
+
+**Self-verification's live walkthrough found a real bug no unit test had
+caught**: `PaymentManager.create_charge`'s idempotent short-circuit treated
+any existing `Payment` row as "already submitted to Stripe," including one
+whose `stripe_charge_id` was still `NULL` because the previous attempt
+never actually reached Stripe (a genuine `401 Invalid API Key` against the
+placeholder `.env` credential, not a hypothetical). A second `/pay` call
+against the same booking replayed the stale row instead of retrying —
+reproduced live (`/pay` → 502 → `/pay` again → incorrectly `200` with the
+stale `pending` row), fixed to check `stripe_charge_id is not None`
+specifically, re-verified live (retry now genuinely re-attempts Stripe),
+and a new unit test
+(`test_create_charge_retries_stripe_when_previous_attempt_never_reached_it`)
+added alongside the existing replay test to lock the distinction in. This
+is exactly the kind of defect self-verification's "live testing before
+claiming done" step exists to catch — a purely mocked test suite would have
+had no reason to construct a `Payment` row with `stripe_charge_id=None`
+unless someone already suspected the bug.
+
+**A second, unrelated regression surfaced during the same live pass**: the
+`price_cents` migration (Class Diagrams/Database Schema Design chapters)
+pushed `TicketRepository.bulk_upsert_available`'s per-row bind-param count
+from an already-undercounted 5 to a real 7, overflowing Postgres's
+~32,767-bind-param cap at the existing `BIND_PARAM_SAFE_BATCH_SIZE` of 5000.
+Caught by an *existing* integration test
+(`test_seat_map_larger_than_one_insert_batch_provisions_every_seat`)
+flipping from green to red the moment the new column landed — the value of
+keeping that Phase 3 regression test in the suite rather than treating it as
+one-time-proven-fine.
+
+**Kafka integration point #4 (both outcomes) and the webhook's own
+idempotency were verified live against the real running stack**, not just
+the mocked/testcontainers suite: `succeeded`/`failed` messages produced
+directly on `payment.outcomes` (bypassing Stripe, since the mechanism under
+test is Booking Service's consumer) correctly confirmed or released a real
+booking; redelivering the same `failed` message produced no second
+`payment_outcome_applied` log line; `POST /payments/webhook` with an
+invalid signature was rejected with 400 before touching any row.
+
+**What wasn't live-verified this phase, tracked honestly rather than
+silently marked done**: a real Stripe charge succeeding and its webhook
+actually arriving — `.env` only has the placeholder
+`STRIPE_SECRET_KEY=sk_test_changeme`, and no real Stripe test-mode
+credentials were available this session (the user was asked and chose to
+defer rather than provide one). Everything up to Stripe's own API boundary
+(auth, ownership, the synchronous call chain, idempotency at the DB level)
+is live-verified; the genuine charge → webhook → confirm round trip is
+Tested (mocked/integration) but not yet Verified against the real Stripe
+API. Recorded on Phase 4's exit checklist as an open item, not glossed over.
+
+**Status:** Implemented, Tested, Verified (live, except the real-Stripe
+leg above). `payment-service`: 7/7 unit, 3/3 integration. `booking-service`:
+35/35 unit (+11 from Phase 3's 24), 24/24 integration (+3). `event-service`:
+44/44 unit, 11/11 integration (unaffected, spot-checked). `search-service`:
+16/16 unit (unaffected — silently ignores the new `price_cents` field on
+`event.events` it doesn't need, pydantic's default `extra="ignore"`).

@@ -1,8 +1,7 @@
 # Class Diagrams
 
-*Status: draft, Event Service (Phase 1), Search Service (Phase 2), and
-Booking Service (Phase 3) evidence so far. Payment Service's diagram
-(Phase 4) still to come.*
+*Status: draft, Event Service (Phase 1), Search Service (Phase 2), Booking
+Service (Phase 3), and Payment Service (Phase 4) evidence so far.*
 
 ## Event Service — Manager + Repository per feature
 
@@ -199,10 +198,13 @@ classDiagram
         -_bookings: BookingRepository
         -_hold_strategy: TicketHoldStrategy
         +create_booking(user, ticket_id) BookingResponse
+        +pay_booking(user, booking_id, bearer_token, http_client) BookingPayResponse
         -_fetch_bookable_ticket(ticket_id) Ticket
         -_acquire_hold(ticket) void
         -_create_booking_row(user, ticket) Booking
         -_build_response(booking) BookingResponse
+        -_fetch_owned_pending_booking(user, booking_id) Booking
+        -_charge_via_payment_service(booking, ticket, bearer_token, http_client) BookingPayResponse
     }
 
     class TicketRepository {
@@ -216,6 +218,7 @@ classDiagram
         -_session: AsyncSession
         -_model: type~Booking~
         +expire_stale_pending(older_than_seconds) int
+        +transition_if_pending(booking_id, new_status) bool
     }
 
     class ProvisioningConsumer {
@@ -226,11 +229,21 @@ classDiagram
         -_write_tickets(event_id, seats) int
     }
 
+    class PaymentOutcomeConsumer {
+        -_consumer: AIOKafkaConsumer
+        -_session_factory: async_sessionmaker
+        -_redis: Redis
+        +run() void
+        -_handle(raw) void
+        -_transition_with_retry(message, new_status) bool
+    }
+
     class TicketHoldStrategy {
         <<interface>>
         +acquire_hold(ticket_id, ttl_seconds) bool
         +release_hold(ticket_id) void
         +is_held(ticket_id) bool
+        +confirm_hold(ticket_id) void
     }
 
     class CronHoldStrategy {
@@ -238,6 +251,7 @@ classDiagram
         +acquire_hold(ticket_id, ttl_seconds) bool
         +release_hold(ticket_id) void
         +is_held(ticket_id) bool
+        +confirm_hold(ticket_id) void
         +release_expired() int
     }
 
@@ -246,6 +260,7 @@ classDiagram
         +acquire_hold(ticket_id, ttl_seconds) bool
         +release_hold(ticket_id) void
         +is_held(ticket_id) bool
+        +confirm_hold(ticket_id) void
     }
 
     class FakeHoldStrategy {
@@ -261,6 +276,8 @@ classDiagram
     BookingManager --> BookingRepository
     BookingManager --> TicketHoldStrategy
     ProvisioningConsumer --> TicketRepository
+    PaymentOutcomeConsumer --> BookingRepository
+    PaymentOutcomeConsumer --> TicketHoldStrategy
 ```
 
 ## Why this shape
@@ -364,3 +381,116 @@ sweep interval, confirmed `hold_sweep_expired_stale_redis_bookings` in the
 logs, then confirmed a fresh booking on the same seat succeeded — the
 class-diagram claim above about the Redis sweep is not just a code-reading
 claim, it's a reproduced-and-confirmed-fixed one.
+
+**Phase 4 additions**: `BookingManager.pay_booking` and `TicketHoldStrategy
+.confirm_hold` close two gaps the Phase 3 diagram above left open —
+"Booking Service fronts payment" (decisions-log §9 amendment) means the
+paying client never talks to Payment Service directly, and
+`TicketStatus.BOOKED` had been checked by `_fetch_bookable_ticket` since
+Phase 3 but never actually *set* by any code path until this phase gave
+`confirm_hold` a real implementation per strategy (`CronHoldStrategy`
+transitions `HELD`→`BOOKED`; `RedisHoldStrategy`, which never writes
+`Ticket.status` at all, just deletes the now-superseded Redis key).
+`PaymentOutcomeConsumer` follows `ProvisioningConsumer`'s exact shape
+(direct-repository access, no Manager above it, since nothing else drives
+this transition; `enable_auto_commit=False` plus a bounded DB-write retry)
+and reuses `BookingRepository.transition_if_pending` — a single
+conditional `UPDATE ... WHERE status = 'pending'` — to make redelivery a
+structural no-op the same way `bulk_upsert_available`'s `ON CONFLICT DO
+NOTHING` does for provisioning, rather than a checked "have I seen this
+before" branch. **Status:** Implemented, Tested, Verified (live) — see the
+Payment Service section below for the synchronous call this feeds and the
+live verification both `confirm_hold`/`transition_if_pending` branches
+received.
+
+## Payment Service — Manager + Repository, plus the system's one synchronous inter-service call
+
+```mermaid
+classDiagram
+    class PaymentManager {
+        -_session: AsyncSession
+        -_payments: PaymentRepository
+        +create_charge(payload) PaymentResponse
+        +handle_webhook_event(event, producer) void
+        -_create_pending_payment(payload) Payment
+        -_submit_to_stripe(payment, payload) void
+        -_build_response(payment) PaymentResponse
+    }
+
+    class PaymentRepository {
+        -_session: AsyncSession
+        -_model: type~Payment~
+        +get_by_booking_id(booking_id) Payment
+        +get_by_stripe_charge_id(stripe_charge_id) Payment
+    }
+
+    class PaymentOutcomeProducer {
+        -_producer: AIOKafkaProducer
+        -_topic: str
+        +publish_outcome(payment) void
+    }
+
+    PaymentManager --> PaymentRepository
+    PaymentManager --> PaymentOutcomeProducer
+```
+
+## Why this shape
+
+Same Manager + Repository shape as every other service — `PaymentManager`
+has exactly one repository and one producer dependency, the smallest of the
+four services' Managers, because a `Payment` row's whole lifecycle
+(`pending` → `succeeded`/`failed`) is driven by exactly two entry points it
+owns directly: the charge-initiation call and the webhook. No consumer
+class exists on this side — Payment Service is a Kafka *producer* for
+integration point #4, not a consumer of anything.
+
+**`create_charge` is called by Booking Service, not by a browser client**
+(decisions-log §9 amendment) — the one deliberate, narrow exception to
+"cross-service data only via Kafka" in this system, made because initiating
+a charge needs an immediate request/response result (did Stripe accept the
+attempt right now), which is a different shape of problem than the
+eventually-consistent facts the five Kafka integration points (§7) carry
+everywhere else. `PaymentManager` itself has no idea it's being called
+synchronously by another service rather than a route handler acting on a
+browser request — the ownership check that makes this safe lives entirely
+in `BookingManager.pay_booking`, on the other side of that call, where
+`booking_db` actually is (§8). Idempotency here is a defense-in-depth
+belt-and-suspenders pair: `create_charge` checks
+`existing.stripe_charge_id is not None` before short-circuiting (a Payment
+row with no `stripe_charge_id` yet means a previous attempt never actually
+reached Stripe and must genuinely retry — a real bug caught by live testing
+this phase, not a hypothetical, see `build-log.md`'s 2026-08-17 entry), and
+Stripe's own `idempotency_key` (the booking ID) is the backstop if two
+requests somehow race past that check simultaneously.
+
+**Webhook-driven confirmation is the sole source of truth for a Payment's
+terminal status** (§9) — `create_charge`'s synchronous Stripe response is
+never trusted for that, even though Stripe test mode often resolves a
+`PaymentIntent` synchronously, because a lost synchronous response after
+Stripe already processed the charge would otherwise be indistinguishable
+from a genuine failure. `handle_webhook_event` is idempotent the same way
+Booking Service's Kafka consumers are (§7's general rule, applied to a
+webhook instead of a Kafka redelivery): only transitions a `Payment` still
+`pending`, so a replayed webhook is a structural no-op, proven both by unit
+test (mocked) and integration test (real Postgres, `testcontainers`).
+
+**Status:** Implemented, Tested, Verified (live, except the final real-Stripe
+leg — see below) — reflects the actual class structure under
+`services/payment-service/app/logic/`, `app/db/`, and `app/kafka/` as of
+Phase 4. Live-verified against the real running stack: a real
+venue/event/seat-map created and published through the organizer API
+carried `price_cents` through Kafka into a real `Ticket` row; `/pay`'s
+403/404/409 paths and the full synchronous call chain into Payment
+Service's own auth check and a genuine HTTPS call to Stripe all verified
+live (failing only at Stripe's own `401 Invalid API Key`, since no real
+Stripe test-mode credentials were available this session — a real, tracked
+gap, not silently marked done); the idempotency-retry bug above was found
+and fixed via this same live testing; integration point #4 (`payment
+.outcomes`) verified live end-to-end for both outcomes by producing
+directly to the topic (bypassing Stripe, since the mechanism under test is
+the Kafka consumer, not Stripe's delivery): `succeeded` → `Booking`
+`CONFIRMED` + `Ticket` `BOOKED`; `failed` → `Booking` `EXPIRED` + `Ticket`
+`AVAILABLE` immediately (not waiting for `HOLD_TTL_SECONDS`); redelivering
+the same `failed` message produced no second log line and no second effect.
+`POST /payments/webhook` with an invalid signature verified live to reject
+with 400 before touching any `Payment` row.

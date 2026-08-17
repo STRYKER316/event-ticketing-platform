@@ -1,9 +1,8 @@
 # Requirement Gathering
 
-*Status: draft, partial — roles/permissions evidence from Phases 1 and 3.
-Payment and cancellation flows fill in as those phases land; this draft
-covers what's actually enforced in the codebase today, not aspirational
-scope.*
+*Status: draft, partial — roles/permissions evidence from Phases 1, 3, and 4.
+Cancellation/refund flows fill in as that phase lands; this draft covers
+what's actually enforced in the codebase today, not aspirational scope.*
 
 ## Actors
 
@@ -117,10 +116,48 @@ actually booked — a fully locally-decidable rule, logged as a decisions-
 log amendment to §15 rather than a silent behavior change. `DRAFT`
 events, which can never have provisioned tickets, still delete freely.
 
+## Roles/permissions table — Payment (Phase 4)
+
+| Endpoint | Anonymous | `user` (non-owner) | `user` (owner, booking `PENDING`) |
+|---|---|---|---|
+| `POST /bookings/{id}/pay` (Booking Service) | 401 | **403** | Allow (initiates a Stripe charge) |
+| `POST /payments/charge` (Payment Service, internal) | 401 | Allow* | Allow* |
+| `POST /payments/webhook` (Payment Service) | Allow (Stripe signature is the auth) | — | — |
+
+\* `/payments/charge` is never called by a browser client — only by Booking
+Service, which has already done the ownership check. It still requires a
+valid Keycloak token (the caller's own, forwarded unmodified), but not an
+ownership check of its own, since Payment Service has no access to
+`booking_db` to perform one (§8). This is the one endpoint in the system
+whose auth requirement is "authenticated, checked by a different service"
+rather than "authenticated and/or ownership-scoped, checked here" — worth
+stating explicitly per the auth-requirement convention rather than leaving
+it looking like an omission.
+
+**Ownership scoping on `/pay` works the same way as every other
+ownership-scoped route** (§15's pattern): the booking's stored
+`user_subject` compared against the caller's JWT `subject`, not just a role
+check — `organizer` has no special standing here, same as booking itself
+(§15 delta, Phase 3). Additionally checks the booking is currently
+`PENDING` (409 otherwise) — a state precondition on top of the
+authorization check, not a substitute for it.
+
+**Status:** Implemented, Tested, Verified (live, except a real Stripe
+success). Every cell above except the internal `/payments/charge` "Allow*"
+rows was exercised live against the running stack with real seed users:
+`bob` attempting `alice`'s booking → 403; a nonexistent booking ID → 404;
+`alice` on her own `PENDING` booking → the full chain through to Payment
+Service's own auth check and a genuine Stripe API call, failing only at
+Stripe's placeholder-credential boundary (401 from Stripe itself, not from
+this system). See the Testing Strategy and Class Diagrams chapters'
+Payment Service sections for the full live-verification detail and the
+real idempotency bug this testing caught and fixed.
+
 ## What this chapter still needs
 
-Functional requirements for payment (Stripe integration, idempotent
-webhook handling), cancellation/refund, and notification delivery are not
-yet written — they depend on Phases 4–6, which this draft does not cover.
-Non-functional requirements (the Hold-Mechanism Benchmark's
-throughput/latency targets) depend on Phase 8.
+Functional requirements for cancellation/refund and notification delivery
+are not yet written — they depend on Phases 5–6, which this draft does not
+cover. Non-functional requirements (the Hold-Mechanism Benchmark's
+throughput/latency targets) depend on Phase 8 (already measured — see the
+Feature Development Process chapter — but not yet cross-referenced from
+this chapter's non-functional-requirements framing).

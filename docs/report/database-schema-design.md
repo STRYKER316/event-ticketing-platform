@@ -1,9 +1,8 @@
 # Database Schema Design
 
 *Status: draft, Event Service (Phase 1), Search Service's Elasticsearch
-index (Phase 2), and Booking Service's `booking_db` (Phase 3) evidence so
-far. `payment_db` is added in a later phase and will extend this chapter,
-not replace it.*
+index (Phase 2), Booking Service's `booking_db` (Phase 3), and Payment
+Service's `payment_db` (Phase 4) evidence so far.*
 
 ## `event_db` (Postgres) — ER diagram
 
@@ -93,7 +92,8 @@ general-admission event ever exists in this system. One document per event:
       "rows": [
         {
           "name": "1",
-          "seats": [
+          "price_cents": 5000,
+      "seats": [
             { "label": "A1-1", "x": 0.0, "y": 0.0 },
             { "label": "A1-2", "x": 1.0, "y": 0.0 }
           ]
@@ -103,6 +103,13 @@ general-admission event ever exists in this system. One document per event:
   ]
 }
 ```
+
+**Phase 4 addition:** each section carries an organizer-set `price_cents`
+(decisions-log §9/§16 amendments) — per-section pricing (floor vs. balcony),
+not a flat price per event. Schema-flexible by construction (MongoDB, §8),
+so this needed no migration on the Mongo side; the one real migration cost
+landed downstream, on `booking_db`'s `tickets` table below, since a Postgres
+column has no equivalent "just add a field" option.
 
 Chosen as a document-per-event rather than document-per-seat because a
 seat map is always read and written as a whole unit (the organizer defines
@@ -176,6 +183,7 @@ erDiagram
         string section
         string row_name
         string seat_label
+        int price_cents "organizer-set per section, carried via Kafka (§7.2)"
         enum status "available | held | booked"
         datetime hold_expires_at "cron strategy's own hold state; NULL under Redis strategy"
         datetime created_at
@@ -207,6 +215,7 @@ via the Kafka payload (§7.2), not enforced by the database.
 tickets(
   id PK, event_id INDEXED,
   section, row_name, seat_label,
+  price_cents "added Phase 4, migration 9acd9bb8cc64",
   status ENUM(available, held, booked) INDEXED,
   hold_expires_at NULL,
   created_at,
@@ -267,6 +276,22 @@ Redis strategy for the ticket's whole held lifetime (Redis's `SET NX EX`
 is that strategy's lock instead), and both strategies write `booked`
 identically once payment confirms in Phase 4.
 
+**Phase 4's `price_cents` migration surfaced a real bug in an existing bind-
+param-batching assumption**, not just a schema addition. `TicketRepository
+.bulk_upsert_available`'s multi-row `INSERT` binds 7 params per row once
+`price_cents` is added — 6 explicit columns plus `status`, whose Python-side
+default SQLAlchemy still applies as a real bind param on a Core-level
+`values()` insert even though it never appears in the row dict. A stale code
+comment had undercounted this at 5 even before this phase (never accounting
+for the `status` default at all); at the old `BIND_PARAM_SAFE_BATCH_SIZE` of
+5000, `5000 × 7 = 35,000` overflows Postgres's ~32,767-bind-param cap.
+Caught live by `tests/integration/test_provisioning_consumer.py`'s existing
+6000-seat two-batch regression test, which started failing the moment
+`price_cents` landed — not a hypothetical, a real green-to-red test result.
+Fixed by lowering the shared constant (`app/db/chunking.py`) to 4000
+(`4000 × 7 = 28,000`, safe with headroom) and correcting both stale
+comments to state the real, now-verified param count.
+
 **Status:** Implemented, Tested, Verified (live). Migration
 (`2ab7ccc49f4d`) applies cleanly against a real Postgres instance; both
 constraints verified live via direct duplicate-insert attempts against
@@ -280,3 +305,84 @@ constraints exist — is proven under real concurrent load in
 under each hold strategy, exactly one `Booking` row results every time,
 re-run repeatedly to rule out a false-positive pass rather than trusted
 after a single green run.
+
+## `payment_db` (Postgres) — ER diagram
+
+```mermaid
+erDiagram
+    PAYMENT {
+        uuid id PK
+        uuid booking_id "no FK — booking_db is a different service's database; unique"
+        uuid ticket_id "no FK, same reasoning"
+        int amount_cents
+        string currency
+        enum status "pending | succeeded | failed"
+        string stripe_charge_id "NULL until Stripe accepts the attempt"
+        string idempotency_key
+        datetime created_at
+        datetime updated_at
+    }
+```
+
+**Cardinalities:** at most one `Payment` row per `booking_id`, enforced by a
+unique index — not application logic alone. `booking_id`/`ticket_id` are
+plain `UUID` columns, never `ForeignKey`s, same database-per-service
+reasoning as every cross-service reference elsewhere in this schema (§8):
+`payment_db` cannot reference `booking_db`'s tables at the schema level.
+Unlike `event_id`/`ticket_id` elsewhere in this system, which arrive via
+Kafka (§7.2), `booking_id`/`ticket_id`/`amount_cents` here arrive via the
+one synchronous call in this system (decisions-log §9 amendment) — Booking
+Service already holds all three locally when it calls in, so Payment
+Service does no lookup of its own for any of them.
+
+## Textual schema (Alembic-managed)
+
+```
+payments(
+  id PK,
+  booking_id UNIQUE INDEXED,
+  ticket_id,
+  amount_cents, currency,
+  status ENUM(pending, succeeded, failed),
+  stripe_charge_id NULL,
+  idempotency_key,
+  created_at, updated_at
+)
+```
+
+**`UNIQUE(booking_id)` is defense-in-depth for the idempotency claim**, the
+same role `uq_bookings_active_ticket` plays for `booking_db` — the primary
+mechanism is application-level (`PaymentManager.create_charge` checks for
+an existing row before ever calling Stripe, and Stripe's own
+`idempotency_key` is a second backstop), but the constraint means a bug in
+either of those layers fails loudly at the database with an
+`IntegrityError` rather than silently creating two `Payment` rows for one
+booking.
+
+**`stripe_charge_id` being `NULL` is a meaningful, not incidental, state** —
+it means a charge attempt was recorded locally but never actually reached
+Stripe (a submission error, not a decline). This distinction is what a real
+live-testing bug turned on this phase: `create_charge`'s idempotent
+short-circuit originally checked "does a `Payment` row exist for this
+booking" rather than "does a `Payment` row exist *with a `stripe_charge_id`
+set*" — so a booking whose first attempt never reached Stripe could never
+be retried, permanently stuck replaying the same `NULL`-charge-ID row.
+Fixed to check `stripe_charge_id is not None` specifically; see the Class
+Diagrams chapter's Payment Service section for the full mechanism and
+`build-log.md`'s 2026-08-17 entry for how it was found.
+
+**Status:** Implemented, Tested, Verified (live, except the final real-Stripe
+leg). Migration (`afbcf34047ba`) applies cleanly against a real Postgres
+instance. The unique-`booking_id` constraint and the idempotency logic in
+front of it both verified live: a second `/pay` call against the same
+booking after a failed Stripe submission correctly re-attempted Stripe
+(post-fix) rather than silently replaying the stale row, and a second call
+against a booking Stripe had genuinely accepted would return the same
+`Payment` row without a second Stripe call (proven by unit and integration
+test with a mocked/real-Postgres `stripe_charge_id` already set — not
+reproducible live this session without real Stripe credentials, see the
+Class Diagrams chapter for the tracked gap). Webhook idempotency
+(`handle_webhook_event` only transitioning a still-`pending` row) proven
+both by test and, for the Kafka side it feeds, live against the real
+running stack: a redelivered `payment.outcomes` message produced no second
+effect.
