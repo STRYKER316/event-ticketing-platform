@@ -197,14 +197,20 @@ classDiagram
         -_tickets: TicketRepository
         -_bookings: BookingRepository
         -_hold_strategy: TicketHoldStrategy
+        -_events: EventRepository
+        -_cancelled_producer: BookingCancelledProducer
         +create_booking(user, ticket_id) BookingResponse
         +pay_booking(user, booking_id, bearer_token, http_client) BookingPayResponse
+        +cancel_booking(user, booking_id) BookingResponse
         -_fetch_bookable_ticket(ticket_id) Ticket
         -_acquire_hold(ticket) void
         -_create_booking_row(user, ticket) Booking
         -_build_response(booking) BookingResponse
         -_fetch_owned_pending_booking(user, booking_id) Booking
         -_charge_via_payment_service(booking, ticket, bearer_token, http_client) BookingPayResponse
+        -_fetch_owned_confirmed_booking(user, booking_id) Booking
+        -_check_before_event_start(booking) void
+        -_transition_and_release(booking) void
     }
 
     class TicketRepository {
@@ -219,6 +225,19 @@ classDiagram
         -_model: type~Booking~
         +expire_stale_pending(older_than_seconds) int
         +transition_if_pending(booking_id, new_status) bool
+        +transition_if_confirmed(booking_id, new_status) bool
+    }
+
+    class EventRepository {
+        -_session: AsyncSession
+        +upsert_start_time(event_id, start_time) void
+        +get_start_time(event_id) datetime
+    }
+
+    class BookingCancelledProducer {
+        -_producer: AIOKafkaProducer
+        -_topic: str
+        +publish_cancelled(booking_id) void
     }
 
     class ProvisioningConsumer {
@@ -244,6 +263,7 @@ classDiagram
         +release_hold(ticket_id) void
         +is_held(ticket_id) bool
         +confirm_hold(ticket_id) void
+        +release_booking(ticket_id) void
     }
 
     class CronHoldStrategy {
@@ -253,6 +273,7 @@ classDiagram
         +is_held(ticket_id) bool
         +confirm_hold(ticket_id) void
         +release_expired() int
+        +release_booking(ticket_id) void
     }
 
     class RedisHoldStrategy {
@@ -261,6 +282,7 @@ classDiagram
         +release_hold(ticket_id) void
         +is_held(ticket_id) bool
         +confirm_hold(ticket_id) void
+        +release_booking(ticket_id) void
     }
 
     class FakeHoldStrategy {
@@ -275,7 +297,10 @@ classDiagram
     BookingManager --> TicketRepository
     BookingManager --> BookingRepository
     BookingManager --> TicketHoldStrategy
+    BookingManager --> EventRepository
+    BookingManager --> BookingCancelledProducer
     ProvisioningConsumer --> TicketRepository
+    ProvisioningConsumer --> EventRepository
     PaymentOutcomeConsumer --> BookingRepository
     PaymentOutcomeConsumer --> TicketHoldStrategy
 ```
@@ -403,6 +428,36 @@ Payment Service section below for the synchronous call this feeds and the
 live verification both `confirm_hold`/`transition_if_pending` branches
 received.
 
+**Phase 6 additions**: `BookingManager.cancel_booking` and a genuine third
+`TicketHoldStrategy` method, `release_booking` — not a `release_hold`
+reuse, despite decisions-log §22's original phrasing suggesting one. A
+`CONFIRMED` booking's ticket is `BOOKED`, and `release_hold`'s conditional
+`UPDATE` only ever matches `HELD`, so the two methods target different
+source states even though both end at `AVAILABLE`. `release_booking`
+carries the same deliberate asymmetry the acquire/confirm methods already
+have: `CronHoldStrategy` does a real `UPDATE ... WHERE status = 'BOOKED'`;
+`RedisHoldStrategy` is a documented no-op, since that strategy never
+writes `Ticket.status` at all — correctness against re-booking a cancelled
+seat comes from `uq_bookings_active_ticket` no longer matching once
+`Booking.status` flips to `CANCELLED`, not from any Ticket-table write.
+`EventRepository` is new and deliberately not a `BaseRepository`
+subclass — `Event`'s primary key is `event_id`, not `id`, and this table
+exists solely so `cancel_booking` has a `start_time` to enforce §22's
+"before the event starts" cutoff against, populated by
+`ProvisioningConsumer` from the same Kafka message that already
+provisions tickets (no new integration point). `BookingCancelledProducer`
+is Booking Service's first-ever Kafka producer (integration point #5,
+§22) — the same thin `send_and_wait` wrapper shape `PaymentOutcomeProducer`
+already established on the Payment Service side, described below.
+`cancel_booking` publishes *before* committing, the same publish-before-commit
+ordering the Phase 4 CHECKPOINT review established for
+`handle_webhook_event` — a publish failure must propagate uncommitted so
+the whole cancel request fails cleanly and is retryable, rather than
+stranding a `CANCELLED` booking whose refund trigger never reached Payment
+Service. **Status:** Implemented, Tested, Verified (live) — see the
+Payment Service section's own Phase 6 additions for the refund half of
+this flow.
+
 ## Payment Service — Manager + Repository, plus the system's one synchronous inter-service call
 
 ```mermaid
@@ -412,8 +467,10 @@ classDiagram
         -_payments: PaymentRepository
         +create_charge(payload) PaymentResponse
         +handle_webhook_event(event, producer) void
+        +refund_payment(booking_id, notification_producer) void
         -_create_pending_payment(payload) Payment
         -_submit_to_stripe(payment, payload) void
+        -_submit_refund_to_stripe(payment, notification_producer) void
         -_build_response(payment) PaymentResponse
     }
 
@@ -422,6 +479,7 @@ classDiagram
         -_model: type~Payment~
         +get_by_booking_id(booking_id) Payment
         +get_by_stripe_charge_id(stripe_charge_id) Payment
+        +transition_if_pending(stripe_charge_id, new_status) bool
     }
 
     class PaymentOutcomeProducer {
@@ -430,8 +488,24 @@ classDiagram
         +publish_outcome(payment) void
     }
 
+    class NotificationProducer {
+        -_producer: AIOKafkaProducer
+        -_topic: str
+        +publish_refund_failed(booking_id, reason) void
+    }
+
+    class BookingCancelledConsumer {
+        -_consumer: AIOKafkaConsumer
+        -_session_factory: async_sessionmaker
+        +run() void
+        -_handle(raw) void
+        -_refund_with_retry(booking_id) void
+    }
+
     PaymentManager --> PaymentRepository
     PaymentManager --> PaymentOutcomeProducer
+    PaymentManager --> NotificationProducer
+    BookingCancelledConsumer --> PaymentRepository
 ```
 
 ## Why this shape
@@ -523,3 +597,45 @@ the Kafka consumer, not Stripe's delivery): `succeeded` → `Booking`
 the same `failed` message produced no second log line and no second effect.
 `POST /payments/webhook` with an invalid signature verified live to reject
 with 400 before touching any `Payment` row.
+
+**Phase 6 additions**: `PaymentManager.refund_payment` and Payment
+Service's first-ever Kafka consumer, `BookingCancelledConsumer`
+(integration point #5, §22). No API route drives a refund — the
+`booking.cancelled` Kafka message itself is the authorization (Booking
+Service already checked ownership before publishing it), so this consumer
+calls `PaymentManager` directly, the same "no equivalent API route" shape
+`ProvisioningConsumer` and `PaymentOutcomeConsumer` already use.
+`refund_payment`'s idempotency gate deliberately mirrors `create_charge`'s
+existing "resubmit only if the provider-side ID column is still `NULL`"
+pattern (`stripe_refund_id is None`) rather than a rowcount-gated status
+transition like `handle_webhook_event`'s — a genuinely concurrent
+redelivery race isn't reachable here the way it was for the webhook route,
+since this consumer processes one Kafka partition's records strictly
+sequentially, so only crash-then-restart redelivery is possible, and a
+retried Stripe call with the same `{booking_id}-refund` idempotency key
+(§9's pattern, applied to refunds) is already safe by construction. On a
+`stripe.error.StripeError`, `refund_payment` does not roll anything
+back — `Payment.status` stays `SUCCEEDED` (§22's explicit no-re-lock
+scope boundary) — and publishes to a new `NotificationProducer`, the
+producer side only of integration point #3 (Notification Service itself
+doesn't exist until Phase 5, which runs after this phase in the locked
+build order; Kafka producer and consumer are independently deployable, the
+same trade-off already accepted for integration point #2's eventual
+consistency). **Status:** Implemented, Tested, Verified (live, except a
+real Stripe refund succeeding) — live-verified through the real HTTP/Kafka
+path end to end: a real cancel through `POST /bookings/{id}/cancel`
+produced a real `booking.cancelled` message, consumed by
+`BookingCancelledConsumer`, which reached a genuine
+`POST https://api.stripe.com/v1/refunds` call to Stripe's actual API
+(failing only at the placeholder-key boundary, 401, same expected failure
+mode as Phase 4's charge flow — not a bypass), correctly triggered the
+refund-failure branch, and published to `notifications` — verified
+directly with a throwaway `kafka-console-consumer`, message shape correct.
+Redelivery verified live too: since the first attempt's refund never
+actually succeeded (`stripe_refund_id` stayed `NULL`, the only reachable
+outcome without real Stripe credentials), a hand-crafted redelivery
+correctly *retried* the refund rather than silently no-op'ing — exactly
+the resubmission-gate semantics documented above; the "already-refunded
+redelivery is a no-op" case is proven in the automated integration suite
+(`test_refund_payment_replay_against_real_db_does_not_double_refund`),
+which mocks a successful Stripe response to reach that state.

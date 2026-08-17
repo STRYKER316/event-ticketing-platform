@@ -197,6 +197,10 @@ erDiagram
         datetime created_at
         datetime updated_at
     }
+    EVENT {
+        uuid event_id PK "added Phase 6 — no FK, same reasoning"
+        datetime start_time "for the cancellation cutoff, §22"
+    }
 ```
 
 **Cardinalities:** one `Ticket` has at most one *active* `Booking`
@@ -228,7 +232,21 @@ bookings(
   created_at, updated_at,
   UNIQUE(ticket_id) WHERE status IN ('pending', 'confirmed')
 )
+events(
+  event_id PK "added Phase 6, migration 3cabba382c63",
+  start_time
+)
 ```
+
+**`events` (Phase 6) is deliberately minimal** — not a copy of Event
+Service's own data (that would be cross-service table duplication beyond
+what's needed, §8), just the one field `cancel_booking` needs to enforce
+§22's "before the event starts" cutoff. Written by `ProvisioningConsumer`
+from the same `EventUpsertedMessage.start_time` field already received (and
+previously discarded) for ticket provisioning — no new Kafka integration
+point, the same event-carried-state-transfer mechanism (§7.2) just used a
+second time. Upserted (`ON CONFLICT (event_id) DO UPDATE`) rather than
+insert-once, so a republished event's corrected `start_time` stays current.
 
 Two constraints carry real correctness weight, not just data hygiene:
 
@@ -316,9 +334,10 @@ erDiagram
         uuid ticket_id "no FK, same reasoning"
         int amount_cents
         string currency
-        enum status "pending | succeeded | failed"
+        enum status "pending | succeeded | failed | refunded"
         string stripe_charge_id "NULL until Stripe accepts the attempt"
         string idempotency_key
+        string stripe_refund_id "added Phase 6 — NULL until a refund is submitted"
         datetime created_at
         datetime updated_at
     }
@@ -343,12 +362,19 @@ payments(
   booking_id UNIQUE INDEXED,
   ticket_id,
   amount_cents, currency,
-  status ENUM(pending, succeeded, failed),
+  status ENUM(pending, succeeded, failed, refunded "refunded added Phase 6"),
   stripe_charge_id NULL,
   idempotency_key,
+  stripe_refund_id NULL "added Phase 6, migration 0c1c541204d5",
   created_at, updated_at
 )
 ```
+
+**Adding `refunded` to an existing Postgres `ENUM` type needed its own
+migration step** — `ALTER TYPE paymentstatus ADD VALUE` cannot share a
+transaction with a statement that uses the new value, so migration
+`0c1c541204d5` runs it inside its own `op.get_context().autocommit_block()`,
+separate from the `stripe_refund_id` column addition in the same file.
 
 **`UNIQUE(booking_id)` is defense-in-depth for the idempotency claim**, the
 same role `uq_bookings_active_ticket` plays for `booking_db` — the primary
@@ -398,3 +424,21 @@ no-op instead of retrying the publish). See the Class Diagrams chapter's
 Payment Service section and `build-log.md`'s 2026-08-17 CHECKPOINT entry
 for the full account, including the more severe authorization-bypass
 finding from the same review pass.
+
+**Phase 6: `stripe_refund_id` follows `stripe_charge_id`'s exact "`NULL`
+means not yet submitted" role**, deliberately, rather than a new
+mechanism — `refund_payment` resubmits to Stripe only while this column is
+`NULL`, mirroring `create_charge`'s already-reviewed resubmission gate.
+**Status:** Implemented, Tested, Verified (live, except a real refund
+succeeding against Stripe's API). Migration applies cleanly. Live-verified
+through the real HTTP/Kafka path: a cancelled, previously-`SUCCEEDED`
+booking reached a genuine `POST https://api.stripe.com/v1/refunds` call,
+failing only at the same placeholder-key boundary Phase 4's charge flow
+hits (401, not a bypass); `status` confirmed to stay `SUCCEEDED` and
+`stripe_refund_id` `NULL` after the failed attempt, not silently flipped
+to any terminal-looking state, matching §22's explicit no-rollback scope
+boundary. A hand-crafted redelivery of the same `booking.cancelled`
+message correctly re-attempted the refund (since it hadn't yet succeeded)
+rather than silently no-op'ing; the true already-refunded-redelivery
+no-op case is proven in the automated integration suite with a mocked
+Stripe success, not reproducible live without real credentials.

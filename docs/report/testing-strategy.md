@@ -482,3 +482,93 @@ CHECKPOINT review). `booking-service`: 36/36 unit (+12 from Phase 3's 24),
 (unaffected, spot-checked). `search-service`: 16/16 unit (unaffected —
 silently ignores the new `price_cents` field on `event.events` it doesn't
 need, pydantic's default `extra="ignore"`).
+
+## Phase 6 — Cancellation & Refunds, no dedicated adversarial pass, but a test finds a three-phase-old infrastructure bug anyway
+
+Same review posture as Phase 4: no dedicated adversarial `/code-review`
+pass (only P3 and P8 get one, `CLAUDE.md`), self-verification plus the
+routine `/pre-pr` gate at CHECKPOINT. Build-then-test throughout — nothing
+in this phase's scope is on the test-first list (that's specifically the
+dual hold strategies and payment/webhook idempotency); the refund
+idempotency mechanism this phase adds deliberately reuses Phase 4's
+already-reviewed `create_charge` resubmission-gate pattern rather than
+designing a new correctness-critical mechanism from scratch.
+
+**Writing the one genuinely new kind of test this phase needed — a real
+Kafka-transport round trip, not a mocked producer or a hand-crafted
+payload fed straight to `_handle()` — surfaced a bug that had been sitting
+untouched since Phase 3.** Every Kafka consumer test in this codebase,
+across every phase before this one, tests `_handle()` directly against a
+hand-crafted message, deliberately bypassing the real broker; this phase's
+`test_cancel_booking_kafka.py` is the first test anywhere in the project
+to actually publish through a real `AIOKafkaProducer` and consume with a
+real `AIOKafkaConsumer`. `booking-service`'s `kafka_container` fixture
+(`tests/integration/conftest.py`) had existed since Phase 3 with zero
+callers — confirmed by `grep` across the whole suite — so nothing had ever
+actually exercised it. The first real caller hit an immediate container
+exit (code 2). `CLAUDE.md`'s Conventions section had claimed
+`KafkaContainer("apache/kafka:3.8.0")` "boots and works directly, no
+`.with_kraft()` override needed," explicitly contrasted against
+`search-service`'s use of `confluentinc/cp-kafka` plus `.with_kraft()`.
+Dumping the container's logs before Ryuk's cleanup ran (`TESTCONTAINERS
+_RYUK_DISABLED=true`, then reconstructing `KafkaContainer.start()`'s steps
+manually to capture output mid-failure) showed the real cause:
+`testcontainers.community.kafka.KafkaContainer`'s boot script shells out to
+`/etc/confluent/docker/configure` and `/etc/confluent/docker/bash-config`
+in **both** its Zookeeper and KRaft code paths — Confluent-specific
+tooling the official `apache/kafka` image never ships, regardless of
+`.with_kraft()`. `search-service`'s own `conftest.py` already documented
+this exact incompatibility correctly, since Phase 2; `CLAUDE.md`'s claim
+was simply wrong and went uncaught for three phases because the fixture it
+described was never actually run. Fixed by switching `booking-service`'s
+fixture to the same proven combination (`confluentinc/cp-kafka:7.6.0` +
+`.with_kraft()`), and corrected `CLAUDE.md` to match — see `build-log.md`'s
+2026-08-17 P6.T4 entry for the full trace.
+
+**Live-verified end to end, through the real HTTP/Kafka path, under both
+hold strategies**: created real events/seat maps, booked and reached
+`CONFIRMED` via the self-signed-webhook technique Phase 4 established
+(local dev has only a placeholder Stripe key, so this remains the only way
+to reach a genuinely `CONFIRMED` booking without a real account), then
+cancelled through the real `POST /bookings/{id}/cancel` route. Under
+`cron`: seat released `BOOKED` → `AVAILABLE`, confirmed by direct query,
+immediately rebookable; non-owner 403; repeat-cancel 409; past-cutoff 409
+(moved a real `Event.start_time` into the past and confirmed the
+rejection). Under `redis`: identical sequence, with `Ticket.status`
+confirmed to stay `AVAILABLE` throughout — the documented hold-strategy
+asymmetry, not a bug. The refund half: `payment-service`'s own logs showed
+`booking.cancelled` consumed and a genuine `POST
+https://api.stripe.com/v1/refunds` reaching Stripe's actual API boundary
+(401 on the placeholder key, the same expected failure mode Phase 4's
+charge flow hits, not a bypass or a mock); the refund-failure branch
+correctly triggered, and the `notifications` topic message was verified
+directly with a throwaway `kafka-console-consumer` (correct shape, correct
+`booking_id`, Stripe's real error text as `reason`). Redelivery verified
+live too: a hand-crafted duplicate `booking.cancelled` message (produced
+via `kafka-console-producer`) correctly *retried* the refund rather than
+silently no-op'ing, since the first attempt's refund had never actually
+succeeded (`stripe_refund_id` stayed `NULL`) — exactly the resubmission-gate
+semantics the idempotency design specifies; the true
+already-refunded-redelivery no-op case is proven in the automated
+integration suite with a mocked Stripe success
+(`test_refund_payment_replay_against_real_db_does_not_double_refund`),
+since observing it live needs a real Stripe account.
+
+**What wasn't live-verified this phase, same tracked gap as Phase 4's
+charge flow**: a real Stripe refund actually succeeding, and by extension
+the "already-refunded redelivery is a no-op" claim against a genuinely
+`SUCCEEDED` Stripe refund rather than a mocked one. Everything up to
+Stripe's own API boundary is live-verified; the genuine refund round trip
+is Tested (mocked/integration) but not yet Verified against the real
+Stripe API.
+
+**Status:** Implemented, Tested, Verified (live, except the real-Stripe
+refund leg above, and except the `kafka_container` infrastructure fix,
+which is Verified in the sense that it now demonstrably works, not merely
+patched). Final counts: `booking-service` 69/69 (unit + integration, up
+from 60 before this phase — 8 new unit tests across
+`release_booking`/`cancel_booking`, 1 new real-Kafka-transport integration
+test); `payment-service` 21/21 (up from 12 before this phase — 5 new unit
+tests for `refund_payment`'s branches, 4 new integration tests including
+two exercising `BookingCancelledConsumer._handle` directly for redelivery
+and Stripe-failure behavior).

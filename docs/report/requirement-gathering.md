@@ -161,11 +161,49 @@ this system). See the Testing Strategy and Class Diagrams chapters'
 Payment Service sections for the full live-verification detail and the
 real idempotency bug this testing caught and fixed.
 
+## Roles/permissions table — Cancellation & Refunds (Phase 6)
+
+| Endpoint | Anonymous | `user` (non-owner) | `user` (owner, `CONFIRMED`, before event start) | `user` (owner, past cutoff / not `CONFIRMED`) |
+|---|---|---|---|---|
+| `POST /bookings/{id}/cancel` (Booking Service) | 401 | **403** | Allow (cancels + releases seat + triggers refund) | **409** |
+
+**Ownership scoping works the same way as `/pay`** (§15's pattern, applied
+a third time in this system): the booking's stored `user_subject` compared
+against the caller's JWT `subject`, not a role check — `organizer` has no
+special standing over a booking it didn't make, same as booking and
+payment before it. Two state preconditions stack on top of the
+authorization check, both independently checked and independently
+returning 409: the booking must currently be `CONFIRMED` (cancelling a
+still-`PENDING`, already-`CANCELLED`, or `EXPIRED` booking is rejected),
+and the event's `start_time` must not have passed yet (§22's cancellation
+policy — full refund, any time before the event starts, no partial-refund
+tiers). Payment Service has no route of its own for this at all — the
+refund is entirely Kafka-triggered (integration point #5), the message
+itself standing in as authorization since Booking Service already checked
+ownership before publishing it (§8: Payment Service has no access to
+`booking_db` to check ownership a second time, same reasoning as `/pay`'s
+"authenticated, checked by a different service" cell).
+
+**Status:** Implemented, Tested, Verified (live, except a real Stripe
+refund succeeding). Every cell above was exercised live against the
+running stack with real seed users, under **both** hold strategies: `bob`
+attempting `alice`'s booking → 403; cancelling an unknown booking → 404;
+`alice` cancelling her own `CONFIRMED` booking → 200, seat immediately
+rebookable; a repeat cancel on the now-`CANCELLED` booking → 409; a cancel
+attempt against an event whose `start_time` had passed → 409. The refund
+trigger itself reached Stripe's real API boundary (failing only on the
+placeholder credential, same tracked gap as `/pay`) — see the Class
+Diagrams and Database Schema Design chapters' Phase 6 sections for the
+full mechanism and live-verification detail.
+
 ## What this chapter still needs
 
-Functional requirements for cancellation/refund and notification delivery
-are not yet written — they depend on Phases 5–6, which this draft does not
-cover. Non-functional requirements (the Hold-Mechanism Benchmark's
-throughput/latency targets) depend on Phase 8 (already measured — see the
-Feature Development Process chapter — but not yet cross-referenced from
-this chapter's non-functional-requirements framing).
+Functional requirements for notification delivery are not yet written —
+they depend on Phase 5, which this draft does not cover (producer-only
+plumbing for the eventual notification consumer was added in Phase 6, see
+the Class Diagrams chapter, but the consumer itself and its retry/DLQ
+requirements are Phase 5's job). Non-functional requirements (the
+Hold-Mechanism Benchmark's throughput/latency targets) depend on Phase 8
+(already measured — see the Feature Development Process chapter — but not
+yet cross-referenced from this chapter's non-functional-requirements
+framing).
