@@ -346,34 +346,90 @@ Report evidence: testing-chapter material (§18).
 
 ## Phase 4 exit checklist (all must pass before P6)
 
-- [ ] Per-section pricing live end-to-end: organizer sets section prices,
+- [x] Per-section pricing live end-to-end: organizer sets section prices,
       publishing the event produces correctly-priced `Ticket` rows in
-      `booking_db`.
-- [ ] Payment Service scaffolded, `payment_db` migrated, wired into
-      `infra/docker-compose.yml`, Traefik (`PathPrefix('/payments')`), and the
-      `uv` workspace.
-- [ ] `POST /bookings/{id}/pay` live-verified: ownership-scoped (403 for a
-      non-owner), creates a Stripe test-mode charge, idempotent (same booking
-      ID twice → one charge, proven by test).
-- [ ] Webhook endpoint verified against Stripe CLI local forwarding;
-      idempotent handling proven by a replay test (no double effect).
-- [ ] Kafka #4 (payment outcome, both branches) live-verified: a declined
-      payment against a real `PENDING` booking releases the seat well before
-      TTL/cron-sweep would; a successful payment flips a `PENDING` booking to
-      `CONFIRMED`; redelivery proven a safe no-op for both branches.
-- [ ] Full test suite green (unit + testcontainers integration).
-- [ ] Validation checkpoint done live: pay a `PENDING` booking → `CONFIRMED`;
-      decline a payment → hold released immediately (not on timeout); replayed
-      webhooks change nothing.
-- [ ] Live walkthrough done at CHECKPOINT; `docs/architecture.html` updated to
-      current state; `docs/build-log.md` entry appended; decisions-log delta
-      logged for anything this phase's *implementation* changed beyond the
-      §7/§9/§16 amendments already made while writing this kickoff doc.
-- [ ] Phase-end checklist items 1-9 from `CLAUDE.md` run in full, including
-      `/pre-pr` against the diff since this phase's starting commit and this
-      file's own exit-checklist boxes checked with evidence (per item 9 —
-      not left unchecked the way Phase 3's kickoff doc was before that item
-      existed).
+      `booking_db`. Live-verified: a real venue/event/seat-map
+      (`price_cents: 5000`) created via the organizer API and published,
+      confirmed to land on the provisioned `Ticket` row via real Kafka —
+      see `build-log.md`'s 2026-08-17 P4.T2-T7 entry.
+- [x] Payment Service scaffolded, `payment_db` migrated, wired into
+      `infra/docker-compose.yml`, Traefik, and the `uv` workspace. Note: the
+      Traefik rule is deliberately **not** `PathPrefix('/payments')` as this
+      line originally specified — CHECKPOINT review found that would
+      publicly expose `/payments/charge`, an authz bypass. Fixed to
+      `PathPrefix('/payments/webhook')` only; see the CHECKPOINT build-log
+      entry.
+- [~] `POST /bookings/{id}/pay` live-verified: ownership-scoped (403 for a
+      non-owner, 404 unknown booking) — done. Idempotent (same booking ID
+      twice → one charge) — proven by unit + integration test, and live via
+      the retry-bug fix (a stuck-replay bug found and fixed this phase).
+      "Creates a Stripe test-mode charge" — the full chain up to Stripe's
+      own API boundary is live-verified (real HTTPS request, Payment
+      Service's own auth check passes, forwarded JWT validated); a charge
+      actually **succeeding** was not reached, since no real Stripe
+      test-mode credentials were available this session. Not marked done
+      outright — see the open item below.
+- [ ] Webhook endpoint verified against Stripe CLI local forwarding —
+      **not done**. Only the signature-rejection path (a deliberately bad
+      signature → 400) and the idempotency logic (unit + integration test,
+      plus a live concurrency test added at CHECKPOINT) were verified;
+      `stripe listen --forward-to` was never actually run, since that
+      requires a real Stripe account. Genuinely open, not glossed over.
+- [x] Kafka #4 (payment outcome, both branches) live-verified: produced
+      `succeeded`/`failed` messages directly on `payment.outcomes`
+      (bypassing Stripe — the mechanism under test is the consumer, not
+      Stripe's delivery) against real `PENDING` bookings — `succeeded` →
+      `CONFIRMED`/`BOOKED`; `failed` → `EXPIRED`/`AVAILABLE` immediately;
+      redelivery produced no second effect and, per the CHECKPOINT fix,
+      provably can't touch a different, later booking's legitimate hold.
+- [x] Full test suite green (unit + testcontainers integration) — as of the
+      CHECKPOINT commit: `event-service` 44/44 + 11/11, `booking-service`
+      36/36 + 24/24, `payment-service` 7/7 + 5/5, `search-service` 16/16
+      (unaffected, spot-checked).
+- [~] Validation checkpoint done live: "decline a payment → hold released
+      immediately" and "replayed webhooks change nothing" — both done (see
+      Kafka #4 item above; webhook replay proven at the API layer via
+      `handle_webhook_event`'s idempotency tests, not a real Stripe replay).
+      "Pay a `PENDING` booking → `CONFIRMED`" via the *real* charge→webhook
+      path specifically was not reached (same real-Stripe gap as above) —
+      the `CONFIRMED` transition itself was proven live via direct Kafka
+      injection, which exercises the same consumer code a real webhook
+      would drive, just not the Stripe leg feeding it.
+- [x] Live walkthrough done at CHECKPOINT; `docs/architecture.html` updated
+      to current state (topology, proven/not-built lists, reproduce-this-
+      yourself commands, including the CHECKPOINT authz-bypass fix);
+      `docs/build-log.md` entries appended (P4.T1, P4.T2-T7, and the
+      CHECKPOINT review); decisions-log delta logged (§7/§9/§16 amendments
+      made before implementation began, §26 additions after).
+- [x] Phase-end checklist items 1-9 from `CLAUDE.md` run in full: (1)
+      end-to-end live walkthrough — extensive, see above and the build-log
+      entries; (2) report chapters drafted and corrected post-review
+      (Class Diagrams, Database Schema Design, Testing Strategy,
+      Requirement Gathering, README status table); (3) commit history
+      scanned — found and fixed one commit message with an embedded
+      phase/task ID (`P4.T2-T7`) via a non-interactive history rewrite
+      (nothing was pushed yet), academic-presentation scan (emoji/TODO/
+      casual language) clean; (4) `architecture.html` updated; (5)
+      decisions-log delta logged; (6) `CLAUDE.md` self-update done (the
+      one-synchronous-call exception noted in the architecture invariants);
+      (7) `/pre-pr` run against the diff since `b4a4392` — simplify (4 real
+      fixes, most notably a blocking-call violation) and code-review (6
+      findings, most severe an authz bypass, all fixed) both ran; the
+      `verify` step was substituted with this session's own extensive live
+      testing against the real running stack rather than a separate
+      subagent pass, since that testing already covered every touched
+      endpoint directly; (8) cross-doc staleness sweep — `infra/README.md`,
+      root `README.md`, both services' own `READMEs`, `architecture.html`'s
+      stale "three services"/"12 containers" text, the P8 benchmark
+      chapter's cross-reference, all found and fixed; (9) this checklist.
+
+**Two items are genuinely open, not silently marked done**, both blocked on
+the same thing: real Stripe test-mode credentials, which weren't available
+this session (the user was asked and chose to defer rather than supply
+one). Before this phase is truly closed out: supply a real
+`STRIPE_SECRET_KEY`, run `stripe listen --forward-to localhost/payments/webhook`
+locally, and re-verify a real charge → webhook → `CONFIRMED` round trip
+end to end.
 
 **Report evidence captured this phase (§16):** Payment class diagram +
 textual schema, idempotency writeup (§9, both mechanisms — charge and
