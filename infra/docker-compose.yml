@@ -183,7 +183,9 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       EVENTS_TOPIC: event.events
+      PAYMENT_OUTCOMES_TOPIC: payment.outcomes
       HOLD_STRATEGY: cron
+      PAYMENT_SERVICE_URL: http://payment-service:8004
       AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
       AUTH_EXPECTED_AUDIENCE: ticketing-services
       AUTH_JWKS_URI_OVERRIDE: http://keycloak:8080/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
@@ -196,12 +198,46 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+      payment-service:
+        condition: service_started
     labels:
       traefik.enable: "true"
       # Same reasoning as search-service's rule above — more specific than
       # event-service's catch-all PathPrefix(`/`), no explicit priority needed.
       traefik.http.routers.booking-service.rule: PathPrefix(`/bookings`)
       traefik.http.services.booking-service.loadbalancer.server.port: "8003"
+
+  payment-service:
+    build:
+      context: ../services
+      dockerfile: payment-service/Dockerfile
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      PAYMENT_DB_NAME: ${PAYMENT_DB_NAME}
+      PAYMENT_DB_USER: ${PAYMENT_DB_USER}
+      PAYMENT_DB_PASSWORD: ${PAYMENT_DB_PASSWORD}
+      PAYMENT_SERVICE_PORT: 8004
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PAYMENT_OUTCOMES_TOPIC: payment.outcomes
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
+      AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
+      AUTH_EXPECTED_AUDIENCE: ticketing-services
+      AUTH_JWKS_URI_OVERRIDE: http://keycloak:8080/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    labels:
+      traefik.enable: "true"
+      # Same reasoning as search-service's rule above — more specific than
+      # event-service's catch-all PathPrefix(`/`), no explicit priority needed.
+      traefik.http.routers.payment-service.rule: PathPrefix(`/payments`)
+      traefik.http.services.payment-service.loadbalancer.server.port: "8004"
 
   prometheus:
     image: prom/prometheus:v2.55.1

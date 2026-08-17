@@ -46,6 +46,7 @@ test:
 migrate:
 	set -a && . .env && set +a && cd services/event-service && uv run --package event-service alembic upgrade head
 	set -a && . .env && set +a && cd services/booking-service && uv run --package booking-service alembic upgrade head
+	set -a && . .env && set +a && cd services/payment-service && uv run --package payment-service alembic upgrade head
 
 # Populates baseline demo data (§19). Run against a running, migrated stack.
 seed:
