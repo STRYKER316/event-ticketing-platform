@@ -78,7 +78,7 @@ async def test_duplicate_provisioning_message_creates_no_duplicate_tickets(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
     event_id = uuid.uuid4()
-    seats = [("A", "1", "A1"), ("A", "1", "A2")]
+    seats = [("A", "1", "A1", 2500), ("A", "1", "A2", 2500)]
     async with db_session_factory() as session:
         repo = TicketRepository(session)
         first = await repo.bulk_upsert_available(event_id, seats)

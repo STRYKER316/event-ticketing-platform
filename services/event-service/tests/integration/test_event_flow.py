@@ -70,7 +70,7 @@ async def test_owning_organizer_can_upsert_seat_map_via_api_path(
     )
 
     payload = SeatMapUpsert(
-        sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+        sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
     )
     result = await manager.upsert_seat_map(ORGANIZER, created.id, payload)
     assert result.sections[0].name == "A"
@@ -90,7 +90,7 @@ async def test_cross_organizer_cannot_upsert_seat_map(db_session: AsyncSession, 
     )
 
     payload = SeatMapUpsert(
-        sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+        sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
     )
     with pytest.raises(HTTPException) as exc_info:
         await manager.upsert_seat_map(OTHER_ORGANIZER, created.id, payload)
@@ -110,14 +110,14 @@ async def test_seat_map_upsert_republishes_when_event_is_published(
         EventCreate(title="Republish on Seat Change", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
     )
     initial_payload = SeatMapUpsert(
-        sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+        sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
     )
     await manager.upsert_seat_map(ORGANIZER, created.id, initial_payload)
     await manager.publish_event(ORGANIZER, created.id)
     producer.publish_upserted.assert_awaited_once()
 
     updated_payload = SeatMapUpsert(
-        sections=[SeatMapSection(name="B", rows=[SeatMapRow(name="1", seats=[Seat(label="B1", x=0, y=0)])])]
+        sections=[SeatMapSection(price_cents=2500, name="B", rows=[SeatMapRow(name="1", seats=[Seat(label="B1", x=0, y=0)])])]
     )
     await manager.upsert_seat_map(ORGANIZER, created.id, updated_payload)
 
@@ -144,7 +144,7 @@ async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_d
     await SeatMapRepository(mongo_db).upsert(
         SeatMap(
             event_id=created.id,
-            sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
+            sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
         )
     )
     seat_map = await manager.get_seat_map(created.id)
@@ -175,7 +175,7 @@ async def test_publish_notifies_producer_and_republishes_on_update(
 
     seat_map = SeatMap(
         event_id=created.id,
-        sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
+        sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
     )
     await SeatMapRepository(mongo_db).upsert(seat_map)
 
@@ -216,7 +216,7 @@ async def test_republish_on_venue_change_reflects_the_new_venue(
     await SeatMapRepository(mongo_db).upsert(
         SeatMap(
             event_id=created.id,
-            sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
+            sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
         )
     )
     await manager.publish_event(ORGANIZER, created.id)

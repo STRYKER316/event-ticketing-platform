@@ -14,7 +14,7 @@ OWNER = Principal(subject="organizer-owner", roles=["organizer"])
 
 SEAT_MAP = SeatMap(
     event_id=uuid.uuid4(),
-    sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
+    sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
 )
 
 

@@ -83,7 +83,14 @@ async def seed_ticket(session_factory: async_sessionmaker[AsyncSession]) -> uuid
     db_session_factory explicitly (used inside asyncio.gather in the
     concurrency suite, where fixture injection doesn't apply)."""
     async with session_factory() as session:
-        ticket = Ticket(event_id=uuid.uuid4(), section="A", row_name="1", seat_label="A1", status=TicketStatus.AVAILABLE)
+        ticket = Ticket(
+            event_id=uuid.uuid4(),
+            section="A",
+            row_name="1",
+            seat_label="A1",
+            price_cents=2500,
+            status=TicketStatus.AVAILABLE,
+        )
         session.add(ticket)
         await session.commit()
         return ticket.id

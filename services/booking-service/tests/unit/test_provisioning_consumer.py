@@ -54,7 +54,7 @@ def _upserted_payload(event_id: uuid.UUID) -> bytes:
         f'"description": null, "start_time": "{start.isoformat()}", '
         f'"end_time": "{(start + timedelta(hours=2)).isoformat()}", '
         f'"venue_name": "V", "performer_names": [], '
-        f'"seats": [{{"section": "A", "row": "1", "label": "A1"}}]}}'
+        f'"seats": [{{"section": "A", "row": "1", "label": "A1", "price_cents": 2500}}]}}'
     )
     return payload.encode()
 

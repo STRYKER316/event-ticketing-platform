@@ -33,6 +33,7 @@ SEAT_MAP = SeatMap(
     sections=[
         SeatMapSection(
             name="A",
+            price_cents=2500,
             rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0), Seat(label="A2", x=1, y=0)])],
         )
     ],
@@ -58,6 +59,6 @@ async def test_publish_upserted_sends_correct_topic_key_and_payload():
     assert payload["venue_name"] == "Test Venue"
     assert payload["performer_names"] == ["Performer One"]
     assert payload["seats"] == [
-        {"section": "A", "row": "1", "label": "A1"},
-        {"section": "A", "row": "1", "label": "A2"},
+        {"section": "A", "row": "1", "label": "A1", "price_cents": 2500},
+        {"section": "A", "row": "1", "label": "A2", "price_cents": 2500},
     ]

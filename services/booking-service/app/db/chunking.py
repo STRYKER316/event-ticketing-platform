@@ -6,8 +6,12 @@ from typing import TypeVar
 # potentially large list chunks through this to stay safely under that limit
 # regardless of how many rows/IDs are involved. One shared constant so the
 # two call sites (ticket_repository.py's INSERT, cron_hold_strategy.py's
-# sweep) can't drift out of sync with each other.
-BIND_PARAM_SAFE_BATCH_SIZE = 5000
+# sweep) can't drift out of sync with each other — sized for the wider call
+# site's worst case (ticket_repository.py's INSERT, 7 params/row as of the
+# price_cents column) rather than each site picking its own number, since
+# cron_hold_strategy.py's single-column .in_() has much more headroom than it
+# needs at this size anyway.
+BIND_PARAM_SAFE_BATCH_SIZE = 4000
 
 T = TypeVar("T")
 

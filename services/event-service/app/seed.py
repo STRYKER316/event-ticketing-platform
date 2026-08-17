@@ -19,6 +19,7 @@ def _rectangular_seat_map(event_id: uuid.UUID, rows: int, seats_per_row: int) ->
     sections = [
         SeatMapSection(
             name="General",
+            price_cents=2500,
             rows=[
                 SeatMapRow(
                     name=str(row),

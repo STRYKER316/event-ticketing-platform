@@ -24,7 +24,10 @@ def _message(event_id: uuid.UUID) -> bytes:
         end_time=start + timedelta(hours=2),
         venue_name="Test Arena",
         performer_names=[],
-        seats=[EventSeat(section="A", row="1", label="A1"), EventSeat(section="A", row="1", label="A2")],
+        seats=[
+            EventSeat(section="A", row="1", label="A1", price_cents=2500),
+            EventSeat(section="A", row="1", label="A2", price_cents=2500),
+        ],
     )
     return msg.model_dump_json().encode()
 
@@ -44,6 +47,8 @@ async def test_upserted_message_provisions_one_ticket_per_seat(
 
     async with db_session_factory() as session:
         assert await _count_tickets(session, event_id) == 2
+        tickets = (await session.execute(select(Ticket).where(Ticket.event_id == event_id))).scalars().all()
+        assert all(ticket.price_cents == 2500 for ticket in tickets)
 
 
 async def test_redelivered_message_creates_no_duplicate_tickets(
@@ -63,7 +68,7 @@ async def test_redelivered_message_creates_no_duplicate_tickets(
 async def test_seat_map_larger_than_one_insert_batch_provisions_every_seat(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
-    # Regression: a single multi-row INSERT bound 5 params/seat, so a seat
+    # Regression: a single multi-row INSERT bound 6 params/seat, so a seat
     # map anywhere near event-service's 20,000-seat cap overflowed Postgres's
     # ~32,767 bind-param limit. INSERT_BATCH_SIZE is 5000, so 6000 seats
     # forces a real two-batch provision (5000 + 1000) and proves nothing gets
@@ -80,7 +85,7 @@ async def test_seat_map_larger_than_one_insert_batch_provisions_every_seat(
         end_time=start + timedelta(hours=2),
         venue_name="Huge Arena",
         performer_names=[],
-        seats=[EventSeat(section="A", row=str(i), label=f"A{i}") for i in range(seat_count)],
+        seats=[EventSeat(section="A", row=str(i), label=f"A{i}", price_cents=2500) for i in range(seat_count)],
     )
     consumer = ProvisioningConsumer(consumer=None, session_factory=db_session_factory)
 

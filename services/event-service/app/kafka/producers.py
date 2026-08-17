@@ -18,7 +18,7 @@ class EventProducer:
 
     async def publish_upserted(self, event: Event, seat_map: SeatMap) -> None:
         seats = [
-            EventSeat(section=section.name, row=row.name, label=seat.label)
+            EventSeat(section=section.name, row=row.name, label=seat.label, price_cents=section.price_cents)
             for section in seat_map.sections
             for row in section.rows
             for seat in row.seats

@@ -153,6 +153,10 @@ class SeatMapRow(BaseModel):
 class SeatMapSection(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     rows: list[SeatMapRow] = Field(min_length=1)
+    # Organizer-set, per section (§9/§16 decisions-log amendments, 2026-08-17) — e.g.
+    # floor vs. balcony pricing. Carried through the event-carried Kafka payload
+    # (§7.2, see kafka/producers.py) into Booking Service's Ticket.price_cents.
+    price_cents: int = Field(gt=0)
 
 
 class SeatMap(BaseModel):

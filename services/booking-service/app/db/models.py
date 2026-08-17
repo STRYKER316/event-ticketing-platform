@@ -35,6 +35,9 @@ class Ticket(Base):
     section: Mapped[str] = mapped_column(String(100), nullable=False)
     row_name: Mapped[str] = mapped_column(String(100), nullable=False)
     seat_label: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Organizer-set per section at provisioning time (decisions-log §9/§16
+    # amendments, 2026-08-17) — what Payment Service charges against.
+    price_cents: Mapped[int] = mapped_column(nullable=False)
     status: Mapped[TicketStatus] = mapped_column(nullable=False, default=TicketStatus.AVAILABLE, index=True)
     # Cron strategy's own hold state (§6) — the Redis strategy never writes this
     # column; see the Redis strategy's docstring for why that split is deliberate.

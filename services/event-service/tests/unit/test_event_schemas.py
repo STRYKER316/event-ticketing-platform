@@ -72,19 +72,24 @@ def test_seat_map_upsert_rejects_a_section_with_no_rows():
     # while still describing zero actual seats if nothing stops an empty
     # `rows` list nested inside it.
     with pytest.raises(ValidationError):
-        SeatMapUpsert(sections=[SeatMapSection(name="A", rows=[])])
+        SeatMapUpsert(sections=[SeatMapSection(price_cents=2500, name="A", rows=[])])
 
 
 def test_seat_map_upsert_rejects_a_row_with_no_seats():
     with pytest.raises(ValidationError):
-        SeatMapUpsert(sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[])])])
+        SeatMapUpsert(sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[])])])
 
 
 def test_seat_map_upsert_accepts_valid_payload():
     upsert = SeatMapUpsert(
-        sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+        sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
     )
     assert len(upsert.sections) == 1
+
+
+def test_seat_map_section_rejects_non_positive_price():
+    with pytest.raises(ValidationError):
+        SeatMapSection(price_cents=0, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])
 
 
 def test_venue_create_rejects_name_over_the_db_column_limit():
@@ -142,7 +147,7 @@ def test_event_create_preserves_whitespace_in_description():
 
 
 def _seats(count: int) -> list[SeatMapSection]:
-    return [SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label=f"S{i}", x=0, y=0) for i in range(count)])])]
+    return [SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label=f"S{i}", x=0, y=0) for i in range(count)])])]
 
 
 def test_seat_map_upsert_rejects_more_seats_than_the_limit():
@@ -157,20 +162,20 @@ def test_seat_map_upsert_accepts_exactly_the_seat_limit():
 
 def test_seat_map_upsert_rejects_a_seat_label_over_the_length_limit():
     with pytest.raises(ValidationError):
-        SeatMapUpsert(sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="L" * 101, x=0, y=0)])])])
+        SeatMapUpsert(sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="L" * 101, x=0, y=0)])])])
 
 
 def test_seat_map_upsert_rejects_a_section_name_over_the_length_limit():
     with pytest.raises(ValidationError):
         SeatMapUpsert(
-            sections=[SeatMapSection(name="A" * 101, rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+            sections=[SeatMapSection(price_cents=2500, name="A" * 101, rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
         )
 
 
 def test_seat_map_upsert_rejects_a_row_name_over_the_length_limit():
     with pytest.raises(ValidationError):
         SeatMapUpsert(
-            sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1" * 101, seats=[Seat(label="A1", x=0, y=0)])])]
+            sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1" * 101, seats=[Seat(label="A1", x=0, y=0)])])]
         )
 
 

@@ -46,7 +46,7 @@ def make_manager(event: Event) -> EventManager:
 
 
 SEAT_MAP_PAYLOAD = SeatMapUpsert(
-    sections=[SeatMapSection(name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+    sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
 )
 
 

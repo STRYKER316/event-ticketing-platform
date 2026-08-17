@@ -39,6 +39,7 @@ async def test_abandoned_hold_auto_releases_on_sweep(db_session_factory: async_s
             section="A",
             row_name="1",
             seat_label="A1",
+            price_cents=2500,
             status=TicketStatus.HELD,
             hold_expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),  # already expired
         )
@@ -71,6 +72,7 @@ async def test_sweep_does_not_touch_unexpired_holds(db_session_factory: async_se
             section="A",
             row_name="1",
             seat_label="A1",
+            price_cents=2500,
             status=TicketStatus.HELD,
             hold_expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
         )

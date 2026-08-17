@@ -2129,3 +2129,74 @@ Decisions-log delta: yes — §17's P8.T5 amendment corrected in place (same
 amendment, corrected numbers, not a new one) to match the re-run data.
 `CLAUDE.md` update: none needed — no new convention, this is a
 within-phase correction.
+
+## 2026-08-17 — Phase 4 kickoff generated; two architecture gaps resolved before P4.T1; P4.T1: per-section ticket pricing
+
+`docs/phases/phase-4-kickoff.md` didn't exist yet, so it was generated from
+`master-development-plan.md`'s Phase 4 section and the relevant
+decisions-log sections (§6, §7, §9, §17, §21), following the same structure
+as Phases 0/1/2/3/8.
+
+**Two real architecture gaps surfaced while drafting P4.T2's task
+description, before any code was written**, both flagged to the user rather
+than guessed at silently (per `CLAUDE.md`'s "don't invent a sixth
+[integration point] without discussing it first" and the project's existing
+practice of surfacing open questions — same as the §7.2/§15 amendments):
+
+1. **No ticket pricing existed anywhere** in the system — not on `Event`,
+   not on the seat map, not on `Ticket` — so Payment Service had nothing to
+   charge against. Resolved: per-section pricing, organizer-set on the seat
+   map.
+2. **Payment Service has no access to `booking_db`** (§8) to verify the
+   paying user owns the booking being charged. Resolved: Booking Service
+   fronts payment — a new ownership-scoped `POST /bookings/{id}/pay` on
+   Booking Service makes a synchronous call to Payment Service's charge
+   endpoint, forwarding the caller's JWT. The system's first synchronous
+   inter-service call, a deliberate narrow exception to "cross-service data
+   only via Kafka," recorded as such.
+
+Both resolutions recorded as amendments to `decisions-log.md` §7 (point #4
+broadened to one topic/two outcomes rather than a sixth point), §9 (pricing
+source + the synchronous-call architecture), and §16 (per-section pricing).
+`phase-4-kickoff.md`'s task list was rewritten to match before P4.T1 began.
+
+**P4.T1 implementation** (per-section pricing, Event Service + Booking
+Service): added `price_cents` (`Field(gt=0)`) to Event Service's
+`SeatMapSection` schema; extended the event-carried Kafka payload (§7.2) —
+`EventSeat.price_cents` on both the producer side (`event-service/app/kafka/
+schemas.py`) and the independently-defined consumer side
+(`booking-service/app/kafka/schemas.py`); added a `price_cents` column to
+Booking Service's `Ticket` model plus an Alembic migration
+(`9acd9bb8cc64`, backfills existing local-dev rows to 0 via a temporary
+server_default, dropped immediately after); updated
+`TicketRepository.bulk_upsert_available` and `ProvisioningConsumer` to carry
+the value through. Updated all call sites across both services' test suites
+(16 `SeatMapSection(...)` construction sites in event-service, plus
+`EventSeat`/`Ticket`/`bulk_upsert_available` construction sites in
+booking-service) to supply the now-required field; added dedicated
+rejection tests for a non-positive price at both the Event Service DTO layer
+and the Booking Service Kafka-schema layer.
+
+**Live-testcontainers testing caught a real regression this change
+introduced**: `test_seat_map_larger_than_one_insert_batch_provisions_every_seat`
+(6000 seats, forces a two-batch provision) failed with a Postgres bind-param
+overflow. The `price_cents` column pushed `bulk_upsert_available`'s
+per-row bind-param count from what a stale code comment claimed was 5 to
+an actual 7 (the comment had already been wrong before this change — it
+never counted `Ticket.status`'s Python-side default, which SQLAlchemy still
+applies as a real bind param on a Core-level `values()` insert even though
+it's absent from the row dict). At the previous `BIND_PARAM_SAFE_BATCH_SIZE`
+of 5000, 5000 × 7 = 35,000, over Postgres's ~32,767 cap. Fixed by lowering
+the shared constant (`booking-service/app/db/chunking.py`) to 4000
+(4000 × 7 = 28,000, safe with headroom), and corrected the stale
+comments in both `chunking.py` and `ticket_repository.py` to state the
+real, now-verified param count rather than repeating the undercount.
+Re-ran the full integration suite after the fix: 21/21 passing.
+
+Full test status after this task: event-service 44/44 unit + 11/11
+integration; booking-service 24/24 unit + 21/21 integration.
+
+Decisions-log delta: yes — §7/§9/§16 amendments (above), made before P4.T1's
+implementation rather than during it.
+`CLAUDE.md` update: none needed — no new convention, this extends an
+existing one (`BIND_PARAM_SAFE_BATCH_SIZE`'s value, not the pattern itself).

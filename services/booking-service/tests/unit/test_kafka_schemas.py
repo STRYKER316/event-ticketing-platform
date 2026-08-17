@@ -18,7 +18,7 @@ def _message_kwargs(**overrides) -> dict:
         end_time=start + timedelta(hours=2),
         venue_name="Test Arena",
         performer_names=[],
-        seats=[EventSeat(section="A", row="1", label="A1")],
+        seats=[EventSeat(section="A", row="1", label="A1", price_cents=2500)],
     )
     kwargs.update(overrides)
     return kwargs
@@ -26,7 +26,12 @@ def _message_kwargs(**overrides) -> dict:
 
 def test_blank_seat_section_is_rejected():
     with pytest.raises(ValidationError):
-        EventSeat(section="   ", row="1", label="A1")
+        EventSeat(section="   ", row="1", label="A1", price_cents=2500)
+
+
+def test_non_positive_seat_price_is_rejected():
+    with pytest.raises(ValidationError):
+        EventSeat(section="A", row="1", label="A1", price_cents=0)
 
 
 def test_blank_event_title_is_rejected():

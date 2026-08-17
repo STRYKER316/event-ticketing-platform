@@ -28,7 +28,7 @@ def _stamp_generated_fields(booking: Booking) -> Booking:
 async def test_create_booking_happy_path():
     ticket_id = uuid.uuid4()
     event_id = uuid.uuid4()
-    ticket = Ticket(id=ticket_id, event_id=event_id, section="A", row_name="1", seat_label="A1", status=TicketStatus.AVAILABLE)
+    ticket = Ticket(id=ticket_id, event_id=event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.AVAILABLE)
 
     manager = BookingManager(
         session=AsyncMock(),
@@ -60,7 +60,7 @@ async def test_create_booking_on_unknown_ticket_404s():
 
 async def test_create_booking_on_already_booked_ticket_409s():
     ticket_id = uuid.uuid4()
-    ticket = Ticket(id=ticket_id, event_id=uuid.uuid4(), section="A", row_name="1", seat_label="A1", status=TicketStatus.BOOKED)
+    ticket = Ticket(id=ticket_id, event_id=uuid.uuid4(), section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.BOOKED)
     manager = BookingManager(
         session=AsyncMock(),
         tickets=AsyncMock(get_by_id=AsyncMock(return_value=ticket)),
@@ -75,7 +75,7 @@ async def test_create_booking_on_already_booked_ticket_409s():
 
 async def test_create_booking_when_hold_already_taken_409s():
     ticket_id = uuid.uuid4()
-    ticket = Ticket(id=ticket_id, event_id=uuid.uuid4(), section="A", row_name="1", seat_label="A1", status=TicketStatus.AVAILABLE)
+    ticket = Ticket(id=ticket_id, event_id=uuid.uuid4(), section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.AVAILABLE)
     strategy = FakeHoldStrategy()
     await strategy.acquire_hold(ticket_id, ttl_seconds=60)  # pre-held by someone else
 

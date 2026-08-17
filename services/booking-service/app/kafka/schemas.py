@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 # This is the DTO validation boundary for this service (CLAUDE.md's "DTO
 # layer is a strict validation boundary" rule applies to a Kafka consumer's
@@ -24,6 +24,8 @@ class EventSeat(BaseModel):
     section: NonBlankStr
     row: NonBlankStr
     label: NonBlankStr
+    # Organizer-set per section (decisions-log §9/§16 amendments, 2026-08-17).
+    price_cents: Annotated[int, Field(gt=0)]
 
 
 class EventUpsertedMessage(BaseModel):

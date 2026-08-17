@@ -87,7 +87,7 @@ class ProvisioningConsumer:
         # status is PUBLISHED (decisions-log §15 amendment, 2026-08-15) — every
         # message on this topic already represents a published event, so there is
         # no separate "is this published" check to make here.
-        seats = [(seat.section, seat.row, seat.label) for seat in message.seats]
+        seats = [(seat.section, seat.row, seat.label, seat.price_cents) for seat in message.seats]
         inserted = await self._write_tickets(message.event_id, seats)
         if inserted is None:
             return
@@ -98,7 +98,7 @@ class ProvisioningConsumer:
             tickets_inserted=inserted,
         )
 
-    async def _write_tickets(self, event_id: uuid.UUID, seats: list[tuple[str, str, str]]) -> int | None:
+    async def _write_tickets(self, event_id: uuid.UUID, seats: list[tuple[str, str, str, int]]) -> int | None:
         """Retries a transient DB failure in place before giving up — see
         DB_WRITE_MAX_ATTEMPTS's module-level docstring for why this exists.
         Returns None only once every attempt has failed, at which point the

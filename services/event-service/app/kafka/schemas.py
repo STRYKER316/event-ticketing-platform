@@ -14,6 +14,7 @@ class EventSeat(BaseModel):
     section: str
     row: str
     label: str
+    price_cents: int
 
 
 class EventUpsertedMessage(BaseModel):
