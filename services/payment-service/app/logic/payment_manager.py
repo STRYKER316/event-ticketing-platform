@@ -23,16 +23,21 @@ class PaymentManager:
 
     async def create_charge(self, payload: ChargeRequest) -> PaymentResponse:
         existing = await self._payments.get_by_booking_id(payload.booking_id)
-        if existing is not None:
+        if existing is not None and existing.stripe_charge_id is not None:
             # Idempotent by construction (§9): a retried charge attempt for a
-            # booking that already has a Payment row returns it as-is rather
-            # than calling Stripe again — Stripe's own idempotency_key
-            # (booking ID) would also prevent a double charge, but this
-            # avoids the extra API call and makes the no-op explicit.
+            # booking Stripe already accepted (stripe_charge_id set) returns
+            # it as-is rather than calling Stripe again — Stripe's own
+            # idempotency_key (booking ID) would also prevent a double
+            # charge, but this avoids the extra API call and makes the no-op
+            # explicit. A Payment row with no stripe_charge_id yet means the
+            # previous attempt never actually reached Stripe (see
+            # _submit_to_stripe's error path) — that case falls through
+            # below and genuinely retries, rather than getting stuck replaying
+            # a charge Stripe never received.
             logger.info("charge_idempotent_replay", booking_id=str(payload.booking_id))
             return self._build_response(existing)
 
-        payment = await self._create_pending_payment(payload)
+        payment = existing or await self._create_pending_payment(payload)
         await self._submit_to_stripe(payment, payload)
         await self._session.commit()
         return self._build_response(payment)

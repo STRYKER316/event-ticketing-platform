@@ -40,10 +40,10 @@ async def test_create_charge_calls_stripe_with_booking_id_as_idempotency_key(mon
     assert create_mock.call_args.kwargs["idempotency_key"] == str(booking_id)
 
 
-async def test_create_charge_is_idempotent_on_replay(monkeypatch):
+async def test_create_charge_is_idempotent_on_replay_once_stripe_accepted_it(monkeypatch):
     # The correctness contract this task exists to satisfy (§9): a repeated
-    # charge attempt for a booking that already has a Payment row must not
-    # call Stripe a second time.
+    # charge attempt for a booking Stripe already accepted must not call
+    # Stripe a second time.
     booking_id = uuid.uuid4()
     existing = Payment(
         id=uuid.uuid4(),
@@ -52,6 +52,7 @@ async def test_create_charge_is_idempotent_on_replay(monkeypatch):
         amount_cents=2500,
         currency="usd",
         status=PaymentStatus.PENDING,
+        stripe_charge_id="pi_already_submitted",
         idempotency_key=str(booking_id),
         created_at=datetime.now(timezone.utc),
     )
@@ -66,6 +67,37 @@ async def test_create_charge_is_idempotent_on_replay(monkeypatch):
 
     create_mock.assert_not_called()
     assert first.id == second.id == existing.id
+
+
+async def test_create_charge_retries_stripe_when_previous_attempt_never_reached_it(monkeypatch):
+    # Live-testing regression: a Payment row can exist with no
+    # stripe_charge_id (the previous attempt raised before Stripe ever
+    # responded, e.g. a transient network error) — that must be retried, not
+    # treated as an idempotent replay forever.
+    booking_id = uuid.uuid4()
+    existing = Payment(
+        id=uuid.uuid4(),
+        booking_id=booking_id,
+        ticket_id=uuid.uuid4(),
+        amount_cents=2500,
+        currency="usd",
+        status=PaymentStatus.PENDING,
+        stripe_charge_id=None,
+        idempotency_key=str(booking_id),
+        created_at=datetime.now(timezone.utc),
+    )
+    payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=existing))
+    manager = PaymentManager(session=AsyncMock(), payments=payments)
+
+    fake_intent = MagicMock(id="pi_now_succeeds")
+    create_mock = MagicMock(return_value=fake_intent)
+    monkeypatch.setattr(stripe.PaymentIntent, "create", create_mock)
+
+    result = await manager.create_charge(_payload(booking_id))
+
+    create_mock.assert_called_once()
+    assert result.id == existing.id
+    assert existing.stripe_charge_id == "pi_now_succeeds"
 
 
 def _webhook_event(event_type: str, intent_id: str) -> dict:
