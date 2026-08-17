@@ -40,6 +40,14 @@ class CronHoldStrategy(TicketHoldStrategy):
         )
         await self._session.flush()
 
+    async def confirm_hold(self, ticket_id: uuid.UUID) -> None:
+        await self._session.execute(
+            sa_update(Ticket)
+            .where(Ticket.id == ticket_id, Ticket.status == TicketStatus.HELD)
+            .values(status=TicketStatus.BOOKED, hold_expires_at=None)
+        )
+        await self._session.flush()
+
     async def is_held(self, ticket_id: uuid.UUID) -> bool:
         ticket = await self._session.get(Ticket, ticket_id)
         if ticket is None or ticket.status is not TicketStatus.HELD:

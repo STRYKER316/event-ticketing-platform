@@ -4,6 +4,7 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.db.models import Ticket, TicketStatus
 from app.logic.helpers.cron_hold_strategy import CronHoldStrategy
 from app.logic.helpers.redis_hold_strategy import RedisHoldStrategy
 
@@ -36,6 +37,17 @@ async def test_cron_strategy_satisfies_the_shared_contract(db_session_factory: a
         assert await strategy.acquire_hold(ticket_id, ttl_seconds=60) is True
         await session.commit()
 
+    async with db_session_factory() as session:
+        strategy = CronHoldStrategy(session)
+        await strategy.confirm_hold(ticket_id)
+        await session.commit()
+
+    async with db_session_factory() as session:
+        strategy = CronHoldStrategy(session)
+        assert await strategy.is_held(ticket_id) is False
+        ticket = await session.get(Ticket, ticket_id)
+        assert ticket.status is TicketStatus.BOOKED
+
 
 async def test_redis_strategy_satisfies_the_shared_contract(redis_client: Redis):
     # Same contract, proven against real Redis — CronHoldStrategy and
@@ -49,4 +61,8 @@ async def test_redis_strategy_satisfies_the_shared_contract(redis_client: Redis)
     assert await strategy.is_held(ticket_id) is True
     assert await strategy.acquire_hold(ticket_id, ttl_seconds=60) is False
     await strategy.release_hold(ticket_id)
+    assert await strategy.is_held(ticket_id) is False
+
+    await strategy.acquire_hold(ticket_id, ttl_seconds=60)
+    await strategy.confirm_hold(ticket_id)
     assert await strategy.is_held(ticket_id) is False

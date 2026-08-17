@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from fastapi import HTTPException
 from shared_auth import Principal
@@ -89,3 +90,103 @@ async def test_create_booking_when_hold_already_taken_409s():
     with pytest.raises(HTTPException) as exc_info:
         await manager.create_booking(USER, ticket_id)
     assert exc_info.value.status_code == 409
+
+
+def _pending_booking(booking_id: uuid.UUID, ticket_id: uuid.UUID, user_subject: str = USER.subject) -> Booking:
+    return Booking(
+        id=booking_id,
+        user_subject=user_subject,
+        event_id=uuid.uuid4(),
+        ticket_id=ticket_id,
+        status=BookingStatus.PENDING,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _fake_http_client(json_body: dict) -> AsyncMock:
+    response = MagicMock(raise_for_status=MagicMock(), json=MagicMock(return_value=json_body))
+    return AsyncMock(post=AsyncMock(return_value=response))
+
+
+async def test_pay_booking_happy_path_calls_payment_service_with_ticket_price():
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    booking = _pending_booking(booking_id, ticket_id)
+    ticket = Ticket(id=ticket_id, event_id=booking.event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.HELD)
+    http_client = _fake_http_client(
+        {"id": str(uuid.uuid4()), "status": "pending", "amount_cents": 2500, "currency": "usd"}
+    )
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(get_by_id=AsyncMock(return_value=ticket)),
+        bookings=AsyncMock(get_by_id=AsyncMock(return_value=booking)),
+        hold_strategy=FakeHoldStrategy(),
+    )
+
+    result = await manager.pay_booking(USER, booking_id, "token-abc", http_client)
+
+    assert result.amount_cents == 2500
+    call = http_client.post.await_args
+    assert call.args[0].endswith("/payments/charge")
+    assert call.kwargs["json"]["amount_cents"] == 2500
+    assert call.kwargs["headers"]["Authorization"] == "Bearer token-abc"
+
+
+async def test_pay_booking_on_unknown_booking_404s():
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(),
+        bookings=AsyncMock(get_by_id=AsyncMock(return_value=None)),
+        hold_strategy=FakeHoldStrategy(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.pay_booking(USER, uuid.uuid4(), "token", AsyncMock())
+    assert exc_info.value.status_code == 404
+
+
+async def test_pay_booking_by_non_owner_403s():
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    booking = _pending_booking(booking_id, ticket_id, user_subject="someone-else")
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(),
+        bookings=AsyncMock(get_by_id=AsyncMock(return_value=booking)),
+        hold_strategy=FakeHoldStrategy(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.pay_booking(USER, booking_id, "token", AsyncMock())
+    assert exc_info.value.status_code == 403
+
+
+async def test_pay_booking_on_non_pending_booking_409s():
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    booking = _pending_booking(booking_id, ticket_id)
+    booking.status = BookingStatus.CONFIRMED
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(),
+        bookings=AsyncMock(get_by_id=AsyncMock(return_value=booking)),
+        hold_strategy=FakeHoldStrategy(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.pay_booking(USER, booking_id, "token", AsyncMock())
+    assert exc_info.value.status_code == 409
+
+
+async def test_pay_booking_502s_when_payment_service_unreachable():
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    booking = _pending_booking(booking_id, ticket_id)
+    ticket = Ticket(id=ticket_id, event_id=booking.event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.HELD)
+    http_client = AsyncMock(post=AsyncMock(side_effect=httpx.ConnectError("boom")))
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(get_by_id=AsyncMock(return_value=ticket)),
+        bookings=AsyncMock(get_by_id=AsyncMock(return_value=booking)),
+        hold_strategy=FakeHoldStrategy(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.pay_booking(USER, booking_id, "token", http_client)
+    assert exc_info.value.status_code == 502

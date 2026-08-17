@@ -23,3 +23,14 @@ class BookingResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class BookingPayResponse(BaseModel):
+    """Proxies Payment Service's charge response — not a from_attributes
+    model, since it's built from the synchronous call's JSON body, not a
+    Booking Service model instance."""
+
+    payment_id: uuid.UUID
+    status: str
+    amount_cents: int
+    currency: str

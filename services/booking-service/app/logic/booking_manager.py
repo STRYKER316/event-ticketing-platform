@@ -1,12 +1,13 @@
 import uuid
 
+import httpx
 import structlog
 from fastapi import HTTPException, status
 from shared_auth import Principal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import BookingResponse
+from app.api.schemas import BookingPayResponse, BookingResponse
 from app.core import get_settings
 from app.db.booking_repository import BookingRepository
 from app.db.models import Booking, BookingStatus, Ticket, TicketStatus
@@ -72,3 +73,48 @@ class BookingManager:
 
     def _build_response(self, booking: Booking) -> BookingResponse:
         return BookingResponse.model_validate(booking)
+
+    async def pay_booking(
+        self, user: Principal, booking_id: uuid.UUID, bearer_token: str, http_client: httpx.AsyncClient
+    ) -> BookingPayResponse:
+        """Booking Service fronts payment (decisions-log §9 amendment):
+        ownership is checked here, where booking_db actually lives, then a
+        synchronous call initiates the charge on Payment Service, which has
+        no access to this database (§8) to check ownership itself."""
+        booking = await self._fetch_owned_pending_booking(user, booking_id)
+        ticket = await self._tickets.get_by_id(booking.ticket_id)
+        return await self._charge_via_payment_service(booking, ticket, bearer_token, http_client)
+
+    async def _fetch_owned_pending_booking(self, user: Principal, booking_id: uuid.UUID) -> Booking:
+        booking = await self._bookings.get_by_id(booking_id)
+        if booking is None:
+            logger.warning("pay_booking_not_found", booking_id=str(booking_id))
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "booking not found")
+        if booking.user_subject != user.subject:
+            logger.warning("pay_booking_ownership_denied", booking_id=str(booking_id), subject=user.subject)
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your booking")
+        if booking.status is not BookingStatus.PENDING:
+            logger.warning("pay_booking_not_pending", booking_id=str(booking_id), status=booking.status.value)
+            raise HTTPException(status.HTTP_409_CONFLICT, "booking is not pending payment")
+        return booking
+
+    async def _charge_via_payment_service(
+        self, booking: Booking, ticket: Ticket, bearer_token: str, http_client: httpx.AsyncClient
+    ) -> BookingPayResponse:
+        url = f"{get_settings().payment_service_url}/payments/charge"
+        payload = {
+            "booking_id": str(booking.id),
+            "ticket_id": str(ticket.id),
+            "amount_cents": ticket.price_cents,
+            "currency": "usd",
+        }
+        try:
+            response = await http_client.post(url, json=payload, headers={"Authorization": f"Bearer {bearer_token}"})
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            logger.error("pay_booking_payment_service_call_failed", booking_id=str(booking.id), error=str(exc))
+            raise HTTPException(status.HTTP_502_BAD_GATEWAY, "payment service unreachable") from exc
+        body = response.json()
+        return BookingPayResponse(
+            payment_id=body["id"], status=body["status"], amount_cents=body["amount_cents"], currency=body["currency"]
+        )

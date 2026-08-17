@@ -42,3 +42,18 @@ class EventUpsertedMessage(BaseModel):
     venue_name: NonBlankStr
     performer_names: list[str]
     seats: list[EventSeat]
+
+
+class PaymentOutcomeAction(enum.Enum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+
+
+class PaymentOutcomeMessage(BaseModel):
+    """Mirrors payment-service's producer-side schema — integration point #4
+    (decisions-log §7, broadened 2026-08-17), independently defined on this
+    side same as EventUpsertedMessage above."""
+
+    action: PaymentOutcomeAction
+    booking_id: uuid.UUID
+    ticket_id: uuid.UUID

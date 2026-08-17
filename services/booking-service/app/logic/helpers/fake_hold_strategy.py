@@ -27,3 +27,7 @@ class FakeHoldStrategy(TicketHoldStrategy):
     async def is_held(self, ticket_id: uuid.UUID) -> bool:
         async with self._lock:
             return ticket_id in self._held
+
+    async def confirm_hold(self, ticket_id: uuid.UUID) -> None:
+        async with self._lock:
+            self._held.discard(ticket_id)

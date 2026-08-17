@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import update as sa_update
@@ -10,6 +11,19 @@ from app.db.models import Booking, BookingStatus
 class BookingRepository(BaseRepository[Booking]):
     def __init__(self, session: AsyncSession):
         super().__init__(session, Booking)
+
+    async def transition_if_pending(self, booking_id: uuid.UUID, new_status: BookingStatus) -> bool:
+        """Idempotent by construction (§7's general "only transition if
+        currently in state X" rule, applied here to the payment-outcome
+        consumer, §7 point #4/§21): a redelivered message for an
+        already-terminal booking matches zero rows and is a safe no-op."""
+        result = await self._session.execute(
+            sa_update(Booking)
+            .where(Booking.id == booking_id, Booking.status == BookingStatus.PENDING)
+            .values(status=new_status)
+        )
+        await self._session.flush()
+        return result.rowcount > 0
 
     async def expire_stale_pending(self, older_than_seconds: int) -> int:
         """Age-based fallback for the RedisHoldStrategy (§6): Redis expires

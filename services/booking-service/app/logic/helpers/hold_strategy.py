@@ -23,3 +23,9 @@ class TicketHoldStrategy(ABC):
     @abstractmethod
     async def is_held(self, ticket_id: uuid.UUID) -> bool:
         """Return whether ticket_id currently has an active, unexpired hold."""
+
+    @abstractmethod
+    async def confirm_hold(self, ticket_id: uuid.UUID) -> None:
+        """Mark a hold as fulfilled (payment succeeded, §21) rather than
+        released back to available — the seat is now permanently booked, not
+        up for grabs again. Idempotent, same contract as release_hold."""

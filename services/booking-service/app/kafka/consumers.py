@@ -4,11 +4,15 @@ import uuid
 
 import structlog
 from aiokafka import AIOKafkaConsumer
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import get_settings
+from app.db.booking_repository import BookingRepository
+from app.db.models import BookingStatus
 from app.db.ticket_repository import TicketRepository
-from app.kafka.schemas import EventUpsertedMessage, KafkaAction
+from app.kafka.schemas import EventUpsertedMessage, KafkaAction, PaymentOutcomeAction, PaymentOutcomeMessage
+from app.logic.helpers.hold_strategy_factory import get_hold_strategy
 
 logger = structlog.get_logger()
 
@@ -126,6 +130,106 @@ class ProvisioningConsumer:
                 logger.warning(
                     "provisioning_consumer_db_write_failed_retrying",
                     event_id=str(event_id),
+                    attempt=attempt,
+                    exc_info=True,
+                )
+                await asyncio.sleep(DB_WRITE_RETRY_BACKOFF_SECONDS)
+        return None
+
+
+def build_payment_outcome_consumer() -> AIOKafkaConsumer:
+    settings = get_settings()
+    return AIOKafkaConsumer(
+        settings.payment_outcomes_topic,
+        bootstrap_servers=settings.kafka_bootstrap_servers,
+        group_id=settings.kafka_consumer_group_id,
+        auto_offset_reset="earliest",
+        # Same reasoning as build_kafka_consumer() above — manual, per-record
+        # offset commit only after _handle() has fully finished.
+        enable_auto_commit=False,
+    )
+
+
+_STATUS_BY_ACTION = {
+    PaymentOutcomeAction.SUCCEEDED: BookingStatus.CONFIRMED,
+    PaymentOutcomeAction.FAILED: BookingStatus.EXPIRED,
+}
+
+
+class PaymentOutcomeConsumer:
+    """No equivalent API route drives a PENDING booking to CONFIRMED or
+    EXPIRED from a Kafka payload — goes straight to the repository/hold
+    strategy rather than through BookingManager, same reasoning
+    ProvisioningConsumer's own docstring gives for its own direct-repository
+    call. Confirms or releases based on Payment Service's webhook-driven
+    outcome (integration point #4, §17, §21) — reuses the exact
+    TicketHoldStrategy methods BookingManager's own compensation path and the
+    cron/Redis sweeps already use, not a third release/confirm mechanism."""
+
+    def __init__(self, consumer: AIOKafkaConsumer, session_factory: async_sessionmaker[AsyncSession], redis: Redis):
+        self._consumer = consumer
+        self._session_factory = session_factory
+        self._redis = redis
+
+    async def run(self) -> None:
+        async for record in self._consumer:
+            await self._handle(record.value)
+            # Commit only after _handle() has fully finished with this
+            # record — see build_payment_outcome_consumer()'s enable_auto_commit note.
+            await self._consumer.commit()
+
+    async def _handle(self, raw: bytes) -> None:
+        try:
+            message = PaymentOutcomeMessage.model_validate_json(raw)
+        except Exception:
+            logger.error("payment_outcome_consumer_message_invalid", raw=raw[:500], exc_info=True)
+            return
+
+        new_status = _STATUS_BY_ACTION[message.action]
+        transitioned = await self._transition_with_retry(message, new_status)
+        if transitioned:
+            logger.info(
+                "payment_outcome_applied",
+                booking_id=str(message.booking_id),
+                action=message.action.value,
+            )
+
+    async def _transition_with_retry(self, message: PaymentOutcomeMessage, new_status: BookingStatus) -> bool | None:
+        """Retries a transient DB failure in place before giving up — same
+        shape as ProvisioningConsumer._write_tickets(), see
+        DB_WRITE_MAX_ATTEMPTS's module-level docstring for why this exists.
+        Returns None only once every attempt has failed, at which point the
+        caller commits the Kafka offset anyway and moves on (logged at
+        critical, not silently) — same trade-off as the provisioning path."""
+        for attempt in range(1, DB_WRITE_MAX_ATTEMPTS + 1):
+            try:
+                async with self._session_factory() as session:
+                    bookings = BookingRepository(session)
+                    transitioned = await bookings.transition_if_pending(message.booking_id, new_status)
+                    if transitioned:
+                        # Only touch the hold strategy if this call actually won
+                        # the transition — a redelivered message that matched zero
+                        # rows above must not release/confirm a hold a *different*,
+                        # later booking now legitimately holds on the same ticket.
+                        strategy = get_hold_strategy(session, self._redis)
+                        if message.action is PaymentOutcomeAction.SUCCEEDED:
+                            await strategy.confirm_hold(message.ticket_id)
+                        else:
+                            await strategy.release_hold(message.ticket_id)
+                    await session.commit()
+                return transitioned
+            except Exception:
+                if attempt == DB_WRITE_MAX_ATTEMPTS:
+                    logger.critical(
+                        "payment_outcome_consumer_db_write_failed_permanently",
+                        booking_id=str(message.booking_id),
+                        attempts=attempt,
+                        exc_info=True,
+                    )
+                    return None
+                logger.warning(
+                    "payment_outcome_consumer_db_write_failed_retrying",
+                    booking_id=str(message.booking_id),
                     attempt=attempt,
                     exc_info=True,
                 )

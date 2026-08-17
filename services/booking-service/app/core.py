@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from functools import lru_cache
 from typing import Literal
 
+import httpx
 import structlog
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from redis.asyncio import Redis
@@ -28,11 +29,16 @@ class Settings(BaseSettings):
 
     kafka_bootstrap_servers: str = "localhost:9094"
     events_topic: str = "event.events"
+    payment_outcomes_topic: str = "payment.outcomes"
     kafka_consumer_group_id: str = "booking-service"
 
     hold_strategy: Literal["cron", "redis"] = "cron"  # Phase 8 benchmark toggles this
     hold_ttl_seconds: int = 600
     hold_sweep_interval_seconds: int = 30
+
+    # Booking Service fronts payment (decisions-log §9 amendment) — the one
+    # synchronous inter-service call in this system.
+    payment_service_url: str = "http://localhost:8004"
 
     @property
     def database_url(self) -> str:
@@ -139,3 +145,26 @@ async def close_redis() -> None:
     if _redis is not None:
         await _redis.aclose()
         _redis = None
+
+
+_http_client: httpx.AsyncClient | None = None
+_http_client_lock = asyncio.Lock()
+
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Used for the one synchronous inter-service call in this system —
+    Booking Service calling Payment Service's charge endpoint (decisions-log
+    §9 amendment). A short timeout fails fast rather than holding a
+    request-path connection open indefinitely if Payment Service is down."""
+    global _http_client
+    async with _http_client_lock:
+        if _http_client is None:
+            _http_client = httpx.AsyncClient(timeout=10.0)
+    return _http_client
+
+
+async def close_http_client() -> None:
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None

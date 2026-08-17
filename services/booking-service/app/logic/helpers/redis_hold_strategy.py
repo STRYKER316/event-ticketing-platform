@@ -34,3 +34,9 @@ class RedisHoldStrategy(TicketHoldStrategy):
 
     async def is_held(self, ticket_id: uuid.UUID) -> bool:
         return await self._redis.exists(_key(ticket_id)) > 0
+
+    async def confirm_hold(self, ticket_id: uuid.UUID) -> None:
+        # Ticket.status is never written under this strategy (see class
+        # docstring) — confirming just cleans up the now-superseded Redis
+        # hold key rather than leaving it to sit until its own TTL expiry.
+        await self._redis.delete(_key(ticket_id))

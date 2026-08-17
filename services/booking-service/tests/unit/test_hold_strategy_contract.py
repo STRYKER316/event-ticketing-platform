@@ -60,3 +60,16 @@ async def test_different_tickets_do_not_interfere(strategy):
     ticket_a, ticket_b = uuid.uuid4(), uuid.uuid4()
     assert await strategy.acquire_hold(ticket_a, ttl_seconds=60) is True
     assert await strategy.acquire_hold(ticket_b, ttl_seconds=60) is True
+
+
+async def test_confirm_hold_clears_tracking(strategy):
+    ticket_id = uuid.uuid4()
+    await strategy.acquire_hold(ticket_id, ttl_seconds=60)
+    await strategy.confirm_hold(ticket_id)
+    assert await strategy.is_held(ticket_id) is False
+
+
+async def test_confirm_hold_of_unheld_ticket_is_a_safe_no_op(strategy):
+    ticket_id = uuid.uuid4()
+    await strategy.confirm_hold(ticket_id)  # must not raise
+    assert await strategy.is_held(ticket_id) is False
