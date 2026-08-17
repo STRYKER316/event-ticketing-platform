@@ -236,7 +236,7 @@
 <header>
   <p class="eyebrow">event-ticketing-platform — capstone</p>
   <h1>Event, Search, Booking &amp; Payment Services</h1>
-  <p>What Phase 3 built, what Phase 8 measured on top of it, and what Phase 4 added. Booking Service provisions <code>Ticket</code> rows idempotently from Event Service's Kafka payload (integration point #2), and books a specific seat through one of <strong>two independently swappable hold mechanisms</strong> behind a single <code>TicketHoldStrategy</code> interface — a cron sweep over a Postgres column, or a self-expiring Redis <code>SET NX EX</code> lock — selected by one config value, never branched on in code. Both proven correct in Phase 3 (25 simulated clients racing one seat, exactly one wins, under each mechanism) and, as of Phase 8, both <strong>measured</strong> under a fixed 300-request contention burst, three runs per strategy: hold-acquisition and passive-release latency turned out statistically indistinguishable between strategies at this scale, with only immediate-release trigger time showing a small, consistent edge for <code>cron</code> (see §07 below and the Feature Development Process report chapter for the full analysis, including a real measurement bug a dedicated review caught and fixed along the way). Also closed a gap left open since Phase 1: <code>DELETE /events/{id}</code> now refuses a <code>PUBLISHED</code> event outright, since Event Service has no channel to check Booking Service for live bookings. <strong>Phase 4</strong> added Payment Service (Stripe test-mode charges + webhook), a new <code>POST /bookings/{id}/pay</code> on Booking Service that makes the system's one synchronous inter-service call (forwarding the caller's JWT to Payment Service, since Payment Service has no access to <code>booking_db</code> to check ownership itself), and Kafka integration point #4 (<code>payment.outcomes</code>, one topic carrying both success and failure) — see §09 below. Traced 2026-08-16 (Phase 3 sections), updated 2026-08-16 (Phase 8 benchmark), updated 2026-08-17 (Phase 4).</p>
+  <p>What Phase 3 built, what Phase 8 measured on top of it, and what Phases 4 and 6 added. Booking Service provisions <code>Ticket</code> rows idempotently from Event Service's Kafka payload (integration point #2), and books a specific seat through one of <strong>two independently swappable hold mechanisms</strong> behind a single <code>TicketHoldStrategy</code> interface — a cron sweep over a Postgres column, or a self-expiring Redis <code>SET NX EX</code> lock — selected by one config value, never branched on in code. Both proven correct in Phase 3 (25 simulated clients racing one seat, exactly one wins, under each mechanism) and, as of Phase 8, both <strong>measured</strong> under a fixed 300-request contention burst, three runs per strategy: hold-acquisition and passive-release latency turned out statistically indistinguishable between strategies at this scale, with only immediate-release trigger time showing a small, consistent edge for <code>cron</code> (see §07 below and the Feature Development Process report chapter for the full analysis, including a real measurement bug a dedicated review caught and fixed along the way). Also closed a gap left open since Phase 1: <code>DELETE /events/{id}</code> now refuses a <code>PUBLISHED</code> event outright, since Event Service has no channel to check Booking Service for live bookings. <strong>Phase 4</strong> added Payment Service (Stripe test-mode charges + webhook), a new <code>POST /bookings/{id}/pay</code> on Booking Service that makes the system's one synchronous inter-service call (forwarding the caller's JWT to Payment Service, since Payment Service has no access to <code>booking_db</code> to check ownership itself), and Kafka integration point #4 (<code>payment.outcomes</code>, one topic carrying both success and failure) — see §01 above. <strong>Phase 6</strong> added a new <code>POST /bookings/{id}/cancel</code> (owner-only, before the event starts) and Kafka integration point #5 (<code>booking.cancelled</code> → Payment Service issues a Stripe refund), plus the producer-only half of integration point #3 (a new <code>notifications</code> topic, no consumer until Phase 5) — see the Phase 6 row in §01's diagram. Traced 2026-08-16 (Phase 3 sections), updated 2026-08-16 (Phase 8 benchmark), updated 2026-08-17 (Phase 4), updated 2026-08-17 (Phase 6).</p>
   <div class="badges">
     <span class="badge ok">Phase 0 complete</span>
     <span class="badge ok">Phase 1 complete</span>
@@ -244,7 +244,8 @@
     <span class="badge ok">Phase 3 complete</span>
     <span class="badge ok">Phase 8 complete</span>
     <span class="badge ok">Phase 4 complete (Stripe live-verification pending real credentials)</span>
-    <span class="badge">39 tasks · P0.T1–T7, P1.T1–T7, P2.T1–T5, P3.T1–T7, P8.T1–T6, P4.T1–T7</span>
+    <span class="badge ok">Phase 6 complete (Stripe live-verification pending real credentials)</span>
+    <span class="badge">43 tasks · P0.T1–T7, P1.T1–T7, P2.T1–T5, P3.T1–T7, P8.T1–T6, P4.T1–T7, P6.T1–T4</span>
     <span class="badge">+ P1 addendum: venue/seat-map write API</span>
     <span class="badge">13 containers (+2, benchmark profile on demand)</span>
   </div>
@@ -252,11 +253,11 @@
 
 <section>
   <h2><span class="num">01</span> — Topology</h2>
-  <h3>One entrypoint, four services — Kafka fans out to two independent consumers, plus one synchronous call</h3>
-  <p class="lede">Traefik routes to four services: <code>event-service</code> on its original catch-all label, <code>search-service</code> on <code>PathPrefix(/search)</code>, <code>booking-service</code> on <code>PathPrefix(/bookings)</code>, <code>payment-service</code> on <code>PathPrefix(/payments)</code> — all three more-specific rules outrank the catch-all by rule length, no explicit priority needed. Publishing an event triggers Kafka integration point #2 — <code>booking-service</code> runs a second, independent consumer group against the same <code>event.events</code> topic, provisioning <code>Ticket</code> rows idempotently. Redis backs one of Booking Service's two swappable hold mechanisms. Paying for a booking (<code>POST /bookings/{id}/pay</code>) makes the system's one synchronous inter-service call into <code>payment-service</code>; Stripe's webhook then drives Kafka integration point #4 (<code>payment.outcomes</code>), which <code>booking-service</code> consumes independently to confirm or release the booking — see the Phase 4 row below. <strong>Phase 8 addition, not pictured below (on-demand only, not part of the always-on topology):</strong> a <code>benchmark</code>-profiled <code>prometheus</code>+<code>grafana</code> pair (<code>make bench-up</code>/<code>make bench-down</code>), scraping every service's existing <code>/metrics</code> endpoint — see <code>infra/README.md</code> for the profile and <code>/benchmark</code> for the standalone Python load harness that drove the numbers in §08.</p>
+  <h3>One entrypoint, four services — Kafka fans out to three independent consumers and one producer-only topic, plus one synchronous call</h3>
+  <p class="lede">Traefik routes to four services: <code>event-service</code> on its original catch-all label, <code>search-service</code> on <code>PathPrefix(/search)</code>, <code>booking-service</code> on <code>PathPrefix(/bookings)</code>, <code>payment-service</code> on <code>PathPrefix(/payments)</code> — all three more-specific rules outrank the catch-all by rule length, no explicit priority needed. Publishing an event triggers Kafka integration point #2 — <code>booking-service</code> runs a second, independent consumer group against the same <code>event.events</code> topic, provisioning <code>Ticket</code> rows idempotently. Redis backs one of Booking Service's two swappable hold mechanisms. Paying for a booking (<code>POST /bookings/{id}/pay</code>) makes the system's one synchronous inter-service call into <code>payment-service</code>; Stripe's webhook then drives Kafka integration point #4 (<code>payment.outcomes</code>), which <code>booking-service</code> consumes independently to confirm or release the booking — see the Phase 4 row below. Cancelling a booking (<code>POST /bookings/{id}/cancel</code>) publishes Kafka integration point #5 (<code>booking.cancelled</code>), which <code>payment-service</code> consumes to issue a Stripe refund — see the Phase 6 row below; a refund failure publishes to a new <code>notifications</code> topic that has no consumer yet (Notification Service is Phase 5, which runs after Phase 6 in the locked build order). <strong>Phase 8 addition, not pictured below (on-demand only, not part of the always-on topology):</strong> a <code>benchmark</code>-profiled <code>prometheus</code>+<code>grafana</code> pair (<code>make bench-up</code>/<code>make bench-down</code>), scraping every service's existing <code>/metrics</code> endpoint — see <code>infra/README.md</code> for the profile and <code>/benchmark</code> for the standalone Python load harness that drove the numbers in §08.</p>
 
   <figure>
-    <svg viewBox="0 0 900 920" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service by a catch-all rule, to search-service by a /search rule, and to booking-service by a /bookings rule; event-service queries Postgres and MongoDB and validates tokens against Keycloak, then publishes a keyed Kafka message on the event.events topic when an event is published or updated while published — a published event can no longer be deleted at all; search-service consumes that topic into Elasticsearch and serves GET /search; booking-service independently consumes the same topic to provision Ticket rows in its own booking_db Postgres database, and serves POST /bookings, acquiring a hold via either a Postgres-column cron strategy or a Redis SET NX EX strategy depending on configuration; booking-service also verifies JWTs against Keycloak like event-service does. Phase 4 adds payment-service: booking-service's POST /bookings/{id}/pay makes a synchronous call, forwarding the caller's JWT, to payment-service's POST /payments/charge, which creates a Stripe test-mode charge and stores a Payment row in its own payment_db Postgres database; Stripe's webhook, verified by signature, drives payment-service to publish a payment.outcomes Kafka message that booking-service consumes independently to confirm or release the booking — this is Kafka integration point #4.">
+    <svg viewBox="0 0 900 1080" role="img" aria-label="Topology diagram: a client sends HTTP requests to Traefik on port 80, which routes to event-service by a catch-all rule, to search-service by a /search rule, and to booking-service by a /bookings rule; event-service queries Postgres and MongoDB and validates tokens against Keycloak, then publishes a keyed Kafka message on the event.events topic when an event is published or updated while published — a published event can no longer be deleted at all; search-service consumes that topic into Elasticsearch and serves GET /search; booking-service independently consumes the same topic to provision Ticket rows in its own booking_db Postgres database, and serves POST /bookings, acquiring a hold via either a Postgres-column cron strategy or a Redis SET NX EX strategy depending on configuration; booking-service also verifies JWTs against Keycloak like event-service does. Phase 4 adds payment-service: booking-service's POST /bookings/{id}/pay makes a synchronous call, forwarding the caller's JWT, to payment-service's POST /payments/charge, which creates a Stripe test-mode charge and stores a Payment row in its own payment_db Postgres database; Stripe's webhook, verified by signature, drives payment-service to publish a payment.outcomes Kafka message that booking-service consumes independently to confirm or release the booking — this is Kafka integration point #4. Phase 6 adds POST /bookings/{id}/cancel on booking-service, which releases the seat and publishes a booking.cancelled Kafka message — this is Kafka integration point #5; payment-service consumes it and calls Stripe's refund API, publishing to a new notifications topic on failure — that topic has no consumer yet, since Notification Service is a Phase 5 addition that runs after Phase 6 in the locked build order.">
       <defs>
         <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
@@ -425,6 +426,41 @@
       <line x1="800" y1="560" x2="640" y2="560" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
       <text x="796" y="694" text-anchor="end" font-family="var(--mono)" font-size="10" fill="var(--text-muted)">consume (Kafka #4)</text>
       <text x="796" y="708" text-anchor="end" font-family="var(--mono)" font-size="9" fill="var(--text-faint)">confirm booking + BOOKED ticket, or release hold immediately</text>
+
+      <!-- Phase 6 row divider -->
+      <line x1="24" y1="900" x2="876" y2="900" stroke="var(--border)" stroke-width="1"/>
+      <text x="24" y="922" font-family="var(--mono)" font-size="10.5" fill="var(--text-faint)" letter-spacing="0.06em">PHASE 6 — CANCELLATION &amp; REFUNDS, KAFKA INTEGRATION POINT #5</text>
+
+      <!-- booking-service ref box (dashed — same service drawn above) -->
+      <rect x="40" y="940" width="170" height="50" rx="8" fill="none" stroke="var(--ok)" stroke-width="1.3" stroke-dasharray="3,3"/>
+      <text x="125" y="962" text-anchor="middle" font-family="var(--mono)" font-size="12" fill="currentColor">booking-service</text>
+      <text x="125" y="977" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--text-faint)">POST /bookings/{id}/cancel — same box as above</text>
+
+      <line x1="210" y1="965" x2="266" y2="965" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="238" y="957" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--text-muted)">publish</text>
+
+      <rect x="270" y="940" width="170" height="50" rx="8" fill="var(--ok-soft)" stroke="var(--ok)" stroke-width="1.5"/>
+      <text x="355" y="962" text-anchor="middle" font-family="var(--mono)" font-size="12" fill="currentColor">kafka</text>
+      <text x="355" y="977" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--text-muted)">booking.cancelled</text>
+
+      <line x1="440" y1="965" x2="496" y2="965" stroke="var(--ok)" stroke-width="1.5" marker-end="url(#arrow)"/>
+      <text x="468" y="957" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--text-muted)">consume</text>
+
+      <rect x="500" y="940" width="170" height="50" rx="8" fill="none" stroke="var(--ok)" stroke-width="1.3" stroke-dasharray="3,3"/>
+      <text x="585" y="962" text-anchor="middle" font-family="var(--mono)" font-size="12" fill="currentColor">payment-service</text>
+      <text x="585" y="977" text-anchor="middle" font-family="var(--mono)" font-size="8.5" fill="var(--text-faint)">refund_payment — calls stripe.com/v1/refunds (box above)</text>
+
+      <line x1="670" y1="965" x2="726" y2="965" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3" marker-end="url(#arrowDim)"/>
+      <text x="698" y="957" text-anchor="middle" font-family="var(--mono)" font-size="9" fill="var(--idle)">publish, on refund failure</text>
+
+      <rect x="730" y="940" width="146" height="50" rx="8" fill="none" stroke="var(--idle)" stroke-width="1.3" stroke-dasharray="3,3"/>
+      <text x="803" y="962" text-anchor="middle" font-family="var(--mono)" font-size="12" fill="var(--idle)">kafka</text>
+      <text x="803" y="977" text-anchor="middle" font-family="var(--mono)" font-size="9.5" fill="var(--idle)">notifications</text>
+
+      <text x="24" y="1012" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">notifications has no consumer yet — Notification Service is a Phase 5 addition, which runs after Phase 6 in the locked build order (§27); producer and</text>
+      <text x="24" y="1026" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">consumer are independently deployable, same eventual-consistency trade-off already accepted for Kafka integration point #2.</text>
+      <text x="24" y="1046" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">booking-service also gains a small `events(event_id, start_time)` reference table in booking_db this phase — written by the same Kafka #2 consumer,</text>
+      <text x="24" y="1060" font-family="var(--mono)" font-size="9.5" fill="var(--text-faint)">used only to enforce the "cancel before the event starts" cutoff, not pictured as a separate box above.</text>
     </svg>
   </figure>
   <figcaption>traefik:v3.5 · keycloak:25.0 (dev mode) · postgres:16-alpine · mongo:7 · apache/kafka:3.8.0 (KRaft) · elasticsearch:8.15.0 · redis:7-alpine — 13 containers, one docker-compose network, host port 80 only. Stripe (test mode) is an external HTTPS API, not a container.</figcaption>
@@ -780,6 +816,12 @@
         <li><span class="check">✓</span> Kafka #4 (<code>payment.outcomes</code>, one topic/two outcomes) — live-verified both branches: <code>succeeded</code> → <code>Booking</code> <code>CONFIRMED</code> + <code>Ticket</code> <code>BOOKED</code>; <code>failed</code> → <code>Booking</code> <code>EXPIRED</code> + immediate hold release; redelivery a proven no-op that doesn't touch a later booking's legitimate hold</li>
         <li><span class="check">✓</span> per-section ticket pricing, organizer-set, carried through Kafka #2 into <code>Ticket.price_cents</code> — live-verified end to end</li>
         <li><span class="check">✓</span> CHECKPOINT <code>/pre-pr</code> code review found and fixed a real authz bypass on <code>/payments/charge</code> (was publicly reachable, letting any user submit an arbitrary <code>amount_cents</code>) plus a webhook publish-ordering bug, a non-atomic idempotency guard, an unhandled concurrent-insert race, a shared Kafka consumer group id, and a misleading error mapping — all fixed and live-verified, see <code>build-log.md</code>'s 2026-08-17 CHECKPOINT entry</li>
+        <li><span class="check">✓</span> <code>POST /bookings/{id}/cancel</code> — ownership-scoped (403/404/409), CONFIRMED-only, rejects a cancel attempt past the event's start time, seat immediately rebookable, live-verified under both hold strategies</li>
+        <li><span class="check">✓</span> a genuine third <code>TicketHoldStrategy</code> method (<code>release_booking</code>), not a <code>release_hold</code> reuse — same deliberate cron/redis asymmetry as the other three methods</li>
+        <li><span class="check">✓</span> Kafka #5 (<code>booking.cancelled</code>) — booking-service's first-ever producer, payment-service's first-ever consumer; live-verified end to end through the real HTTP/Kafka path, reaching a genuine Stripe refund API call (failed only at the placeholder-key boundary, same as the charge flow)</li>
+        <li><span class="check">✓</span> refund-failure path — logged, <code>Payment.status</code> stays <code>SUCCEEDED</code> (no re-lock, §22), publishes to a new <code>notifications</code> topic — verified live with a throwaway Kafka console consumer</li>
+        <li><span class="check">✓</span> redelivery of <code>booking.cancelled</code> proven live: a hand-crafted duplicate correctly re-attempted an unresolved refund rather than silently no-op'ing; the already-refunded-redelivery no-op case proven in the automated suite (needs a real Stripe success to observe live)</li>
+        <li><span class="check">✓</span> a real-Kafka-broker transport test (not a mocked producer, not a hand-crafted payload to <code>_handle()</code>) found and fixed a 3-phase-old broken <code>kafka_container</code> testcontainer fixture — see <code>build-log.md</code>'s 2026-08-17 P6.T4 entry</li>
         <li><span class="check">✓</span> one command (<code>make up</code>) boots all 13 containers</li>
       </ul>
     </div>
@@ -787,8 +829,8 @@
       <h4><span class="dot idle"></span>provisioned, not built yet</h4>
       <ul>
         <li><span class="dash">–</span> a real Stripe charge actually succeeding and its webhook actually arriving — <code>.env</code> only has a placeholder <code>STRIPE_SECRET_KEY</code>; everything up to Stripe's own API boundary is live-verified, the genuine round trip isn't yet (tracked on Phase 4's exit checklist, not silently marked done)</li>
-        <li><span class="dash">–</span> no notification logic yet (Phase 5)</li>
-        <li><span class="dash">–</span> no cancellation/refund flow yet (Phase 6)</li>
+        <li><span class="dash">–</span> a real Stripe refund actually succeeding — same tracked gap, applied to Phase 6's refund flow</li>
+        <li><span class="dash">–</span> no notification logic yet (Phase 5) — the <code>notifications</code> topic has a producer (this phase) but no consumer</li>
         <li><span class="dash">–</span> only four of five backend services exist</li>
         <li><span class="dash">–</span> no frontend</li>
         <li><span class="dash">–</span> nothing deployed to AWS (Phase 10)</li>
@@ -919,6 +961,33 @@ docker exec -it postgres psql -U booking_service -d booking_db \
 <span class="c"># the same message redelivered — the idempotent no-op contract, not just a unit-test claim</span>
 uv run --package payment-service python produce_outcome.py &lt;booking id&gt; &lt;ticket id&gt; succeeded
 <span class="out">no second "payment_outcome_applied" log line; booking/ticket unchanged</span>
+
+<span class="c"># Phase 6: bob (not the owner) tries to cancel alice's CONFIRMED booking — ownership-scoped</span>
+curl -X POST localhost/bookings/&lt;alice's confirmed booking id&gt;/cancel -H "Authorization: Bearer $BOB_TOKEN"
+<span class="out">{"detail":"not your booking"}</span>                        <span class="fail">403</span>
+
+<span class="c"># alice cancels her own CONFIRMED booking — releases the seat and publishes Kafka #5
+# (booking.cancelled), which payment-service consumes and calls Stripe's refund API</span>
+curl -X POST localhost/bookings/&lt;alice's confirmed booking id&gt;/cancel -H "Authorization: Bearer $ALICE_TOKEN"
+<span class="out">{"status":"cancelled", ...}</span>                          <span class="ok">200</span>
+docker exec -it postgres psql -U booking_service -d booking_db \
+  -c "SELECT status FROM tickets WHERE id = '&lt;the ticket id&gt;';"
+<span class="out">AVAILABLE — immediately rebookable, verified under both hold strategies</span>
+
+<span class="c"># payment-service's own logs show the refund reaching Stripe's real API (failing only at the
+# same placeholder-key boundary as the charge attempt above), then the refund-failure branch
+# publishing to the notifications topic — verified directly with a throwaway console consumer</span>
+docker logs payment-service --tail 15
+<span class="out">"message='Request to Stripe api' ... url=https://api.stripe.com/v1/refunds"
+"stripe_refund_submission_failed" ... "notification_published" action=refund_failed</span>
+docker exec -it kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic notifications --from-beginning --timeout-ms 5000
+<span class="out">{"action":"refund_failed","booking_id":"...","reason":"Invalid API Key provided: sk_test_****geme"}</span>
+
+<span class="c"># repeat-cancel on the now-CANCELLED booking — 409, and a cancel attempt past the event's
+# start time also 409s (§22's cancellation-cutoff policy, enforced against a new booking_db.events row)</span>
+curl -X POST localhost/bookings/&lt;same booking id&gt;/cancel -H "Authorization: Bearer $ALICE_TOKEN"
+<span class="out">{"detail":"booking is not confirmed"}</span>                <span class="fail">409</span>
 
 <span class="c"># Phase 8: reproduce the hold-mechanism benchmark (§07 above)</span>
 make bench-up                              <span class="c"># prometheus + grafana, on demand only</span>
