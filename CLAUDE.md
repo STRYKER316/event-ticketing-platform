@@ -44,10 +44,19 @@ full every session. When in doubt, the decisions log wins.
 These hold across every service, every phase — check new code against them:
 
 - **Database-per-service.** No service queries another service's tables directly, ever.
-  Cross-service data only arrives via Kafka events.
+  Cross-service data only arrives via Kafka events — **with one narrow, deliberate
+  exception** (decisions-log §9 amendment, Phase 4): Booking Service makes a synchronous
+  HTTP call to Payment Service to initiate a charge (`POST /bookings/{id}/pay` →
+  `POST /payments/charge`), forwarding the caller's JWT. This is not a Kafka integration
+  point and does not query another service's tables — it's a request/response action
+  needing an immediate result, which Kafka's fire-and-forget shape doesn't fit. It is the
+  only synchronous inter-service call in the system; don't add a second one without the
+  same kind of explicit discussion the first one got.
 - **Five Kafka integration points only** (decisions-log §7) — event↔search, event→booking
-  provisioning, booking/payment→notification, payment→booking (failed→release), booking→payment
-  (cancelled→refund). Don't invent a sixth without discussing it first.
+  provisioning, booking/payment→notification, payment→booking (outcome: succeeded→confirm,
+  failed→release), booking→payment (cancelled→refund). Don't invent a sixth without
+  discussing it first — point #4 was broadened to carry both outcomes on one topic
+  specifically to avoid growing to six (§7 amendment, Phase 4).
 - **Every Kafka consumer is idempotent.** Redelivery must be a safe no-op — this gets
   explicitly tested (unique constraints, "only transition if currently in state X," etc.),
   not assumed.
