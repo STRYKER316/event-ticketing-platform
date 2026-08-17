@@ -2442,3 +2442,55 @@ idempotency requirement), not new decisions.
 `CLAUDE.md` update: none needed — no new convention, these fixes bring the
 implementation into compliance with conventions already stated (the
 async-only rule, the rowcount-gated idempotent-transition pattern).
+
+## 2026-08-17 — Post-push: closing the webhook-route verification gap without a real Stripe account
+
+After the push, asked directly whether anything besides the real-Stripe-key
+flow remained unverified. On reflection, one real gap: `/payments/webhook`
+had only been live-tested for signature *rejection* (a deliberately bad
+signature → 400) — the *acceptance* path had only been proven at the
+`PaymentManager.handle_webhook_event` level (unit/integration tests) or
+indirectly via producing straight to `payment.outcomes` (which exercises
+Booking Service's consumer but bypasses the webhook route, signature
+verification, and Payment Service's own Kafka publish entirely).
+
+Realized this gap doesn't actually require a real Stripe account to close:
+Stripe's webhook signature scheme is HMAC-SHA256 over `{timestamp}.{body}`
+keyed by the webhook secret — a value *we* set locally
+(`STRIPE_WEBHOOK_SECRET=whsec_changeme`). Nothing about verifying that
+signature calls out to Stripe's servers. So a validly-signed event can be
+constructed entirely locally using `stripe.WebhookSignature
+._compute_signature` and POSTed straight at the real running
+`/payments/webhook` — this is what Stripe's own webhook testing
+documentation recommends for exactly this reason.
+
+Live-verified, both outcomes, through the actual HTTP route (not a
+bypass): created a real booking, attempted `/pay` (fails at Stripe's auth
+boundary as expected, same as before), manually set the resulting
+`Payment` row's `stripe_charge_id` (standing in for "Stripe accepted the
+charge," the one thing that genuinely can't be produced without a real
+account), then sent a self-signed `payment_intent.succeeded` event at
+`/payments/webhook`. Full chain fired correctly: `Payment` →
+`SUCCEEDED`, `Booking` → `CONFIRMED`, `Ticket` → `BOOKED`. Replayed the
+identical signed event a second time — `payment-service`'s own logs show
+`webhook_replay_no_op`, confirming the CHECKPOINT-added rowcount-gated
+guard works through the real route, not just in the integration test that
+opens two sessions directly. Repeated the same exercise for
+`payment_intent.payment_failed` against a second real booking: `Payment` →
+`FAILED`, `Booking` → `EXPIRED`, `Ticket` → back to `AVAILABLE`. Also
+live-verified `POST /bookings/{id}/pay` returns 409 against an
+already-`CONFIRMED` booking (the one `/pay` status-code path that hadn't
+been exercised live yet, only unit-tested).
+
+**What's left is now narrower and precisely scoped**: not "does this
+system's webhook handling work" — that's fully live-verified — but
+specifically whether Stripe's own API accepts a real charge submission and
+Stripe's own infrastructure delivers the resulting webhook, both of which
+need a real `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET` pair from an
+actual Stripe account. Updated `docs/phases/phase-4-kickoff.md`'s exit
+checklist to reflect this — the webhook and validation-checkpoint items
+move from open/partial to checked, with the remaining gap restated
+precisely rather than left implying the whole webhook path was untested.
+
+Decisions-log delta: none.
+`CLAUDE.md` update: none needed.

@@ -360,21 +360,41 @@ Report evidence: testing-chapter material (§18).
       `PathPrefix('/payments/webhook')` only; see the CHECKPOINT build-log
       entry.
 - [~] `POST /bookings/{id}/pay` live-verified: ownership-scoped (403 for a
-      non-owner, 404 unknown booking) — done. Idempotent (same booking ID
-      twice → one charge) — proven by unit + integration test, and live via
-      the retry-bug fix (a stuck-replay bug found and fixed this phase).
+      non-owner, 404 unknown booking, 409 on an already-`CONFIRMED`
+      booking) — all done live. Idempotent (same booking ID twice → one
+      charge) — proven by unit + integration test, and live via the
+      retry-bug fix (a stuck-replay bug found and fixed this phase).
       "Creates a Stripe test-mode charge" — the full chain up to Stripe's
       own API boundary is live-verified (real HTTPS request, Payment
       Service's own auth check passes, forwarded JWT validated); a charge
-      actually **succeeding** was not reached, since no real Stripe
-      test-mode credentials were available this session. Not marked done
-      outright — see the open item below.
-- [ ] Webhook endpoint verified against Stripe CLI local forwarding —
-      **not done**. Only the signature-rejection path (a deliberately bad
-      signature → 400) and the idempotency logic (unit + integration test,
-      plus a live concurrency test added at CHECKPOINT) were verified;
-      `stripe listen --forward-to` was never actually run, since that
-      requires a real Stripe account. Genuinely open, not glossed over.
+      actually **succeeding** against Stripe's real API was not reached,
+      since no real Stripe test-mode credentials were available this
+      session. Not marked done outright — see the open item below.
+- [x] Webhook endpoint's own processing verified end-to-end through the
+      real HTTP route — **not via Stripe CLI forwarding** (that specific
+      phrasing in this line's original text isn't done, see the open item
+      below), but via a self-signed synthetic event instead: signature
+      verification only depends on our own local `STRIPE_WEBHOOK_SECRET`,
+      so a validly-signed `payment_intent.succeeded`/`.payment_failed`
+      payload was constructed with Stripe's own signing helper
+      (`stripe.WebhookSignature._compute_signature`) against a `Payment`
+      row whose `stripe_charge_id` was set directly (standing in for
+      Stripe having accepted the charge, since our real submission always
+      fails on the placeholder key) and POSTed to the real running
+      `/payments/webhook`. Both outcomes proven live end-to-end through
+      the actual route, not a manager-level test or a Kafka-injection
+      bypass: `succeeded` → `Payment.SUCCEEDED` → `Booking.CONFIRMED` →
+      `Ticket.BOOKED`; `failed` → `Payment.FAILED` → `Booking.EXPIRED` →
+      `Ticket.AVAILABLE`. Replaying the same signed succeeded-event a
+      second time hit `webhook_replay_no_op` in `payment-service`'s own
+      logs — the rowcount-gated idempotency guard proven through the real
+      route, not just the integration test. The signature-*rejection* path
+      (a deliberately bad signature → 400) was also verified live. What
+      remains genuinely open is narrower than this line originally implied
+      — not "does our webhook handling work," which is now fully
+      live-verified, but specifically "does Stripe's own infrastructure,
+      given a real accepted charge, actually deliver us a webhook" — see
+      the open item below.
 - [x] Kafka #4 (payment outcome, both branches) live-verified: produced
       `succeeded`/`failed` messages directly on `payment.outcomes`
       (bypassing Stripe — the mechanism under test is the consumer, not
@@ -382,19 +402,21 @@ Report evidence: testing-chapter material (§18).
       `CONFIRMED`/`BOOKED`; `failed` → `EXPIRED`/`AVAILABLE` immediately;
       redelivery produced no second effect and, per the CHECKPOINT fix,
       provably can't touch a different, later booking's legitimate hold.
+      (Superseded by the webhook-route test above for the specific
+      succeeded/failed → confirm/release claim — this direct-Kafka test
+      remains useful as an isolated proof of the consumer alone.)
 - [x] Full test suite green (unit + testcontainers integration) — as of the
       CHECKPOINT commit: `event-service` 44/44 + 11/11, `booking-service`
       36/36 + 24/24, `payment-service` 7/7 + 5/5, `search-service` 16/16
       (unaffected, spot-checked).
 - [~] Validation checkpoint done live: "decline a payment → hold released
-      immediately" and "replayed webhooks change nothing" — both done (see
-      Kafka #4 item above; webhook replay proven at the API layer via
-      `handle_webhook_event`'s idempotency tests, not a real Stripe replay).
-      "Pay a `PENDING` booking → `CONFIRMED`" via the *real* charge→webhook
-      path specifically was not reached (same real-Stripe gap as above) —
-      the `CONFIRMED` transition itself was proven live via direct Kafka
-      injection, which exercises the same consumer code a real webhook
-      would drive, just not the Stripe leg feeding it.
+      immediately" and "replayed webhooks change nothing" — both done, now
+      via the real webhook route (see above), not just direct Kafka
+      injection or a mocked test. "Pay a `PENDING` booking → `CONFIRMED`"
+      is also done live via the real route — the one piece still not
+      reached is Stripe's own API actually accepting the charge and
+      Stripe's own infrastructure actually sending the webhook, both of
+      which need a real Stripe account (see the open item below).
 - [x] Live walkthrough done at CHECKPOINT; `docs/architecture.html` updated
       to current state (topology, proven/not-built lists, reproduce-this-
       yourself commands, including the CHECKPOINT authz-bypass fix);
@@ -423,13 +445,21 @@ Report evidence: testing-chapter material (§18).
       stale "three services"/"12 containers" text, the P8 benchmark
       chapter's cross-reference, all found and fixed; (9) this checklist.
 
-**Two items are genuinely open, not silently marked done**, both blocked on
-the same thing: real Stripe test-mode credentials, which weren't available
-this session (the user was asked and chose to defer rather than supply
-one). Before this phase is truly closed out: supply a real
-`STRIPE_SECRET_KEY`, run `stripe listen --forward-to localhost/payments/webhook`
-locally, and re-verify a real charge → webhook → `CONFIRMED` round trip
-end to end.
+**One thing is genuinely open, not silently marked done** — narrower than
+it first looked. Every piece of *this system's own code* is now
+live-verified, including the full `/payments/webhook` route's signature
+verification, idempotency guard, and Kafka publish (proven with a
+self-signed synthetic event, since signature verification only depends on
+our own local `STRIPE_WEBHOOK_SECRET`, not a real Stripe account). What's
+left needs a real Stripe account specifically: (1) Stripe's own API
+actually accepting a `PaymentIntent.create_async` call with real test-mode
+credentials, and (2) Stripe's own infrastructure actually delivering the
+resulting webhook (as opposed to us constructing an equivalent payload
+ourselves). Before this phase is truly closed out: supply a real
+`STRIPE_SECRET_KEY`, run `stripe listen --forward-to
+localhost/payments/webhook` locally, and re-verify a real charge → webhook
+→ `CONFIRMED` round trip — at that point it's confirming Stripe's own
+reliability, not hunting for a bug in this codebase.
 
 **Report evidence captured this phase (§16):** Payment class diagram +
 textual schema, idempotency writeup (§9, both mechanisms — charge and
