@@ -181,6 +181,57 @@ One correction made to the kickoff doc's own framing while implementing this: it
 
 **Measured (P8.T5, fixed load profile — 30-seat pool, 10 clients/seat, `HOLD_TTL_SECONDS=10`/`HOLD_SWEEP_INTERVAL_SECONDS=5` for reproducibility, 3 runs per strategy, see `docs/benchmark-results/`):** immediate-trigger release completed in single-digit milliseconds for both strategies (cron: 4.28ms mean trigger-write, range 3.58–4.89ms; Redis: 6.69ms mean, range 4.87–8.42ms — redis slower in all three runs, a small but consistent gap plausibly the same extra Redis-container network hop discussed in the Feature Development Process chapter's acquisition-latency analysis), against a passive-path release of ~12–13s (bounded by the TTL/sweep-interval configuration, not the mechanism itself) — roughly three orders of magnitude faster, confirming immediate release is worth the added complexity §17 already committed to, independent of which hold strategy is active. (Superseded an earlier single-run version of these numbers after a dedicated adversarial review caught an `httpx` client connection-pool cap silently throttling the contention burst and inflating measured latency — fixed, and every number above is post-fix, n=3; see `docs/benchmark-results/README.md`'s revision note.)
 
+**Amendment (Phase 5, 2026-08-18):** three gaps surfaced when Notification
+Service moved from decision to implementation, resolved before P5.T1 began
+(same practice as the §7.2/§9/§16/§22 amendments):
+
+1. **No DB, confirmed rather than left open.** §4/§19 left "no DB (or
+   minimal delivery-log table)" as an either/or. Resolved: **no DB.**
+   Nothing in this phase's scope reads delivery history back (no report
+   evidence, no API needs it), and Kafka itself already carries all the
+   state the retry ladder needs (see #2) — a delivery-log table would be
+   unread persistence, which `CLAUDE.md`'s "don't add features beyond what
+   the task requires" already rules against.
+2. **Retry state has nowhere to live without a DB, so it travels on the
+   message itself.** A `RetryEnvelope { attempt: int, original:
+   NotificationMessage, last_error: str }` wraps the message once it enters
+   the retry path — `attempt` is the next attempt number about to be made
+   (2 for the first retry, since the initial delivery off the `notifications`
+   topic is attempt 1), which is also what drives the "increasing backoff"
+   §17 already specifies (`min(2 ** attempt, backoff_cap_seconds)`, exact
+   values configurable via `Settings` so tests aren't stuck waiting out a
+   real backoff). Three topics, not two: `notifications` (primary, one
+   attempt, no backoff — matches §17's "confirmation 'sent' on real
+   events"), `notification-retry` (re-attempts with the envelope's backoff,
+   republishes itself with `attempt+1` on failure), `notification-dlq`
+   (terminal — attempt count exhausted `retry_max_attempts`, message lands
+   here rather than being silently dropped, per §17's stated requirement).
+   A lightweight `DlqConsumer` logs on arrival for demo visibility; nothing
+   reprocesses out of the DLQ automatically — consistent with §17 never
+   claiming automated DLQ recovery, only "not silently dropped."
+3. **Nothing in this system can make a real delivery attempt fail** — §19
+   already commits Notification Service to log/console output only, no
+   real email provider, so the "delivery" step has no external dependency
+   capable of a genuine transient failure the way Stripe's real (if
+   placeholder-keyed) API calls do for Payment Service. Demonstrating the
+   retry ladder for real — not just under a mocked unit test — needs an
+   honest, explicit failure-injection point rather than a fabricated
+   claim. Resolved the same way P8.T5 resolved an analogous "the real
+   trigger doesn't exist yet" gap (§17's own earlier amendment): a
+   `Settings.simulated_failure_attempts: int = 0` toggle (default off,
+   normal operation never simulates failure) that deterministically fails
+   delivery for every message while `attempt <= simulated_failure_attempts`
+   — set low (e.g. 1) to demonstrate retry-then-recovery live, set at or
+   above `retry_max_attempts + 1` to demonstrate a real message landing in
+   `notification-dlq`. Documented plainly as a demo/test instrument in the
+   phase kickoff doc and this entry, not hidden as if it were a naturally
+   occurring failure.
+
+Idempotency for this consumer (§7's general rule) is idempotent by
+construction rather than by an explicit guard: with no DB and no real
+external side effect, a duplicate delivery is just a duplicate log line —
+there is nothing downstream a redelivery could double-write or double-charge.
+
 ## 18. Testing Strategy — Decided
 
 pytest + FastAPI's `TestClient` for unit tests. `testcontainers-python` for integration tests that need a real Postgres/Kafka/Redis instance rather than mocks — this is the practical equivalent of the curriculum's WebMvcMock-based testing approach, and supports honest "Tested" claims in the report rather than mocked-only coverage.
