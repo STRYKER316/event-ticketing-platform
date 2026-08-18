@@ -93,6 +93,30 @@ async def test_successful_delivery_produces_no_retry_message(
         await retry_consumer.stop()
 
 
+async def test_redelivery_of_same_message_is_a_safe_no_op(
+    kafka_container, kafka_producer: AIOKafkaProducer, fast_retry_settings, running_notification_consumer
+):
+    # decisions-log §17 amendment's idempotency claim ("idempotent by
+    # construction... a duplicate delivery is just a duplicate log line")
+    # tested rather than assumed, per this project's Kafka-consumer rule —
+    # a crash between delivery and offset commit redelivers the same raw
+    # record; NotificationConsumer has no way to distinguish that from a
+    # second, identical message, so publishing the same key/value twice
+    # exercises the same code path either way (found missing in code review).
+    booking_id = str(uuid.uuid4())
+    payload = _notification_message("booking_confirmed", booking_id)
+    retry_consumer = await make_topic_consumer(kafka_container, NOTIFICATION_RETRY_TOPIC)
+    try:
+        await kafka_producer.send_and_wait(NOTIFICATIONS_TOPIC, key=booking_id.encode(), value=payload)
+        await kafka_producer.send_and_wait(NOTIFICATIONS_TOPIC, key=booking_id.encode(), value=payload)
+        # Both deliveries succeed silently (simulated_failure_attempts=0) —
+        # a safe no-op means no retry envelope for this booking, not a crash
+        # and not a corrupted/duplicated retry-ladder entry.
+        await _assert_no_matching_record(retry_consumer, booking_id, timeout=3)
+    finally:
+        await retry_consumer.stop()
+
+
 async def test_forced_failure_produces_retry_envelope_with_attempt_two(
     kafka_container, kafka_producer: AIOKafkaProducer, fast_retry_settings, running_notification_consumer
 ):

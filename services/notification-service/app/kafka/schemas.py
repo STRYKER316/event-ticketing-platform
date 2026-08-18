@@ -1,7 +1,10 @@
 import enum
 import uuid
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, StringConstraints
+
+NonBlankStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class NotificationAction(enum.Enum):
@@ -26,8 +29,13 @@ class RetryEnvelope(BaseModel):
     """Carries retry state on the message itself (decisions-log §17
     amendment, 2026-08-18) — this service has no DB to hold it in.
     `attempt` is the next attempt number about to be made: 2 for the first
-    retry, since the initial delivery off `notifications` is attempt 1."""
+    retry, since the initial delivery off `notifications` is attempt 1.
+    Bounded well above any realistic retry_max_attempts config — this
+    envelope round-trips through Kafka, so a malformed or tampered message
+    is untrusted input at the DTO boundary, not just an internal counter
+    (found in code review: an unbounded attempt could overflow
+    compute_backoff_seconds's exponentiation)."""
 
-    attempt: int
+    attempt: Annotated[int, Field(ge=1, le=100)]
     original: NotificationMessage
-    last_error: str
+    last_error: NonBlankStr

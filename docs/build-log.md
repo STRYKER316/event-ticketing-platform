@@ -3062,3 +3062,113 @@ file across P5.T1–T4.
 
 Decisions-log delta: none this task.
 `CLAUDE.md` update: none needed.
+
+## 2026-08-18 — Phase 5 CHECKPOINT: pre-pr simplify + code-review fixes
+
+Ran the phase-end `/pre-pr` pass (simplify → code-review → verify) against
+the diff since `14c5d84` (Phase 6's checkpoint commit, where Phase 5
+started), per the phase-end checklist.
+
+**Simplify** (Sonnet subagent) deduplicated boilerplate across the new
+service and its call sites: a shared `_KafkaMessageProducer` base class in
+`booking-service/app/kafka/producers.py` (mirroring the one
+`payment-service` already had) to remove duplication between
+`BookingCancelledProducer` and the new `NotificationProducer`; a shared
+`_send` helper in notification-service's `RetryPublisher`; a shared
+`_parse_or_log` helper collapsing three near-identical
+try/except-parse-or-drop blocks across `NotificationConsumer`,
+`RetryConsumer`, `DlqConsumer`; a shared `running_consumer` async context
+manager and `override_settings` helper across the integration/unit test
+fixtures, replacing several hand-built teardown blocks. All three services'
+suites re-ran green after the refactor (committed separately as `70dbe11`
+before code-review, since it's a real unit of work on its own).
+
+**Code-review** (Opus subagent, full CLAUDE.md rule extraction plus a
+nested fork) found three real issues, fixed here:
+
+1. **`compute_backoff_seconds` could raise `OverflowError`.**
+   `base**attempt` was evaluated before `min()` clamped it, so a large
+   enough `attempt` overflowed float range before the cap ever applied —
+   reproduced directly (`attempt=10**9` raises). Worse, the call in
+   `RetryConsumer._handle` sits outside that method's own `try` block, so
+   this would have permanently killed the retry consumer's background task
+   on a sufficiently corrupted or adversarially large `attempt` value. Fixed
+   two ways: `compute_backoff_seconds` now catches `OverflowError` and
+   returns the cap directly; `RetryEnvelope.attempt` is now bounded
+   (`Field(ge=1, le=100)`) rather than a bare `int`, per the DTO
+   validation-boundary rule — this envelope round-trips through Kafka, so a
+   malformed or tampered message is untrusted input at the DTO boundary,
+   the same reasoning as every other DTO field with a logical constraint.
+   `RetryEnvelope.last_error` was also a bare, un-validated `str`; changed
+   to the same `NonBlankStr` (`StringConstraints(strip_whitespace=True,
+   min_length=1)`) pattern `booking-service/app/kafka/schemas.py` already
+   uses for the same purpose.
+
+2. **Notification republishes had no bounded-retry wrapper.** Every other
+   Kafka consumer with a side effect in this system (`ProvisioningConsumer`,
+   `PaymentOutcomeConsumer`) wraps its write in `_run_with_retry` — a
+   transient failure is retried a few times before the consumer gives up
+   and moves on, rather than a single blip permanently killing the
+   background task. `notification-service`'s three consumers republish to
+   `notification-retry`/`notification-dlq` as their equivalent "thing that
+   must finish before the offset advances" (this service has no DB), but
+   those republish calls were bare — an unguarded `send_and_wait` failure
+   would have escaped `_handle` and killed the consumer task for good, with
+   nothing to restart it. Added a `_publish_with_retry` helper mirroring
+   `_run_with_retry`'s shape (bounded attempts, short backoff, log critical
+   and give up rather than raise) and wrapped all three republish call
+   sites (`NotificationConsumer`'s retry publish; `RetryConsumer`'s retry
+   and DLQ publishes) in it.
+
+3. **Booking-confirmed notification publish could roll back an already-
+   successful booking confirmation.** The publish sat *inside*
+   `PaymentOutcomeConsumer._transition_with_retry`'s retried DB-transaction
+   closure, following the "publish before commit" convention established
+   in Phase 4 for `payment-service`'s webhook route. That convention is
+   safe there specifically because a publish failure propagates uncommitted
+   out of the request handler, Stripe sees a non-2xx, and genuinely retries
+   the whole webhook — the redelivery is what makes rolling back safe. This
+   consumer has no equivalent redelivery mechanism: `_run_with_retry`
+   deliberately *swallows* a permanent failure after its bounded retries
+   and returns `None` rather than raising (documented, existing behavior —
+   the same trade-off `ProvisioningConsumer` already accepts for its own DB
+   write), so a persistently failing notification publish would silently
+   roll back the DB transition and hold-strategy confirm that had *already
+   succeeded*, then commit the Kafka offset anyway — losing the payment
+   outcome message while leaving the booking `PENDING` despite a completed
+   charge. Fixed by moving the notification publish out of the retried
+   transaction entirely: the DB transition (and hold-strategy confirm) now
+   commits and is treated as the source of truth first, and the
+   notification is a separate, best-effort step afterward (its own small
+   bounded retry, `_publish_confirmation_with_retry`) that cannot undo it.
+   The reviewer also flagged the same "before commit" shape at
+   `payment-service/app/logic/payment_manager.py`'s webhook handler as
+   lower-stakes — checked, and left as-is: that call site genuinely does
+   have Stripe's own webhook redelivery as the safety net, so the original
+   reasoning holds there.
+
+Also added the redelivery-is-a-safe-no-op integration test the reviewer
+flagged as missing for the three new consumers (this project's Kafka rule:
+idempotency "gets explicitly tested, not assumed") —
+`test_redelivery_of_same_message_is_a_safe_no_op` publishes the same
+key/value twice to `notifications` and asserts no retry-ladder entry
+results, exercising the same code path a crash-before-offset-commit
+redelivery would.
+
+Two findings reviewed and deliberately left unfixed, both pre-existing and
+out of Phase 5's scope: the Redis hold-strategy's non-transactional
+`redis.delete` in `confirm_hold`/`release_hold` (predates this phase, not
+introduced by it — fixing it would mean touching hold-strategy
+transactionality, a larger change than this checkpoint's remit); and
+`_log_if_died`'s log-only, no-restart, no-health-reflection pattern for a
+died consumer task, which is an established repo-wide convention shared by
+`booking-service` and `payment-service`'s own consumer tasks, not something
+`notification-service` introduced.
+
+Suites re-verified green after all fixes: `notification-service` 10/10 (the
+new redelivery test added the tenth), `booking-service` 72/72,
+`payment-service` 22/22. `pyflakes` clean on every touched file.
+
+Decisions-log delta: none — these are implementation hardening, not a
+change to the §17 amendment's design.
+`CLAUDE.md` update: none needed.

@@ -16,6 +16,40 @@ logger = structlog.get_logger()
 
 _M = TypeVar("_M", bound=BaseModel)
 
+# A transient broker error (leader election, brief unavailability) on a
+# republish is retried in place a few times before a consumer gives up on it
+# — mirrors booking-service's own DB_WRITE_MAX_ATTEMPTS/_run_with_retry
+# shape (app/kafka/consumers.py), just applied to a Kafka republish standing
+# in for the DB write this service doesn't have (decisions-log §17
+# amendment). Without this, a single transient send failure would escape
+# _handle and permanently kill the consumer task (found in code review).
+PUBLISH_MAX_ATTEMPTS = 3
+PUBLISH_RETRY_BACKOFF_SECONDS = 1.0
+
+
+async def _publish_with_retry(
+    operation: Callable[[], Awaitable[None]],
+    *,
+    retrying_event: str,
+    failed_event: str,
+    **log_context: object,
+) -> None:
+    """Retries a transient republish failure before giving up; after the
+    last attempt, logs critical and returns rather than raising — same
+    give-up-and-move-on trade-off _run_with_retry documents, so the caller's
+    offset still commits instead of blocking the topic on a permanently
+    unreachable broker."""
+    for attempt in range(1, PUBLISH_MAX_ATTEMPTS + 1):
+        try:
+            await operation()
+            return
+        except Exception:
+            if attempt == PUBLISH_MAX_ATTEMPTS:
+                logger.critical(failed_event, attempts=attempt, exc_info=True, **log_context)
+                return
+            logger.warning(retrying_event, attempt=attempt, exc_info=True, **log_context)
+            await asyncio.sleep(PUBLISH_RETRY_BACKOFF_SECONDS)
+
 
 def _parse_or_log(model_cls: type[_M], raw: bytes, invalid_event: str) -> _M | None:
     """Shared parse-or-log-and-drop step for all three consumers below — a
@@ -93,7 +127,12 @@ class NotificationConsumer:
             # failed delivery and this publish must redeliver from
             # `notifications`, not silently drop the message.
             envelope = RetryEnvelope(attempt=2, original=message, last_error=str(exc))
-            await self._retry_publisher.publish_retry(envelope)
+            await _publish_with_retry(
+                lambda: self._retry_publisher.publish_retry(envelope),
+                retrying_event="notification_consumer_retry_publish_failed_retrying",
+                failed_event="notification_consumer_retry_publish_failed_permanently",
+                booking_id=str(message.booking_id),
+            )
 
 
 def build_retry_consumer() -> AIOKafkaConsumer:
@@ -124,13 +163,24 @@ class RetryConsumer:
             await NotificationManager().deliver(envelope.original, attempt=envelope.attempt)
         except Exception as exc:
             settings = get_settings()
+            booking_id = str(envelope.original.booking_id)
             if envelope.attempt > settings.retry_max_attempts:
-                await self._retry_publisher.publish_dlq(
-                    RetryEnvelope(attempt=envelope.attempt, original=envelope.original, last_error=str(exc))
+                dlq_envelope = RetryEnvelope(attempt=envelope.attempt, original=envelope.original, last_error=str(exc))
+                await _publish_with_retry(
+                    lambda: self._retry_publisher.publish_dlq(dlq_envelope),
+                    retrying_event="retry_consumer_dlq_publish_failed_retrying",
+                    failed_event="retry_consumer_dlq_publish_failed_permanently",
+                    booking_id=booking_id,
                 )
             else:
-                await self._retry_publisher.publish_retry(
-                    RetryEnvelope(attempt=envelope.attempt + 1, original=envelope.original, last_error=str(exc))
+                next_envelope = RetryEnvelope(
+                    attempt=envelope.attempt + 1, original=envelope.original, last_error=str(exc)
+                )
+                await _publish_with_retry(
+                    lambda: self._retry_publisher.publish_retry(next_envelope),
+                    retrying_event="retry_consumer_retry_publish_failed_retrying",
+                    failed_event="retry_consumer_retry_publish_failed_permanently",
+                    booking_id=booking_id,
                 )
             return
 

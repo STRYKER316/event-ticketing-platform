@@ -31,6 +31,13 @@ DB_WRITE_RETRY_BACKOFF_SECONDS = 1.0
 
 _T = TypeVar("_T")
 
+# A transient broker error on the booking-confirmed notification publish is
+# retried in place before giving up — same shape as _run_with_retry, applied
+# to a Kafka send instead of a DB write (see _publish_confirmation_with_retry
+# for why this runs outside, not inside, the retried DB transaction).
+NOTIFICATION_PUBLISH_MAX_ATTEMPTS = 3
+NOTIFICATION_PUBLISH_RETRY_BACKOFF_SECONDS = 1.0
+
 
 async def _run_with_retry(
     session_factory: async_sessionmaker[AsyncSession],
@@ -231,7 +238,20 @@ class PaymentOutcomeConsumer:
 
     async def _transition_with_retry(self, message: PaymentOutcomeMessage, new_status: BookingStatus) -> bool | None:
         """Retries a transient DB failure in place before giving up — same
-        shape as ProvisioningConsumer._write_tickets(), see _run_with_retry()."""
+        shape as ProvisioningConsumer._write_tickets(), see _run_with_retry().
+
+        The booking-confirmed notification publish is deliberately *not*
+        inside this retried unit (found in code review): _run_with_retry
+        swallows a permanent failure and returns None rather than raising,
+        so the usual publish-before-commit reasoning ("a publish failure
+        propagates uncommitted, and the caller genuinely retries") doesn't
+        apply here the way it does for payment-service's webhook route —
+        there is no redelivery mechanism above this method, so a publish
+        failure inside _transition() would silently roll back an already-
+        successful DB transition (and hold-strategy confirm) instead of
+        just failing to notify. The DB transition is committed and treated
+        as the source of truth first; the notification is a separate,
+        best-effort step afterward that can't undo it."""
 
         async def _transition(session: AsyncSession) -> bool:
             bookings = BookingRepository(session)
@@ -244,23 +264,45 @@ class PaymentOutcomeConsumer:
                 strategy = get_hold_strategy(session, self._redis)
                 if message.action is PaymentOutcomeAction.SUCCEEDED:
                     await strategy.confirm_hold(message.ticket_id)
-                    # Integration point #3 (§7 point 3, Phase 5) — publish
-                    # before commit, same reasoning as every other publish
-                    # in this system: a publish failure here propagates
-                    # uncommitted (this whole _transition() call, including
-                    # the DB write above, rolls back), and _run_with_retry's
-                    # bounded retry redoes the same logical operation rather
-                    # than stranding a CONFIRMED booking with no
-                    # notification ever sent.
-                    await self._notification_producer.publish_booking_confirmed(message.booking_id)
                 else:
                     await strategy.release_hold(message.ticket_id)
             return transitioned
 
-        return await _run_with_retry(
+        transitioned = await _run_with_retry(
             self._session_factory,
             _transition,
             retrying_event="payment_outcome_consumer_db_write_failed_retrying",
             failed_event="payment_outcome_consumer_db_write_failed_permanently",
             booking_id=str(message.booking_id),
         )
+
+        if transitioned and message.action is PaymentOutcomeAction.SUCCEEDED:
+            # Integration point #3 (§7 point 3, Phase 5) — best-effort here
+            # on purpose (see docstring above); the booking's CONFIRMED
+            # status has already committed regardless of whether this
+            # succeeds.
+            await self._publish_confirmation_with_retry(message.booking_id)
+
+        return transitioned
+
+    async def _publish_confirmation_with_retry(self, booking_id: uuid.UUID) -> None:
+        for attempt in range(1, NOTIFICATION_PUBLISH_MAX_ATTEMPTS + 1):
+            try:
+                await self._notification_producer.publish_booking_confirmed(booking_id)
+                return
+            except Exception:
+                if attempt == NOTIFICATION_PUBLISH_MAX_ATTEMPTS:
+                    logger.critical(
+                        "payment_outcome_consumer_notification_publish_failed_permanently",
+                        booking_id=str(booking_id),
+                        attempts=attempt,
+                        exc_info=True,
+                    )
+                    return
+                logger.warning(
+                    "payment_outcome_consumer_notification_publish_failed_retrying",
+                    booking_id=str(booking_id),
+                    attempt=attempt,
+                    exc_info=True,
+                )
+                await asyncio.sleep(NOTIFICATION_PUBLISH_RETRY_BACKOFF_SECONDS)
