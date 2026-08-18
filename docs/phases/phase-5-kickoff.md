@@ -152,10 +152,17 @@ this file only carries what Claude Code needs to build it.
 > yet, that's P5.T2/T3.
 
 **Done when:** `docker compose up notification-service` boots healthy;
-`curl` through Traefik to `/notifications/healthz` (mirroring the
-`PathPrefix` convention's routing) returns `200 {"status": "ok"}` with no
-auth required. Report evidence: none (scaffold only, matches every other
-phase's T1 row in `master-development-plan.md`).
+`/healthz` returns `200 {"status": "ok"}` with no auth required, verified
+directly against the container (`docker compose exec notification-service
+... /healthz`) — **not** through Traefik at `/notifications/healthz`, which
+404s. Checked live during this task: none of this system's non-root-prefix
+services (`search-service` at `/search`, presumably `booking-service` at
+`/bookings` too) actually expose `/healthz` through their own Traefik
+`PathPrefix` either, since no service strips its prefix before the request
+reaches its own bare `/healthz` route — a pre-existing repo-wide pattern,
+not something this task introduces or needs to fix. Report evidence: none
+(scaffold only, matches every other phase's T1 row in
+`master-development-plan.md`).
 
 ---
 

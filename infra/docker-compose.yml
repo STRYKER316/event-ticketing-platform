@@ -248,6 +248,31 @@ services:
       traefik.http.routers.payment-service.rule: PathPrefix(`/payments/webhook`)
       traefik.http.services.payment-service.loadbalancer.server.port: "8004"
 
+  notification-service:
+    build:
+      context: ../services
+      dockerfile: notification-service/Dockerfile
+    environment:
+      NOTIFICATION_SERVICE_PORT: 8005
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      NOTIFICATIONS_TOPIC: notifications
+      NOTIFICATION_RETRY_TOPIC: notification-retry
+      NOTIFICATION_DLQ_TOPIC: notification-dlq
+      # 0 disabled — a demo/test instrument only, see decisions-log §17
+      # amendment (2026-08-18). Override on the CLI for a live walkthrough,
+      # never left non-zero in this baseline compose file.
+      SIMULATED_FAILURE_ATTEMPTS: 0
+    depends_on:
+      kafka:
+        condition: service_healthy
+    labels:
+      traefik.enable: "true"
+      # Same reasoning as search-service/booking-service's own rule — no DB
+      # of any kind (this phase's resolved "no DB" decision), so nothing
+      # calls this service except its own /healthz through the gateway.
+      traefik.http.routers.notification-service.rule: PathPrefix(`/notifications`)
+      traefik.http.services.notification-service.loadbalancer.server.port: "8005"
+
   prometheus:
     image: prom/prometheus:v2.55.1
     profiles: ["benchmark"]
