@@ -362,7 +362,16 @@ issues worth locking in against:
   source of truth, §8), the `db/` folder still holds Repository classes with the same
   query/write-only discipline, just against a different client (an ES `Repository`
   instead of SQLAlchemy models) — the layering shape doesn't change, only what's
-  underneath it.
+  underneath it. For a service with **no datastore of any kind** (`notification-service`,
+  Phase 5, decisions-log §17 amendment — logs/console output only, §19), there is no
+  `db/` folder and no Repository layer at all, since there is nothing for one to query or
+  write — `NotificationManager`'s public method both performs and *is* the "delivery."
+  Any state a Repository would otherwise hold (this service's case: in-flight retry
+  attempt count, the original message, the last error) rides on the Kafka message itself
+  instead (a `RetryEnvelope`), not in a database row. This is a narrower case than
+  `search-service`'s — not "a different kind of store," but "no store" — and a future
+  service in the same position (no real external dependency, log-only output) should
+  follow this shape, not force an empty `db/` folder into existence for consistency.
 - **Traefik routing: every new service after `event-service` gets a specific
   `PathPrefix` matching its actual resource routes** (e.g. `search-service` →
   `PathPrefix('/search')`), not a second catch-all. `event-service` itself keeps its
@@ -401,7 +410,21 @@ issues worth locking in against:
   error (a connection blip) costs that message's data on the very first hiccup, which
   defeats the point of disabling auto-commit in the first place. Any future consumer with
   its own DB write (Payment Service's webhook handler, most likely) should follow this
-  same shape.
+  same shape. **The same bounded-retry-then-give-up shape applies to any other side
+  effect a consumer's offset commit is gated on, not just a DB write** — Notification
+  Service (Phase 5) has no DB, so its three consumers each republish to
+  `notification-retry`/`notification-dlq` as their equivalent "thing that must finish
+  before the offset advances" (decisions-log §17 amendment); those republishes need the
+  identical bounded-retry wrapping a DB write would get, found missing in a CHECKPOINT
+  code review and fixed with a `_publish_with_retry` helper mirroring `_run_with_retry`'s
+  shape. **Caution found in the same review, worth repeating for any future consumer
+  built the same way**: tightening a message-carried DTO field's validation (here,
+  `RetryEnvelope.last_error` made non-blank) can break an *internal* construction site
+  that builds the same DTO from an exception's `str()`, which is sometimes empty — the
+  fix escaped every retry guard just added and killed the consumer anyway, on the very
+  message meant to report the original failure. A field tightened for untrusted (received)
+  input needs its trusted (internally constructed) call sites re-checked too, not just the
+  parse path.
 - Update this file after each phase checkpoint if conventions, commands, or structure
   shift — treat it as living documentation, not a one-time snapshot.
 

@@ -1,8 +1,9 @@
 # Database Schema Design
 
 *Status: draft, Event Service (Phase 1), Search Service's Elasticsearch
-index (Phase 2), Booking Service's `booking_db` (Phase 3), and Payment
-Service's `payment_db` (Phase 4) evidence so far.*
+index (Phase 2), Booking Service's `booking_db` (Phase 3), Payment
+Service's `payment_db` (Phase 4), and Notification Service's deliberate
+absence of one (Phase 5) evidence so far.*
 
 ## `event_db` (Postgres) — ER diagram
 
@@ -442,3 +443,30 @@ message correctly re-attempted the refund (since it hadn't yet succeeded)
 rather than silently no-op'ing; the true already-refunded-redelivery
 no-op case is proven in the automated integration suite with a mocked
 Stripe success, not reproducible live without real credentials.
+
+## Notification Service — deliberately no schema (Phase 5)
+
+The one service in this system with no database of any kind — not a
+smaller schema, an absent one, and a documented decision rather than an
+oversight (decisions-log §17 amendment, 2026-08-18). `NotificationManager
+.deliver` writes nothing anywhere; the delivery *is* the structured log
+line it emits (§19 — no real email/SMS provider exists to persist a
+delivery record about). The one piece of state a datastore would normally
+hold — how many attempts a given notification has made, and why the last
+one failed — instead rides on the Kafka message itself: `RetryEnvelope
+{ attempt: int, original: NotificationMessage, last_error: str }`,
+round-tripped through three topics (`notifications` →
+`notification-retry` → `notification-dlq`) rather than read from and
+written back to a table row. This is the schema-design chapter's version
+of the same trade-off the dual hold strategies made explicit for Booking
+Service in Phase 3 (§6) — state can live somewhere other than a database
+row when the access pattern doesn't need one, as long as the choice is
+argued and recorded, not defaulted into.
+
+**Status:** Implemented, Tested, Verified (live) — confirmed by absence:
+no `db/` folder, no SQLAlchemy models, no Alembic migration exist anywhere
+under `services/notification-service/`, and the service boots and serves
+real traffic without one. See the Class Diagrams chapter's Notification
+Service section for the full `RetryEnvelope` shape and retry-ladder
+mechanism, and the Testing Strategy chapter's Phase 5 section for the
+live-verification and code-review detail.

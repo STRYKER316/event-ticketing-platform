@@ -252,9 +252,17 @@ classDiagram
         -_consumer: AIOKafkaConsumer
         -_session_factory: async_sessionmaker
         -_redis: Redis
+        -_notification_producer: NotificationProducer
         +run() void
         -_handle(raw) void
         -_transition_with_retry(message, new_status) bool
+        -_publish_confirmation_with_retry(booking_id) void
+    }
+
+    class NotificationProducer {
+        -_producer: AIOKafkaProducer
+        -_topic: str
+        +publish_booking_confirmed(booking_id) void
     }
 
     class TicketHoldStrategy {
@@ -303,6 +311,7 @@ classDiagram
     ProvisioningConsumer --> EventRepository
     PaymentOutcomeConsumer --> BookingRepository
     PaymentOutcomeConsumer --> TicketHoldStrategy
+    PaymentOutcomeConsumer --> NotificationProducer
 ```
 
 ## Why this shape
@@ -464,6 +473,38 @@ Service. **Status:** Implemented, Tested, Verified (live) — see the
 Payment Service section's own Phase 6 additions for the refund half of
 this flow.
 
+**Phase 5 additions**: `PaymentOutcomeConsumer` gained a `NotificationProducer`
+dependency and a new private method, `_publish_confirmation_with_retry`,
+completing integration point #3's producer side on the Booking Service end
+(`booking_confirmed`, alongside Payment Service's own `payment_confirmed`
+and `refund_failed` paths). This one is deliberately **not** shaped like
+`cancel_booking`'s publish-before-commit call above — a code-review finding
+caught that the original version put the notification publish *inside*
+`_transition_with_retry`'s retried DB-transaction closure, following that
+same convention, and that was wrong here specifically: `_run_with_retry`
+(used by both `ProvisioningConsumer` and this consumer) deliberately
+*swallows* a permanent failure after its bounded retries and returns
+`None` rather than raising, so a persistently-failing notification publish
+would have silently rolled back an already-successful booking confirmation
+(and hold-strategy `confirm_hold`) while the caller still committed the
+Kafka offset — losing the payment-outcome message while leaving the
+booking `PENDING` despite a completed charge. The publish-before-commit
+convention is safe at `cancel_booking` and Payment Service's webhook route
+specifically because a failure there propagates out of a request handler
+and triggers real redelivery (Stripe's webhook retry, or the request
+simply failing); `_run_with_retry`'s own give-up-and-move-on design means
+no equivalent redelivery exists inside a Kafka consumer's retried unit.
+Fixed by moving the publish to a separate step *after* `_transition_with_retry`
+returns, gated on `transitioned and message.action is SUCCEEDED` — the DB
+transition is committed and treated as the source of truth first, and the
+notification is a best-effort step afterward (its own small bounded retry)
+that cannot undo it. **Status:** Implemented, Tested, Verified (live) — a
+real `pay` success through the full HTTP/Kafka path produced a real
+`notification_delivered` log line with `action=booking_confirmed`,
+`attempt=1`, in Notification Service's own logs; see the Testing Strategy
+chapter's Phase 5 section for the two-round CHECKPOINT review that found
+this and two other issues.
+
 ## Payment Service — Manager + Repository, plus the system's one synchronous inter-service call
 
 ```mermaid
@@ -472,7 +513,7 @@ classDiagram
         -_session: AsyncSession
         -_payments: PaymentRepository
         +create_charge(payload) PaymentResponse
-        +handle_webhook_event(event, producer) void
+        +handle_webhook_event(event, producer, notification_producer) void
         +refund_payment(booking_id, notification_producer) void
         -_create_pending_payment(payload) Payment
         -_submit_to_stripe(payment, payload) void
@@ -497,6 +538,7 @@ classDiagram
     class NotificationProducer {
         -_producer: AIOKafkaProducer
         -_topic: str
+        +publish_payment_confirmed(booking_id) void
         +publish_refund_failed(booking_id, reason) void
     }
 
@@ -645,3 +687,153 @@ the resubmission-gate semantics documented above; the "already-refunded
 redelivery is a no-op" case is proven in the automated integration suite
 (`test_refund_payment_replay_against_real_db_does_not_double_refund`),
 which mocks a successful Stripe response to reach that state.
+
+**Phase 5 addition**: `handle_webhook_event` gained a third parameter,
+`notification_producer`, and now calls `NotificationProducer
+.publish_payment_confirmed(booking_id)` — same publish-before-commit
+position as the existing `producer.publish_outcome(payment)` call, only on
+the `SUCCEEDED` branch — completing integration point #3's producer side
+alongside Phase 6's `refund_failed` path (Notification Service itself,
+the consumer, now exists — see this file's Notification Service section
+below). **Status:** Implemented, Tested, Verified (live) — a real webhook
+delivery (self-signed against the locally-configured secret, the same
+technique used since Phase 4 given no real Stripe account) produced a real
+`notification_delivered` log line with `action=payment_confirmed` in
+Notification Service's own logs.
+
+## Notification Service — Manager only, no Repository, no database (Phase 5)
+
+```mermaid
+classDiagram
+    class NotificationManager {
+        +deliver(message, attempt) void
+    }
+
+    class SimulatedDeliveryFailure {
+        <<exception>>
+    }
+
+    class NotificationConsumer {
+        -_consumer: AIOKafkaConsumer
+        -_retry_publisher: RetryPublisher
+        +run() void
+        -_handle(raw) void
+    }
+
+    class RetryConsumer {
+        -_consumer: AIOKafkaConsumer
+        -_retry_publisher: RetryPublisher
+        +run() void
+        -_handle(raw) void
+    }
+
+    class DlqConsumer {
+        -_consumer: AIOKafkaConsumer
+        +run() void
+        -_handle(raw) void
+    }
+
+    class RetryPublisher {
+        -_producer: AIOKafkaProducer
+        -_retry_topic: str
+        -_dlq_topic: str
+        +publish_retry(envelope) void
+        +publish_dlq(envelope) void
+    }
+
+    NotificationConsumer --> NotificationManager
+    NotificationConsumer --> RetryPublisher
+    RetryConsumer --> NotificationManager
+    RetryConsumer --> RetryPublisher
+    NotificationManager ..> SimulatedDeliveryFailure
+```
+
+## Why this shape
+
+The one deliberate departure from the Manager + Repository template every
+other service follows (`event-service`'s P0.T5 pattern, reused since):
+there is no Repository layer and no `db/` folder at all, because
+Notification Service has no database of any kind (decisions-log §17
+amendment, 2026-08-18) — `NotificationManager.deliver` *is* the delivery
+(a structured log line, §19; no real email/SMS provider exists to write
+rows about), so there is nothing for a Repository to query or write. Three
+consumer classes exist rather than one because they read from three
+different topics with three different failure-handling shapes, but they
+share one `_consume_with_manual_commit` helper (same manual-offset-commit-
+after-handler-finishes discipline every Kafka consumer in this system
+uses) and one `_publish_with_retry` helper wrapping their republish calls.
+
+**The retry/DLQ ladder is this phase's design centerpiece, the same way
+the dual hold strategies were Phase 3's.** With no database, retry state
+(how many attempts so far, the original message, the last error) has
+nowhere to live except the Kafka message itself — `RetryEnvelope { attempt,
+original, last_error }`, round-tripped through three topics:
+`notifications` → `notification-retry` → `notification-dlq`.
+`NotificationConsumer` attempts delivery once (`attempt=1`); on failure it
+publishes a `RetryEnvelope(attempt=2, ...)` to `notification-retry`.
+`RetryConsumer` sleeps `compute_backoff_seconds(attempt)` — `min(base **
+attempt, cap)` — then retries; on another failure it either republishes
+with `attempt + 1` or, once `attempt > retry_max_attempts`, routes to
+`notification-dlq` instead. `DlqConsumer` is visibility-only (`§17`
+amendment: "not silently dropped," not "automatically retried forever") —
+nothing reprocesses out of the DLQ.
+
+**Idempotent by construction, not by an explicit guard**: with no database
+row to conditionally update, there is no "have I seen this before" check
+to write — a duplicate delivery of the same message is just a duplicate
+`notification_delivered` log line, safe by the same reasoning
+`bulk_upsert_available`'s `ON CONFLICT DO NOTHING` gives structural
+idempotency elsewhere in this system, just without a unique constraint
+doing the work. This is tested, not just asserted:
+`test_redelivery_of_same_message_is_a_safe_no_op` publishes the same
+key/value twice and asserts two independent `notification_delivered` log
+entries with no corrupted or duplicated retry-ladder entry, per this
+project's rule that Kafka-consumer idempotency gets explicitly tested.
+
+**Since this service has no real external delivery dependency capable of
+a genuine failure** (§19 — log output only, no SendGrid/etc.), the retry
+ladder is proven with a deliberate, honestly-documented demo/test
+instrument: `Settings.simulated_failure_attempts`, mirroring the same
+precedent already established for the Hold-Mechanism Benchmark's simulated
+immediate-release trigger (§17, Phase 8). Set to `0` in the baseline
+compose file — with an explicit comment that it must never be left
+non-zero there — and overridden only for a live demo container or a test.
+
+**A two-round CHECKPOINT `/pre-pr` code review found and fixed four real
+bugs**, none caught by the first pass of self-verification: (1)
+`compute_backoff_seconds` computed `base ** attempt` before `min()`
+capped it, so a sufficiently large `attempt` raised `OverflowError`
+instead of being clamped — fixed with a try/except, and `RetryEnvelope
+.attempt` was also given a DTO-level bound (`Field(ge=1, le=1000)`) per
+this system's validation-boundary convention; (2) the three consumers'
+republish calls to `notification-retry`/`notification-dlq` were
+unguarded — unlike every other Kafka consumer with a side effect in this
+system, which wraps its write in a bounded retry — so a single transient
+broker error would have permanently killed the consumer task; fixed with a
+`_publish_with_retry` helper mirroring the shape `_run_with_retry` already
+established on the Booking/Payment side; (3) the publish-before-commit
+ordering bug in `PaymentOutcomeConsumer` described in the Booking Service
+section above; (4) a second-order bug the *first* round of fixes
+introduced: `RetryEnvelope.last_error`'s new non-blank-string DTO
+constraint could itself raise `ValidationError` when constructed from an
+exception whose `str()` is empty (`str(KeyError())` is `''`), escaping
+every guard just added and killing the consumer anyway — fixed with a
+small `_error_text(exc)` helper (`str(exc) or repr(exc)`) at all three
+internal construction sites. All four fixed and live re-verified against
+the real running stack; see `docs/build-log.md`'s 2026-08-18 CHECKPOINT
+entries for the full list, including two findings deliberately left
+unfixed as pre-existing and out of this phase's scope (the Redis
+hold-strategy's non-transactional `confirm_hold`/`release_hold`, and the
+repo-wide "died consumer task only logs, nothing restarts it" pattern
+`notification-service` shares with `booking-service` and `payment-service`).
+
+**Status:** Implemented, Tested, Verified (live) — reflects the actual
+class structure under `services/notification-service/app/logic/` and
+`app/kafka/` as of Phase 5. Live-verified against the real running stack,
+both directions: a genuine booking→payment→confirmation flow producing
+real `notification_delivered` log lines for both `payment_confirmed` and
+`booking_confirmed`; and, using an isolated one-off container with
+`SIMULATED_FAILURE_ATTEMPTS=1` so the always-on baseline container stayed
+untouched, a real `notification_delivery_failed` → `notification_delivered
+_after_retry` recovery sequence with real backoff timing. 11/11 tests green
+(5 unit, 6 `testcontainers` integration against a real Kafka broker).

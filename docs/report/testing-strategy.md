@@ -630,3 +630,125 @@ patched). Final counts, after both self-verification's live-testing and
 the CHECKPOINT `/pre-pr` review above: `booking-service` 72/72 (unit +
 integration, up from 60 before this phase); `payment-service` 22/22 (up
 from 12 before this phase).
+
+## Phase 5 — Notification Service, no dedicated adversarial pass, but a two-round CHECKPOINT review earns its keep
+
+Same review posture as Phases 4 and 6: no dedicated adversarial
+`/code-review` pass (only P3 and P8 get one, `CLAUDE.md`), self-
+verification plus the routine `/pre-pr` gate at CHECKPOINT. Build-then-test
+throughout — nothing in this phase's scope is on the test-first list.
+
+**A phase-5-kickoff.md didn't exist yet when this phase started**, unlike
+every prior phase — Phase 5 runs after Phase 6 in the locked report-first
+build order (§27: P8 → P4 → P6 → P5 → P7), so its kickoff doc is generated
+fresh rather than already sitting on disk. Three real design gaps had to
+be resolved before implementation could start, each surfaced by a genuine
+question with no existing answer in the codebase: how does a service with
+no database hold retry state (answer: on the Kafka message itself, a
+`RetryEnvelope`); what shape does a hand-rolled retry/DLQ ladder take with
+no `@RetryableTopic` equivalent in `aiokafka` (answer: three topics,
+`notifications` → `notification-retry` → `notification-dlq`, an
+exponential-with-cap backoff); and how do you prove a retry ladder works
+when the service has no real external dependency capable of a genuine
+failure (answer: an explicit, honestly-documented demo instrument,
+`simulated_failure_attempts`, mirroring the precedent P8.T5 already set for
+the benchmark's simulated immediate-release trigger). All three recorded as
+a decisions-log §17 amendment before any code was written, not discovered
+mid-implementation and back-filled.
+
+**Redelivery-is-a-safe-no-op tested explicitly, per this project's Kafka
+rule, not just claimed by the decisions-log amendment's "idempotent by
+construction" reasoning.** `test_redelivery_of_same_message_is_a_safe_no_op`
+publishes the same key/value twice to `notifications` and asserts two
+independent `notification_delivered` log entries for that booking, via
+`structlog.testing.capture_logs()`, with no retry-ladder entry resulting —
+proving "handled twice, safely," not merely "nothing crashed." The first
+version of this test only asserted the *absence* of a retry-topic message,
+which the second-round code review pointed out couldn't actually
+distinguish that from the consumer having silently stopped after the first
+delivery; strengthened to assert on the log entries directly once caught.
+**No precedent existed in this repo for asserting on structlog output from
+a test** — `configure_logging()` (which wires `structlog` through stdlib
+logging) only ever runs from `main.py`'s `create_app()`, never in the test
+process, so pytest's stdlib-logging-based `caplog` fixture would see
+nothing from a `structlog` call made directly in a test. Used `structlog
+.testing.capture_logs()` instead — `structlog`'s own testing context
+manager, works regardless of global configuration — documented inline
+since it's a new pattern for the codebase.
+
+**A cross-test Kafka topic leakage bug found and fixed while writing the
+integration suite**: the first run of the new tests produced three
+failures with mismatched `booking_id`s — a fresh consumer group with
+`auto_offset_reset="earliest"` reading a session-scoped Kafka topic picked
+up an *earlier* test's leftover message instead of its own, since bare
+`consumer.getone()` returns whatever record is next regardless of which
+test produced it. Fixed with `_find_matching_record`/
+`_assert_no_matching_record` helpers filtering on `record.key ==
+booking_id.encode()` — every producer in this system already keys by
+booking ID, so this reuses an existing property rather than adding new
+per-test isolation machinery (a separate topic per test, or a fresh broker
+per test, would both have worked too but at real cost — the shared
+session-scoped `kafka_container` fixture, established since Phase 1, is
+worth keeping).
+
+**Live-verified against the real running stack, both the ladder's outcomes
+and the full end-to-end flow**: a genuine `pay` success through the real
+HTTP/Kafka path (self-signed webhook, the same technique used since Phase
+4) produced real `notification_delivered` log lines for both
+`payment_confirmed` and `booking_confirmed`. Retry-then-recovery: an
+isolated one-off `docker compose run` container with
+`SIMULATED_FAILURE_ATTEMPTS=1` (the always-on baseline container, which
+must always run at `0`, was left untouched) showed
+`notification_delivery_failed` (attempt 1) → `notification_retry_scheduled`
+(next_attempt 2) → `notification_delivered_after_retry` (attempt 2) after a
+real ~4s backoff. Exhaustion-to-DLQ: a second one-off container with
+`SIMULATED_FAILURE_ATTEMPTS=5` (comfortably past the default
+`retry_max_attempts=3`) showed the ladder climb 1→2→3→4,
+`notification_routed_to_dlq` at attempt 4, then `DlqConsumer`'s own
+`notification_landed_in_dlq`.
+
+**A two-round CHECKPOINT `/pre-pr` review found and fixed real bugs in
+both rounds — including one round finding a bug the previous round's own
+fix had introduced**, the same lesson Phase 3's own two-pass review already
+taught this project once. Round one (Opus, `CLAUDE.md`'s conventions read
+first) found three High-severity issues: `compute_backoff_seconds` could
+raise `OverflowError` on a sufficiently large `attempt` (`base ** attempt`
+was computed before `min()` capped it — reproduced directly with
+`attempt=10**9`); the three consumers' republish calls to
+`notification-retry`/`notification-dlq` were unguarded, unlike every other
+Kafka consumer with a side effect in this system, so a single transient
+broker error would have permanently killed a consumer task; and
+`PaymentOutcomeConsumer`'s notification publish, placed inside its retried
+DB-transaction closure following the publish-before-commit convention,
+could roll back an already-successful booking confirmation on a
+persistently-failing publish, since `_run_with_retry`'s give-up-and-move-on
+design (unlike a request handler's real redelivery) swallows that failure
+instead of raising it — see the Class Diagrams chapter's Booking Service
+section for the full mechanism. All three fixed, plus a missing redelivery
+test added and a genuinely duplicated bounded-retry loop (`_run_with_retry`
+and the first version of the new notification-publish retry) deduped into
+one shared helper.
+
+**Round two, re-reviewing specifically to verify round one's fixes rather
+than trusting the commit message, found a fourth bug the first round's own
+fix had introduced**: tightening `RetryEnvelope.last_error` to a non-blank
+string (closing the DTO-validation half of the overflow finding) broke the
+three call sites that construct a `RetryEnvelope` internally from
+`last_error=str(exc)` — an exception whose `str()` is empty
+(`str(KeyError())` is `''`) now raised `ValidationError` right there,
+escaping every guard the republish fix had just added and killing the
+consumer anyway. Fixed with a small `_error_text(exc)` helper (`str(exc)
+or repr(exc)`) at all three sites. The same re-review pass also added the
+missing `compute_backoff_seconds` overflow unit test, strengthened the
+redelivery test (above), and caught an `infra/docker-compose.yml` comment
+that had gone stale mid-session (claiming `/healthz` was reachable "through
+the gateway," which this same phase's own live-verification had already
+established was false).
+
+**Status:** Implemented, Tested, Verified (live). Final counts after both
+review rounds: `notification-service` 11/11 (5 unit, 6 `testcontainers`
+integration against a real Kafka broker) — this service's first-ever test
+suite, all net-new; `booking-service` 72/72 and `payment-service` 22/22,
+unchanged in count from Phase 6 (this phase's changes to both were covered
+by existing tests plus updated mocks/assertions, not new test cases).
+`pyflakes` clean on every file touched across both review rounds.

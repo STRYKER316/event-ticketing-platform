@@ -371,37 +371,69 @@ testing-chapter material (§18).
 
 ## Phase 5 exit checklist (all must pass before P7)
 
-- [ ] End-to-end live walkthrough: a real `pay` success producing both
+- [x] End-to-end live walkthrough: a real `pay` success producing both
       `booking_confirmed` and `payment_confirmed` log lines; a real refund
       failure still producing `refund_failed` (regression check against
       P6.T3); the retry-then-recover and retry-then-DLQ demonstrations from
       P5.T3's done-when criteria, both run against the actual running
-      stack with real log output captured.
-- [ ] Full test suite green (unit + testcontainers integration) across
+      stack with real log output captured. — Evidence: `build-log.md`'s
+      P5.T2 entry (full book→pay→confirm flow, real `notification_delivered`
+      log lines) and this file's Phase 5 CHECKPOINT entries (retry-then-
+      recovery and DLQ-exhaustion both demonstrated twice — once during
+      P5.T3, once again post-code-review-fixes against a fresh one-off
+      container; `refund_failed` regression re-confirmed post-fix too).
+- [x] Full test suite green (unit + testcontainers integration) across
       `notification-service`, `booking-service`, `payment-service` — final
-      counts recorded in `build-log.md`.
-- [ ] `docs/architecture.html` updated to current state: notification-
+      counts recorded in `build-log.md`. — Evidence: `notification-service`
+      11/11 (5 unit, 6 integration), `booking-service` 72/72,
+      `payment-service` 22/22, all re-run green after the CHECKPOINT fixes
+      (build-log.md's final CHECKPOINT entries).
+- [x] `docs/architecture.html` updated to current state: notification-
       service added to the topology, integration point #3 shown as
       genuinely bidirectional (not producer-only), the three-topic retry/
-      DLQ shape shown as a flow diagram.
-- [ ] `docs/build-log.md` entries appended for P5.T1–T4 and the CHECKPOINT
-      review.
-- [ ] Decisions-log delta logged — the §17 amendment made before
+      DLQ shape shown as a flow diagram. — Evidence: §01's SVG restyles the
+      `notifications` box/arrow to `ok` and adds a new Phase 5 divider row
+      (kafka:notifications → notification-service → kafka:notification-retry
+      → kafka:notification-dlq); badges, proven/not-built lists, and
+      reproduce-yourself commands updated to match; all 5 SVG blocks
+      verified well-formed XML.
+- [x] `docs/build-log.md` entries appended for P5.T1–T4 and the CHECKPOINT
+      review. — Evidence: six dated 2026-08-18 entries from kickoff
+      generation through the final CHECKPOINT documentation sweep.
+- [x] Decisions-log delta logged — the §17 amendment made before
       implementation began (already added, see top of this file), plus
       anything else that surfaces during implementation or the CHECKPOINT
-      review.
-- [ ] `CLAUDE.md` self-update check run explicitly.
-- [ ] `/pre-pr` (simplify → code-review → verify) run against the diff
-      since the commit Phase 5 started from; findings self-applied.
-- [ ] Cross-doc staleness sweep: root `README.md`, `infra/README.md`,
+      review. — Evidence: §17 amendment unchanged in substance; two new §26
+      limitation bullets added (Redis hold-strategy non-transactional
+      confirm/release; repo-wide died-consumer-task-only-logs pattern),
+      both surfaced by this phase's code review, neither a design change.
+- [x] `CLAUDE.md` self-update check run explicitly. — Evidence: the
+      per-service-layering bullet extended with the no-datastore-at-all
+      case; the Kafka-consumer-bounded-retry bullet extended with the
+      republish-stands-in-for-DB-write generalization and the DTO-
+      tightening-vs-internal-construction caution from the second review
+      round.
+- [x] `/pre-pr` (simplify → code-review → verify) run against the diff
+      since the commit Phase 5 started from; findings self-applied. —
+      Evidence: simplify (commit `70dbe11`), two code-review rounds (fixes
+      in `ec18336` and `a8411c6`), verify (a Sonnet subagent's live pass
+      plus this session's direct DLQ/refund-failed follow-up checks) — all
+      recorded in build-log.md's CHECKPOINT entries.
+- [x] Cross-doc staleness sweep: root `README.md`, `infra/README.md`,
       `notification-service/README.md` (currently a Phase-0 placeholder —
       needs a real description), `docs/report/README.md`'s chapter table,
       and any report chapter referencing the `notifications` topic as
-      producer-only.
-- [ ] This checklist itself — every box flipped to `[x]` with a one-line
+      producer-only. — Evidence: `notification-service/README.md` already
+      had a real description since P5.T1 (verified, no placeholder text
+      remained); root `README.md`, `infra/README.md`, `infra/prometheus
+      /prometheus.yml` (notification-service scrape job had never been
+      added — fixed), and four report chapters (`requirement-gathering.md`,
+      `class-diagrams.md`, `database-schema-design.md`, `testing-strategy.md`)
+      updated; `docs/report/README.md`'s table updated to match all four.
+- [x] This checklist itself — every box flipped to `[x]` with a one-line
       note pointing at actual evidence, not left unchecked despite
       genuinely-done work (the failure mode `CLAUDE.md`'s phase-end
-      checklist item 9 exists to catch).
+      checklist item 9 exists to catch). — Evidence: this edit.
 
 **Next:** Phase 7 — Frontend, per the locked report-first build order
 (§27: P8 → P4 → P6 → P5 → **P7** → P10 → P9/P11).

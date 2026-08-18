@@ -3224,3 +3224,49 @@ out-of-phase-scope gap, unchanged.
 Suites re-verified green: `notification-service` 11/11 (the overflow test
 added the eleventh), `booking-service` 72/72. `pyflakes` clean on every
 file touched in this round.
+
+Completed the Step 3 `/pre-pr` verify pass and the CHECKPOINT documentation
+sweep: a Sonnet subagent live-verified the fixed code against the real
+running stack — a full booking→payment→confirmation flow producing real
+`notification_delivered` log lines for both `payment_confirmed` and
+`booking_confirmed` (`booking_id=bd1d45f6-8e22-48c3-b739-d383cdac4a93`),
+and a retry-then-recovery sequence via an isolated one-off
+`SIMULATED_FAILURE_ATTEMPTS=1` container. Followed up directly with the two
+outcomes that agent's run didn't reach: a `refund_failed` regression check
+(plain publish to `notifications`, confirmed `notification_delivered`
+logged) and a DLQ-exhaustion demonstration with a fresh one-off
+`SIMULATED_FAILURE_ATTEMPTS=99` container against the *fixed* code (the
+original P5.T3 entry's DLQ demonstration predates this session's code-review
+fixes) — observed `notification_delivery_failed` (attempt 1) →
+`notification_retry_scheduled` (next_attempt 2, 3, 4) →
+`notification_routed_to_dlq` / `notification_landed_in_dlq` (attempt 4,
+`last_error` populated) with real ~4s/8s/16s backoff between each. Baseline
+container restored (`SIMULATED_FAILURE_ATTEMPTS=0`, all three consumer
+groups rejoined cleanly) after both one-off containers were removed.
+
+Then: `docs/architecture.html` updated to current state (Phase 5 badge,
+five-service topology text, notification-service in the SVG topology
+diagram with a restyled bidirectional `notifications` box and a new Phase 5
+row showing the three-topic retry/DLQ flow, updated proven/not-built lists,
+new reproduce-yourself commands, 14-container counts throughout). Cross-doc
+staleness sweep: root `README.md` (Phase 5 status paragraph, phase-count
+line), `infra/README.md` (notification-service row, payment-service row's
+stale "producer only" note, Traefik row, Prometheus row), `infra/prometheus
+/prometheus.yml` (notification-service was never added to the benchmark
+scrape config despite exposing `/metrics` since P5.T1 — added), `docs
+/report/README.md`'s chapter-status table, and four report chapters
+(`requirement-gathering.md` — new Notification Service roles table, replacing
+the stale "still to come" note; `class-diagrams.md` — new Notification
+Service section, stale `handle_webhook_event`/`NotificationProducer`
+signatures fixed, Phase 5 addition paragraphs for Booking/Payment;
+`database-schema-design.md` — new "deliberately no schema" section;
+`testing-strategy.md` — new Phase 5 section covering the kickoff-doc gaps,
+the redelivery test, the cross-test topic-leakage fix, and the two-round
+CHECKPOINT review). Decisions-log: added two new §26 limitation bullets
+(Redis hold-strategy's non-transactional confirm/release, and the
+repo-wide died-consumer-task-only-logs pattern) surfaced by this phase's
+code review; §17 amendment itself unchanged. `CLAUDE.md` self-update:
+extended the "new service = copy the template" bullet with the no-datastore-
+at-all case, and the Kafka-consumer-bounded-retry bullet with the
+republish-stands-in-for-DB-write generalization plus the DTO-tightening-vs-
+internal-construction-sites caution the second review round surfaced.

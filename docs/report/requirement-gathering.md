@@ -196,14 +196,37 @@ placeholder credential, same tracked gap as `/pay`) — see the Class
 Diagrams and Database Schema Design chapters' Phase 6 sections for the
 full mechanism and live-verification detail.
 
+## Roles/permissions table — Notification Service (Phase 5)
+
+| Endpoint | Anonymous | Any authenticated caller |
+|---|---|---|
+| `GET /healthz` (Notification Service) | Allow (200, no DB to check) | Allow |
+
+Notification Service has no organizer- or ownership-scoped route of its
+own — `/healthz` is its only endpoint, public, and no other request ever
+reaches this service; every notification it delivers arrives over Kafka
+(integration point #3), not HTTP. Authorization for the underlying action
+was already enforced by whichever service produced the message: Booking
+Service's `PaymentOutcomeConsumer` (booking-confirmed) and Payment
+Service's webhook handler and refund path (payment-confirmed,
+refund-failed) each already checked ownership or used the Kafka message
+itself as authorization before publishing, the same "message is the
+authorization" reasoning §8/§22 already establish for Payment Service's
+own consumers. This is the "explicit, never implicit" auth convention
+applied to its edge case: a service can genuinely have nothing to guard,
+and that absence is stated here rather than left unaddressed.
+
+**Status:** Implemented, Tested, Verified (live). The retry/backoff/DLQ
+ladder itself is not an authorization concern but is this phase's
+functional centerpiece — see the Class Diagrams and Testing Strategy
+chapters' Phase 5 sections for the mechanism, the design reasoning (no
+database, so retry state rides on the Kafka message itself via a
+`RetryEnvelope`), and the live-verification detail (both a forced failure
+recovering on retry, and exhausted retries landing in the DLQ).
+
 ## What this chapter still needs
 
-Functional requirements for notification delivery are not yet written —
-they depend on Phase 5, which this draft does not cover (producer-only
-plumbing for the eventual notification consumer was added in Phase 6, see
-the Class Diagrams chapter, but the consumer itself and its retry/DLQ
-requirements are Phase 5's job). Non-functional requirements (the
-Hold-Mechanism Benchmark's throughput/latency targets) depend on Phase 8
-(already measured — see the Feature Development Process chapter — but not
-yet cross-referenced from this chapter's non-functional-requirements
-framing).
+Non-functional requirements (the Hold-Mechanism Benchmark's
+throughput/latency targets) depend on Phase 8 (already measured — see the
+Feature Development Process chapter — but not yet cross-referenced from
+this chapter's non-functional-requirements framing).

@@ -62,7 +62,7 @@ for now (§19), no SendGrid/etc. needed.
 
 ## Status
 
-Phases 0-4, 6, and 8 complete: walking skeleton, Event Service, Search Service +
+Phases 0-6 and 8 complete: walking skeleton, Event Service, Search Service +
 Kafka #1, Booking Service (dual hold strategy: cron sweep + Redis TTL,
 proven under real concurrent load), and Payment Service (Stripe test-mode
 charge + webhook, Kafka #4 payment-outcome confirm/release, the system's one
@@ -104,8 +104,25 @@ crash the cutoff comparison on a naive datetime, and others); see
 `docs/build-log.md` for the full list. Same Stripe-account gap as Phase 4:
 everything up to Stripe's own API boundary is live-verified (a real
 refund attempt reaching `https://api.stripe.com/v1/refunds`, failing only
-on the placeholder credential), a real refund succeeding isn't yet. Phase
-5 (Notification Service) is next per the locked report-first build order;
-see `/docs/phases/` for task checklists and `/docs/architecture.html` for
+on the placeholder credential), a real refund succeeding isn't yet.
+
+**Phase 5** added the fifth and final backend service, Notification
+Service — no database of its own — completing Kafka integration point #3:
+it consumes `notifications` (booking-confirmed/payment-confirmed/
+refund-failed) and, on a delivery failure, walks a hand-rolled
+retry/backoff/DLQ ladder through two more topics (`notification-retry`,
+`notification-dlq`), carrying its own retry state on the Kafka message
+itself via a `RetryEnvelope` rather than in a database (decisions-log §17
+amendment). Booking Service and Payment Service each also gained a new
+`notifications` producer path this phase (`booking_confirmed`,
+`payment_confirmed`), alongside the existing Phase 6 `refund_failed` path.
+A two-round CHECKPOINT `/pre-pr` review caught and fixed a backoff-
+computation overflow, an unguarded Kafka republish that could permanently
+kill a consumer task, a publish-before-commit ordering bug that could roll
+back an already-confirmed booking while losing the payment-outcome
+message, and a DTO-validation gap that could crash a consumer on its own
+internally-constructed error message; see `docs/build-log.md` for the full
+list. Phase 7 (Frontend) is next per the locked build order; see
+`/docs/phases/` for task checklists and `/docs/architecture.html` for
 current system state.
 
