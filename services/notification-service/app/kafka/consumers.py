@@ -1,10 +1,13 @@
+import asyncio
 from collections.abc import Awaitable, Callable
 
 import structlog
 from aiokafka import AIOKafkaConsumer
 
 from app.core import get_settings
-from app.kafka.schemas import NotificationMessage
+from app.kafka.producers import RetryPublisher
+from app.kafka.schemas import NotificationMessage, RetryEnvelope
+from app.logic.helpers.backoff import compute_backoff_seconds
 from app.logic.notification_manager import NotificationManager
 
 logger = structlog.get_logger()
@@ -22,15 +25,20 @@ async def _consume_with_manual_commit(consumer: AIOKafkaConsumer, handle: Callab
         await consumer.commit()
 
 
-def build_notification_consumer() -> AIOKafkaConsumer:
+def _build_consumer(topic: str, group_id: str) -> AIOKafkaConsumer:
     settings = get_settings()
     return AIOKafkaConsumer(
-        settings.notifications_topic,
+        topic,
         bootstrap_servers=settings.kafka_bootstrap_servers,
-        group_id=settings.notification_consumer_group_id,
+        group_id=group_id,
         auto_offset_reset="earliest",
         enable_auto_commit=False,
     )
+
+
+def build_notification_consumer() -> AIOKafkaConsumer:
+    settings = get_settings()
+    return _build_consumer(settings.notifications_topic, settings.notification_consumer_group_id)
 
 
 class NotificationConsumer:
@@ -39,8 +47,9 @@ class NotificationConsumer:
     second entry point, same reasoning ProvisioningConsumer's own
     docstring gives in booking-service."""
 
-    def __init__(self, consumer: AIOKafkaConsumer):
+    def __init__(self, consumer: AIOKafkaConsumer, retry_publisher: RetryPublisher):
         self._consumer = consumer
+        self._retry_publisher = retry_publisher
 
     async def run(self) -> None:
         await _consume_with_manual_commit(self._consumer, self._handle)
@@ -59,9 +68,6 @@ class NotificationConsumer:
         try:
             await NotificationManager().deliver(message, attempt=1)
         except Exception as exc:
-            # The retry-ladder republish is P5.T3, not this task — this
-            # task only logs the failure and returns, matching §17's
-            # "confirmation 'sent' (logged) on real events" scope.
             logger.warning(
                 "notification_delivery_failed",
                 action=message.action.value,
@@ -69,3 +75,90 @@ class NotificationConsumer:
                 attempt=1,
                 error=str(exc),
             )
+            # attempt=2 — the next attempt about to be made (§17 amendment
+            # #2). Published before this record's offset commits (see
+            # _consume_with_manual_commit above) — a crash between the
+            # failed delivery and this publish must redeliver from
+            # `notifications`, not silently drop the message.
+            envelope = RetryEnvelope(attempt=2, original=message, last_error=str(exc))
+            await self._retry_publisher.publish_retry(envelope)
+
+
+def build_retry_consumer() -> AIOKafkaConsumer:
+    settings = get_settings()
+    return _build_consumer(settings.notification_retry_topic, settings.notification_retry_consumer_group_id)
+
+
+class RetryConsumer:
+    def __init__(self, consumer: AIOKafkaConsumer, retry_publisher: RetryPublisher):
+        self._consumer = consumer
+        self._retry_publisher = retry_publisher
+
+    async def run(self) -> None:
+        await _consume_with_manual_commit(self._consumer, self._handle)
+
+    async def _handle(self, raw: bytes) -> None:
+        try:
+            envelope = RetryEnvelope.model_validate_json(raw)
+        except Exception:
+            logger.error("retry_consumer_message_invalid", raw=raw[:500], exc_info=True)
+            return
+
+        # A real, in-process asyncio.sleep — this consumer has no other
+        # work competing for its attention while backing off, and aiokafka
+        # has no native delayed-delivery primitive to reach for instead
+        # (this phase's whole "hand-rolled, not @RetryableTopic" framing).
+        await asyncio.sleep(compute_backoff_seconds(envelope.attempt))
+
+        try:
+            await NotificationManager().deliver(envelope.original, attempt=envelope.attempt)
+        except Exception as exc:
+            settings = get_settings()
+            if envelope.attempt > settings.retry_max_attempts:
+                await self._retry_publisher.publish_dlq(
+                    RetryEnvelope(attempt=envelope.attempt, original=envelope.original, last_error=str(exc))
+                )
+            else:
+                await self._retry_publisher.publish_retry(
+                    RetryEnvelope(attempt=envelope.attempt + 1, original=envelope.original, last_error=str(exc))
+                )
+            return
+
+        logger.info(
+            "notification_delivered_after_retry",
+            action=envelope.original.action.value,
+            booking_id=str(envelope.original.booking_id),
+            attempt=envelope.attempt,
+        )
+
+
+def build_dlq_consumer() -> AIOKafkaConsumer:
+    settings = get_settings()
+    return _build_consumer(settings.notification_dlq_topic, settings.notification_dlq_consumer_group_id)
+
+
+class DlqConsumer:
+    """Visibility only (§17 amendment #2) — nothing reprocesses out of the
+    DLQ automatically. Matches what §17 actually promises: 'not silently
+    dropped,' not 'automatically retried forever.'"""
+
+    def __init__(self, consumer: AIOKafkaConsumer):
+        self._consumer = consumer
+
+    async def run(self) -> None:
+        await _consume_with_manual_commit(self._consumer, self._handle)
+
+    async def _handle(self, raw: bytes) -> None:
+        try:
+            envelope = RetryEnvelope.model_validate_json(raw)
+        except Exception:
+            logger.error("dlq_consumer_message_invalid", raw=raw[:500], exc_info=True)
+            return
+
+        logger.error(
+            "notification_landed_in_dlq",
+            action=envelope.original.action.value,
+            booking_id=str(envelope.original.booking_id),
+            attempt=envelope.attempt,
+            last_error=envelope.last_error,
+        )

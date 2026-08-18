@@ -9,7 +9,15 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api import health
 from app.core import close_kafka_producer, configure_logging
-from app.kafka.consumers import NotificationConsumer, build_notification_consumer
+from app.kafka.consumers import (
+    DlqConsumer,
+    NotificationConsumer,
+    RetryConsumer,
+    build_dlq_consumer,
+    build_notification_consumer,
+    build_retry_consumer,
+)
+from app.kafka.producers import get_retry_publisher
 
 logger = structlog.get_logger()
 
@@ -31,22 +39,42 @@ async def lifespan(app: FastAPI):
     # No shared_auth.aclose() here (unlike every other service's lifespan)
     # — this service exposes no protected routes, so no JWKS client is ever
     # created (see this phase's kickoff doc process note).
-    kafka_consumer: AIOKafkaConsumer | None = None
-    consumer_task: asyncio.Task | None = None
+    notification_kafka_consumer: AIOKafkaConsumer | None = None
+    notification_task: asyncio.Task | None = None
+    retry_kafka_consumer: AIOKafkaConsumer | None = None
+    retry_task: asyncio.Task | None = None
+    dlq_kafka_consumer: AIOKafkaConsumer | None = None
+    dlq_task: asyncio.Task | None = None
     try:
-        kafka_consumer = build_notification_consumer()
-        await kafka_consumer.start()
-        consumer_task = asyncio.create_task(NotificationConsumer(kafka_consumer).run())
-        consumer_task.add_done_callback(lambda task: _log_if_died("notification_consumer", task))
+        retry_publisher = await get_retry_publisher()
+
+        notification_kafka_consumer = build_notification_consumer()
+        await notification_kafka_consumer.start()
+        notification_task = asyncio.create_task(
+            NotificationConsumer(notification_kafka_consumer, retry_publisher).run()
+        )
+        notification_task.add_done_callback(lambda task: _log_if_died("notification_consumer", task))
+
+        retry_kafka_consumer = build_retry_consumer()
+        await retry_kafka_consumer.start()
+        retry_task = asyncio.create_task(RetryConsumer(retry_kafka_consumer, retry_publisher).run())
+        retry_task.add_done_callback(lambda task: _log_if_died("retry_consumer", task))
+
+        dlq_kafka_consumer = build_dlq_consumer()
+        await dlq_kafka_consumer.start()
+        dlq_task = asyncio.create_task(DlqConsumer(dlq_kafka_consumer).run())
+        dlq_task.add_done_callback(lambda task: _log_if_died("dlq_consumer", task))
 
         yield
     finally:
-        if consumer_task is not None:
-            consumer_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await consumer_task
-        if kafka_consumer is not None:
-            await kafka_consumer.stop()
+        for task in (notification_task, retry_task, dlq_task):
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+        for consumer in (notification_kafka_consumer, retry_kafka_consumer, dlq_kafka_consumer):
+            if consumer is not None:
+                await consumer.stop()
         await close_kafka_producer()
 
 

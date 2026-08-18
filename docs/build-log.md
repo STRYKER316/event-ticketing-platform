@@ -2978,3 +2978,87 @@ integration 9, same). `notification-service` has no suite yet — P5.T4.
 Decisions-log delta: none this task (the §17 amendment predates it, made
 when the kickoff doc was generated).
 `CLAUDE.md` update: none needed.
+
+## 2026-08-18 — P5.T3+T4: retry/backoff/DLQ ladder, live-verified both outcomes; P5.T4: full test suite
+
+**P5.T3.** `logic/helpers/backoff.py`: `compute_backoff_seconds(attempt)`,
+`min(base ** attempt, cap)` per §17 amendment #2, a pure function.
+`kafka/producers.py`: `RetryPublisher.publish_retry`/`publish_dlq`, same
+thin `send_and_wait` shape as every other producer in this system, keyed
+by booking ID. `NotificationConsumer._handle` (P5.T2) extended: on a
+`deliver()` failure, builds `RetryEnvelope(attempt=2, original=message,
+last_error=str(exc))` and publishes to `notification-retry` **before**
+committing the offset — same reasoning as every other publish-before-
+commit site, just with a Kafka republish standing in for a DB write as
+"the thing that must finish before the offset advances" (this service has
+no DB). `RetryConsumer`: parses the envelope, sleeps
+`compute_backoff_seconds(envelope.attempt)` (a real `asyncio.sleep` —
+aiokafka has no delayed-delivery primitive to reach for instead), retries
+delivery; on success logs `notification_delivered_after_retry`; on failure,
+republishes with `attempt+1` if `attempt <= retry_max_attempts`, otherwise
+routes to `notification-dlq`. `DlqConsumer`: visibility only, logs
+`notification_landed_in_dlq`, no automatic reprocessing (§17 amendment #2
+— matches what §17 actually promises, "not silently dropped," not
+"automatically retried forever"). Wired both into `main.py`'s `lifespan`
+alongside `NotificationConsumer`, same three-consumer-task pattern
+booking-service already uses for two.
+
+**Live-verified both outcomes**, not just via the test suite: rebuilt and
+restarted the service, confirmed all three consumer groups join cleanly.
+Ran a real `docker compose run` instance with `SIMULATED_FAILURE_ATTEMPTS=1`
+(§17 amendment #3's demo instrument), published a real `booking_confirmed`
+message directly to `notifications` — observed `notification_delivery_failed`
+(attempt 1) → `notification_retry_scheduled` (next_attempt 2) →
+`notification_delivered_after_retry` (attempt 2) after the real ~4s
+backoff, proving retry-then-recovery end-to-end. Then a second instance
+with `SIMULATED_FAILURE_ATTEMPTS=5` (comfortably past the default
+`retry_max_attempts=3`) and a `payment_confirmed` message — observed the
+ladder climb through attempts 1→2→3→4, `notification_routed_to_dlq` at
+attempt 4, then `DlqConsumer`'s own `notification_landed_in_dlq`, proving
+exhaustion-to-DLQ end-to-end. Both demo containers removed afterward; the
+baseline `notification-service` container (env `SIMULATED_FAILURE_ATTEMPTS:
+0`, per the compose comment that this must never be left non-zero in the
+baseline) restarted clean.
+
+**P5.T4.** Unit: `test_backoff.py` (growth across attempts, the cap);
+`test_notification_manager.py` (`deliver()` succeeds when disabled, raises
+`SimulatedDeliveryFailure` exactly while `attempt <= simulated_failure_attempts`,
+succeeds again past that window) — both mutate the cached `Settings`
+singleton directly (it's a plain mutable Pydantic model under `@lru_cache`,
+not frozen) rather than reaching for `monkeypatch.setenv` + cache-clearing,
+restoring the original value in a `finally`/fixture-teardown either way.
+Integration (`testcontainers`, `confluentinc/cp-kafka:7.6.0` +
+`.with_kraft()`, matching the corrected Conventions-note combination every
+other service's suite already uses): a `fast_retry_settings` fixture
+overrides backoff/cap/`retry_max_attempts` to keep the real-`asyncio.sleep`
+retry ladder fast in tests, without touching the formula itself (already
+covered by the unit test). Five tests: successful delivery produces no
+retry message; a forced single-attempt failure produces a `RetryEnvelope`
+on `notification-retry` with `attempt=2`; `RetryConsumer` recovering on its
+own retry produces no DLQ message; retries exhausted at
+`retry_max_attempts=1` lands on `notification-dlq` with the correct final
+`attempt` and a non-empty `last_error`; `DlqConsumer` consuming a
+hand-crafted envelope logs `notification_landed_in_dlq` with the right
+fields, asserted via `structlog.testing.capture_logs()` rather than
+pytest's stdlib-logging-based `caplog` fixture — `configure_logging()`
+only ever runs from `main.py`'s `create_app()`, never in the test process,
+so structlog isn't routed through stdlib logging there and `caplog` would
+see nothing (no existing precedent for this in the repo; `capture_logs()`
+is structlog's own testing helper and works regardless of global
+configuration). **Found and fixed during this task**: the first version of
+these integration tests read raw `getone()` results directly, which
+occasionally picked up a different test's leftover message from the same
+session-scoped Kafka topic (every topic-reading fixture uses a fresh
+consumer group with `auto_offset_reset="earliest"`, so a new consumer
+always sees the whole topic history, not just what its own test produced)
+— fixed by filtering on the record key (every producer in this system
+already keys by booking ID) via a `_find_matching_record`/
+`_assert_no_matching_record` helper pair, rather than narrowing scope with
+per-test topic names.
+
+Full suite: `notification-service` 9/9 (4 unit + 5 integration) — this
+service's first test suite, all net-new. `pyflakes` clean on every touched
+file across P5.T1–T4.
+
+Decisions-log delta: none this task.
+`CLAUDE.md` update: none needed.
