@@ -2826,3 +2826,155 @@ compliance with conventions already stated (DTO-boundary validation,
 fail-closed-not-open on an unverifiable security-relevant check, the
 Manager-self-commits convention's rationale for `_run_with_retry`'s
 defense-in-depth commit).
+
+## 2026-08-18 — Phase 5 kickoff generated; three gaps resolved before P5.T1; P5.T1: scaffold
+
+`docs/phases/phase-5-kickoff.md` didn't exist yet, so it was generated from
+`master-development-plan.md`'s Phase 5 section and the relevant
+decisions-log sections (§4, §7 point 3, §17, §19), following the same
+structure as Phases 0/1/2/3/4/6/8. Confirmed against the locked build order
+(§27: P8 → P4 → P6 → P5 → P7 → P10 → P9/P11) that Phase 5 really is next
+now that Phase 6's exit checklist is fully checked.
+
+**Three design gaps surfaced while drafting the task list, before any code
+was written**, all flagged and resolved rather than guessed at silently
+(same practice as the §7.2/§9/§16/§22 amendments):
+
+1. **§4/§19 left "no DB (or minimal delivery-log table)" as an either/or.**
+   Resolved: **no DB** — nothing in this phase's scope ever reads delivery
+   history back, and Kafka itself already carries what the retry ladder
+   needs (#2).
+2. **With no DB, retry state has nowhere to live except the message
+   itself.** Resolved: a `RetryEnvelope { attempt, original, last_error }`
+   and three topics (`notifications` → `notification-retry` →
+   `notification-dlq`), attempt-count-driven increasing backoff
+   (`min(base ** attempt, cap)`), matching §17's "increasing backoff" and
+   "after N attempts route to DLQ" wording exactly.
+3. **Nothing in this system can make a real delivery attempt fail** — log/
+   console output (§19) has no external dependency capable of a genuine
+   transient failure, unlike Stripe's real (if placeholder-keyed) API for
+   Payment Service. Resolved the same way P8.T5 resolved an analogous "the
+   real trigger doesn't exist yet" gap: a `simulated_failure_attempts`
+   settings toggle, off by default, documented plainly as a demo/test
+   instrument rather than a naturally occurring failure.
+
+All three recorded as a decisions-log §17 amendment before
+`phase-5-kickoff.md` was written.
+
+**P5.T1 implementation:** scaffolded `notification-service` thinner than
+the usual template copy per the kickoff doc's own process note — no `db/`
+folder, no SQLAlchemy engine/session factory, no `shared_auth` import
+anywhere (this service exposes no protected routes, `/healthz` is public
+and is its only endpoint for now). `core.py` mirrors payment-service's
+Kafka-producer-singleton section exactly, with everything DB-related
+dropped. Added `notification-service` to `services/pyproject.toml`'s `uv`
+workspace members and ran `uv lock` (resolved cleanly, no conflicts). Added
+its `infra/docker-compose.yml` block (no Postgres `depends_on`, only
+`kafka`) with all three topic names, per-topic consumer-group-ID settings,
+and a baseline `SIMULATED_FAILURE_ATTEMPTS: 0` (the amendment-#3 demo
+instrument, explicitly commented as never left non-zero in the baseline
+compose file). Replaced the placeholder `notification-service/README.md`
+Phase-0 note with a real description pointing at this phase's kickoff doc
+and the decisions-log amendment.
+
+**Live-verified**, not just built: `docker compose up -d --build
+notification-service` (plus `kafka`, `traefik`) boots healthy.
+**Correction made during verification, not after**: the kickoff doc's own
+P5.T1 done-when criterion originally claimed `/healthz` would be reachable
+through Traefik at `/notifications/healthz` — tested live, it 404s. Checked
+whether this is a notification-service-specific bug before "fixing" it:
+curled `search-service`'s own `/search/healthz` the same way, also 404 —
+confirmed this is a pre-existing, repo-wide pattern (no service strips its
+own `PathPrefix` before the request reaches its bare `/healthz` route), not
+something this task introduced or is responsible for fixing. Verified
+`/healthz` the way this project has actually verified it for every
+non-root-prefix service in practice: directly against the container
+(`docker compose exec notification-service ... /healthz` → `200
+{"status": "ok"}`, via Python's `urllib` since the slim image has no
+`curl`). `/metrics` also verified live (200, real Prometheus output).
+Corrected the kickoff doc's done-when wording to match reality rather than
+leave an inaccurate claim sitting in a committed doc. `pyflakes` clean on
+every new file.
+
+Decisions-log delta: yes — the §17 amendment (above), made before P5.T1's
+implementation rather than during it.
+`CLAUDE.md` update: none needed — no new convention, this extends existing
+ones (per-service layering, template-copy-then-thin precedent already set
+by search-service's ES-only `db/` folder).
+
+## 2026-08-18 — P5.T2: Kafka #3 consumer — booking-confirmed / payment-confirmed / refund-failed, live-verified end-to-end
+
+**Two missing producer call sites** (§22 amendment #3 deliberately deferred
+both to this phase): added `NotificationAction.BOOKING_CONFIRMED` +
+`NotificationMessage` (booking-service's own independently-defined copy,
+`reason` always `None`) and a `NotificationProducer` publishing to the
+shared `notifications` topic; wired into `PaymentOutcomeConsumer
+._transition_with_retry`'s `SUCCEEDED` branch, right alongside the
+existing `confirm_hold` call and before commit (same publish-before-commit
+reasoning already documented at every other publish site in this system —
+a publish failure here rolls back the whole `_transition()` call,
+including the DB write, and `_run_with_retry`'s bounded retry redoes the
+same logical operation). Added `NotificationAction.PAYMENT_CONFIRMED` to
+payment-service's existing enum, made `NotificationMessage.reason`
+optional (only `REFUND_FAILED` has natural reason text), added
+`NotificationProducer.publish_payment_confirmed`, and wired it into
+`handle_webhook_event`'s `SUCCEEDED` branch, same position relative to
+`publish_outcome`/commit.
+
+**Notification Service itself**: `kafka/schemas.py` gets this service's
+own independently-defined `NotificationAction` (all three members — the
+one place that has to recognize every producer's action) and the
+`RetryEnvelope` schema P5.T3 will use (defined now since the file already
+needed touching). `logic/notification_manager.py`:
+`NotificationManager.deliver(message, attempt)` — the delivery itself is
+just a structured log line (§19, no real email provider), gated by the
+`simulated_failure_attempts` demo/test instrument (§17 amendment #3,
+raises `SimulatedDeliveryFailure` while `attempt <= simulated_failure_attempts`,
+0 by default so this is dead code in normal operation).
+`kafka/consumers.py`: `NotificationConsumer`, manual-commit like every
+other consumer in this system (reasoning: a crash between receiving a
+message and either logging its delivery or republishing to
+`notification-retry` — P5.T3 — must not silently lose it to an
+auto-committed offset), parses and delivers at `attempt=1`; on failure
+this task only logs `notification_delivery_failed` and returns — the
+retry-ladder republish is P5.T3's job, not built early. Wired into
+`main.py`'s `lifespan` with the same `_log_if_died` background-task-crash
+visibility pattern every other multi-consumer service already uses.
+
+Updated the two existing `PaymentOutcomeConsumer`/`handle_webhook_event`
+test suites (unit + integration, both services) for the new constructor/
+signature parameter, and added assertions that the new publish happens
+only on the success branch, not the failure one — reused each service's
+existing `AsyncMock` producer test-double pattern rather than inventing a
+new one, per the kickoff doc's own instruction.
+
+**Live-verified end-to-end**, not just via the test suite: brought up the
+full stack fresh (`docker compose up -d --build`), ran `make migrate`
+(clean, no new migrations — this phase adds no schema anywhere), created a
+real venue/event/seat-map as `bob` (organizer), published it (real Kafka
+provisioning, confirmed two `AVAILABLE` tickets in `booking_db`), booked
+one as `alice`, hit `/pay` (fails at Stripe's placeholder-key boundary as
+expected, same gap every prior phase carries), manually stamped the
+resulting `Payment` row's `stripe_charge_id` and POSTed a self-signed
+`payment_intent.succeeded` event to the real `/payments/webhook` route
+(same locally-constructed-HMAC technique the Phase 4 post-push session
+established — Stripe's signature scheme needs no real Stripe server to
+verify). Confirmed via direct query: `Booking` → `CONFIRMED`, `Ticket` →
+`BOOKED`. Notification Service's own logs show both new triggers firing
+for real, for the first time — `payment_confirmed` then `booking_confirmed`,
+both `attempt: 1`, correct `booking_id` — plus a `refund_failed` message
+(left over on the topic from Phase 6's own P6.T3 verification, consumed
+now for the first time since `notification-service`'s consumer group is
+new and `auto_offset_reset=earliest`), proving this phase finally gives
+that topic a real consumer rather than P6.T3's throwaway console-consumer
+stopgap.
+
+Full suite after this task: `booking-service` 72/72 (unit 45 + integration
+27, unchanged count — existing tests strengthened with new assertions,
+no new test functions this task); `payment-service` 22/22 (unit 13 +
+integration 9, same). `notification-service` has no suite yet — P5.T4.
+`pyflakes` clean across all three services' touched files.
+
+Decisions-log delta: none this task (the §17 amendment predates it, made
+when the kickoff doc was generated).
+`CLAUDE.md` update: none needed.

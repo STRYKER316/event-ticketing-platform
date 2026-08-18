@@ -91,7 +91,9 @@ class PaymentManager:
     def _build_response(self, payment: Payment) -> PaymentResponse:
         return PaymentResponse.model_validate(payment)
 
-    async def handle_webhook_event(self, event: stripe.Event, producer: PaymentOutcomeProducer) -> None:
+    async def handle_webhook_event(
+        self, event: stripe.Event, producer: PaymentOutcomeProducer, notification_producer: NotificationProducer
+    ) -> None:
         """Webhook-driven confirmation (§9) — this is the sole source of
         truth for a Payment's terminal status, not create_charge()'s
         synchronous Stripe response. Idempotent by construction (§7's
@@ -124,6 +126,10 @@ class PaymentManager:
             return
         payment.status = new_status
         await producer.publish_outcome(payment)
+        if new_status is PaymentStatus.SUCCEEDED:
+            # Integration point #3 (§7 point 3, Phase 5) — same
+            # publish-before-commit reasoning as publish_outcome above.
+            await notification_producer.publish_payment_confirmed(payment.booking_id)
         await self._session.commit()
 
     async def refund_payment(

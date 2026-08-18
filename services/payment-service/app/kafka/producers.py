@@ -43,11 +43,12 @@ async def get_payment_outcome_producer() -> PaymentOutcomeProducer:
 
 
 class NotificationProducer(_KafkaMessageProducer):
-    """Producer side only this phase (§22 amendment #3) — integration
-    point #3's consumer (Notification Service) doesn't exist until Phase 5."""
-
     async def publish_refund_failed(self, booking_id: uuid.UUID, reason: str) -> None:
         message = NotificationMessage(action=NotificationAction.REFUND_FAILED, booking_id=booking_id, reason=reason)
+        await self._send(booking_id, message, "notification_published")
+
+    async def publish_payment_confirmed(self, booking_id: uuid.UUID) -> None:
+        message = NotificationMessage(action=NotificationAction.PAYMENT_CONFIRMED, booking_id=booking_id)
         await self._send(booking_id, message, "notification_published")
 
 

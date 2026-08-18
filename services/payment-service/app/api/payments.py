@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.schemas import ChargeRequest, PaymentResponse
 from app.core import get_session, get_settings
 from app.db.payment_repository import PaymentRepository
-from app.kafka.producers import PaymentOutcomeProducer, get_payment_outcome_producer
+from app.kafka.producers import NotificationProducer, PaymentOutcomeProducer, get_notification_producer, get_payment_outcome_producer
 from app.logic.payment_manager import PaymentManager
 
 logger = structlog.get_logger()
@@ -46,6 +46,7 @@ async def stripe_webhook(
     request: Request,
     session: AsyncSession = Depends(get_session),
     producer: PaymentOutcomeProducer = Depends(get_payment_outcome_producer),
+    notification_producer: NotificationProducer = Depends(get_notification_producer),
 ) -> dict:
     """Public — no JWT. Stripe's own webhook signature verification below
     *is* this route's auth requirement, not an oversight (per the
@@ -60,5 +61,5 @@ async def stripe_webhook(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid webhook signature") from exc
 
     manager = PaymentManager(session=session, payments=PaymentRepository(session))
-    await manager.handle_webhook_event(event, producer)
+    await manager.handle_webhook_event(event, producer, notification_producer)
     return {"received": True}

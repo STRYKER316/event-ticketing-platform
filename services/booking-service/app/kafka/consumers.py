@@ -15,6 +15,7 @@ from app.db.booking_repository import BookingRepository
 from app.db.event_repository import EventRepository
 from app.db.models import BookingStatus
 from app.db.ticket_repository import TicketRepository
+from app.kafka.producers import NotificationProducer
 from app.kafka.schemas import EventUpsertedMessage, KafkaAction, PaymentOutcomeAction, PaymentOutcomeMessage
 from app.logic.helpers.hold_strategy_factory import get_hold_strategy
 
@@ -197,10 +198,17 @@ class PaymentOutcomeConsumer:
     TicketHoldStrategy methods BookingManager's own compensation path and the
     cron/Redis sweeps already use, not a third release/confirm mechanism."""
 
-    def __init__(self, consumer: AIOKafkaConsumer, session_factory: async_sessionmaker[AsyncSession], redis: Redis):
+    def __init__(
+        self,
+        consumer: AIOKafkaConsumer,
+        session_factory: async_sessionmaker[AsyncSession],
+        redis: Redis,
+        notification_producer: NotificationProducer,
+    ):
         self._consumer = consumer
         self._session_factory = session_factory
         self._redis = redis
+        self._notification_producer = notification_producer
 
     async def run(self) -> None:
         await _consume_with_manual_commit(self._consumer, self._handle)
@@ -236,6 +244,15 @@ class PaymentOutcomeConsumer:
                 strategy = get_hold_strategy(session, self._redis)
                 if message.action is PaymentOutcomeAction.SUCCEEDED:
                     await strategy.confirm_hold(message.ticket_id)
+                    # Integration point #3 (§7 point 3, Phase 5) — publish
+                    # before commit, same reasoning as every other publish
+                    # in this system: a publish failure here propagates
+                    # uncommitted (this whole _transition() call, including
+                    # the DB write above, rolls back), and _run_with_retry's
+                    # bounded retry redoes the same logical operation rather
+                    # than stranding a CONFIRMED booking with no
+                    # notification ever sent.
+                    await self._notification_producer.publish_booking_confirmed(message.booking_id)
                 else:
                     await strategy.release_hold(message.ticket_id)
             return transitioned

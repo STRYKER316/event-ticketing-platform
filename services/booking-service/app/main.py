@@ -25,6 +25,7 @@ from app.kafka.consumers import (
     build_kafka_consumer,
     build_payment_outcome_consumer,
 )
+from app.kafka.producers import get_notification_producer
 from app.logic.helpers.hold_sweep import build_scheduler
 
 logger = structlog.get_logger()
@@ -61,7 +62,12 @@ async def lifespan(app: FastAPI):
         payment_outcome_kafka_consumer = build_payment_outcome_consumer()
         await payment_outcome_kafka_consumer.start()
         payment_outcome_task = asyncio.create_task(
-            PaymentOutcomeConsumer(payment_outcome_kafka_consumer, get_session_factory(), await get_redis()).run()
+            PaymentOutcomeConsumer(
+                payment_outcome_kafka_consumer,
+                get_session_factory(),
+                await get_redis(),
+                await get_notification_producer(),
+            ).run()
         )
         payment_outcome_task.add_done_callback(lambda task: _log_if_died("payment_outcome_consumer", task))
 

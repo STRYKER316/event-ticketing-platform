@@ -185,6 +185,7 @@ services:
       EVENTS_TOPIC: event.events
       PAYMENT_OUTCOMES_TOPIC: payment.outcomes
       CANCELLED_BOOKINGS_TOPIC: booking.cancelled
+      NOTIFICATIONS_TOPIC: notifications
       HOLD_STRATEGY: cron
       PAYMENT_SERVICE_URL: http://payment-service:8004
       AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}

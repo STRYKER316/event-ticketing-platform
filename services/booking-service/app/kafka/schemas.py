@@ -71,3 +71,22 @@ class BookingCancelledMessage(BaseModel):
     in its own payment_db."""
 
     booking_id: uuid.UUID
+
+
+class NotificationAction(enum.Enum):
+    # Only BOOKING_CONFIRMED exists on this service's side — PAYMENT_CONFIRMED
+    # and REFUND_FAILED are payment-service's own producer-side members
+    # (Phase 5/§7 point 3), not sent from here.
+    BOOKING_CONFIRMED = "booking_confirmed"
+
+
+class NotificationMessage(BaseModel):
+    """Producer-side schema for integration point #3 (§7 point 3, Phase 5)
+    — independently defined here, same pattern as every other mirrored
+    schema in this file. Shares the notifications topic with payment-
+    service's own NotificationMessage (app/kafka/schemas.py there), which
+    has already been publishing to it since P6.T3."""
+
+    action: NotificationAction
+    booking_id: uuid.UUID
+    reason: str | None = None

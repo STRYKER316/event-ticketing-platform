@@ -29,18 +29,18 @@ class BookingCancelledMessage(BaseModel):
 
 
 class NotificationAction(enum.Enum):
-    # Only REFUND_FAILED exists this phase — BOOKING_CONFIRMED/
-    # PAYMENT_CONFIRMED are Phase 5's job, added alongside their own
-    # producer call sites and the consumer that will finally read all
-    # three (§22 amendment #3).
+    # BOOKING_CONFIRMED is booking-service's own producer-side member
+    # (Phase 5, app/kafka/schemas.py there), not sent from here.
+    PAYMENT_CONFIRMED = "payment_confirmed"
     REFUND_FAILED = "refund_failed"
 
 
 class NotificationMessage(BaseModel):
-    """Producer side only this phase (§22 amendment #3) — integration
-    point #3's consumer (Notification Service) doesn't exist until Phase
-    5."""
+    """Notification Service's own consumer now exists (Phase 5) — this
+    was producer-side only through Phase 6 (§22 amendment #3)."""
 
     action: NotificationAction
     booking_id: uuid.UUID
-    reason: str
+    # PAYMENT_CONFIRMED has no natural reason text — only REFUND_FAILED
+    # supplies one (the Stripe error message).
+    reason: str | None = None

@@ -121,12 +121,17 @@ async def test_webhook_success_transitions_pending_payment_and_publishes():
     )
     manager = PaymentManager(session=AsyncMock(), payments=payments)
     producer = AsyncMock()
+    notification_producer = AsyncMock()
 
-    await manager.handle_webhook_event(_webhook_event("payment_intent.succeeded", "pi_123"), producer)
+    await manager.handle_webhook_event(
+        _webhook_event("payment_intent.succeeded", "pi_123"), producer, notification_producer
+    )
 
     assert payment.status is PaymentStatus.SUCCEEDED
     payments.transition_if_pending.assert_awaited_once_with("pi_123", PaymentStatus.SUCCEEDED)
     producer.publish_outcome.assert_awaited_once_with(payment)
+    # Integration point #3 (§7 point 3, Phase 5).
+    notification_producer.publish_payment_confirmed.assert_awaited_once_with(payment.booking_id)
 
 
 async def test_replayed_webhook_on_already_terminal_payment_is_a_safe_no_op():
@@ -150,21 +155,29 @@ async def test_replayed_webhook_on_already_terminal_payment_is_a_safe_no_op():
     )
     manager = PaymentManager(session=AsyncMock(), payments=payments)
     producer = AsyncMock()
+    notification_producer = AsyncMock()
 
-    await manager.handle_webhook_event(_webhook_event("payment_intent.succeeded", "pi_123"), producer)
+    await manager.handle_webhook_event(
+        _webhook_event("payment_intent.succeeded", "pi_123"), producer, notification_producer
+    )
 
     assert payment.status is PaymentStatus.SUCCEEDED
     producer.publish_outcome.assert_not_awaited()
+    notification_producer.publish_payment_confirmed.assert_not_awaited()
 
 
 async def test_webhook_for_unknown_charge_is_a_safe_no_op():
     payments = AsyncMock(get_by_stripe_charge_id=AsyncMock(return_value=None))
     manager = PaymentManager(session=AsyncMock(), payments=payments)
     producer = AsyncMock()
+    notification_producer = AsyncMock()
 
-    await manager.handle_webhook_event(_webhook_event("payment_intent.succeeded", "pi_unknown"), producer)
+    await manager.handle_webhook_event(
+        _webhook_event("payment_intent.succeeded", "pi_unknown"), producer, notification_producer
+    )
 
     producer.publish_outcome.assert_not_awaited()
+    notification_producer.publish_payment_confirmed.assert_not_awaited()
 
 
 async def test_create_charge_raises_502_when_stripe_unreachable(monkeypatch):

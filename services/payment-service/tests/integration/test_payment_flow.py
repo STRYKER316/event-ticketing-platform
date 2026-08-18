@@ -103,11 +103,12 @@ async def test_concurrent_overlapping_webhook_deliveries_only_one_wins(
 
     event = {"type": "payment_intent.succeeded", "data": {"object": {"id": "pi_race_test"}}}
     producers = [AsyncMock(), AsyncMock()]
+    notification_producers = [AsyncMock(), AsyncMock()]
 
     async def _deliver(index: int) -> None:
         async with db_session_factory() as session:
             manager = PaymentManager(session=session, payments=PaymentRepository(session))
-            await manager.handle_webhook_event(event, producers[index])
+            await manager.handle_webhook_event(event, producers[index], notification_producers[index])
 
     await asyncio.gather(_deliver(0), _deliver(1))
 
@@ -136,11 +137,13 @@ async def test_webhook_transitions_payment_and_replay_is_a_safe_no_op(db_session
     manager = PaymentManager(session=db_session, payments=payments)
 
     producer = AsyncMock()
+    notification_producer = AsyncMock()
     event = {"type": "payment_intent.succeeded", "data": {"object": {"id": "pi_webhook_test"}}}
 
-    await manager.handle_webhook_event(event, producer)
-    await manager.handle_webhook_event(event, producer)  # redelivery
+    await manager.handle_webhook_event(event, producer, notification_producer)
+    await manager.handle_webhook_event(event, producer, notification_producer)  # redelivery
 
     producer.publish_outcome.assert_awaited_once()
+    notification_producer.publish_payment_confirmed.assert_awaited_once()
     persisted = await PaymentRepository(db_session).get_by_booking_id(booking_id)
     assert persisted.status is PaymentStatus.SUCCEEDED

@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     payment_outcomes_topic: str = "payment.outcomes"
     # Integration point #5 (§22) — this service's first-ever Kafka producer.
     cancelled_bookings_topic: str = "booking.cancelled"
+    # Integration point #3 (§7 point 3, Phase 5) — shared with payment-service,
+    # which already publishes REFUND_FAILED here since P6.T3.
+    notifications_topic: str = "notifications"
     kafka_consumer_group_id: str = "booking-service"
     # Separate from kafka_consumer_group_id (found in code review): sharing
     # one group id across both consumers meant every payment.outcomes

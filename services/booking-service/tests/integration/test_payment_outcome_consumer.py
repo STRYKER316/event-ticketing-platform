@@ -1,5 +1,6 @@
 import json
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 from redis.asyncio import Redis
@@ -34,7 +35,10 @@ async def test_succeeded_message_confirms_booking_and_books_ticket_under_cron_st
         ticket.status = TicketStatus.HELD
         await session.commit()
     booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
-    consumer = PaymentOutcomeConsumer(consumer=None, session_factory=db_session_factory, redis=redis_client)
+    notification_producer = AsyncMock()
+    consumer = PaymentOutcomeConsumer(
+        consumer=None, session_factory=db_session_factory, redis=redis_client, notification_producer=notification_producer
+    )
 
     await consumer._handle(_message("succeeded", booking_id, ticket_id))
 
@@ -43,6 +47,8 @@ async def test_succeeded_message_confirms_booking_and_books_ticket_under_cron_st
         ticket = await session.get(Ticket, ticket_id)
         assert booking.status is BookingStatus.CONFIRMED
         assert ticket.status is TicketStatus.BOOKED
+    # Integration point #3 (§7 point 3, Phase 5).
+    notification_producer.publish_booking_confirmed.assert_awaited_once_with(booking_id)
 
 
 async def test_failed_message_releases_hold_immediately_under_cron_strategy(
@@ -54,7 +60,10 @@ async def test_failed_message_releases_hold_immediately_under_cron_strategy(
         ticket.status = TicketStatus.HELD
         await session.commit()
     booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
-    consumer = PaymentOutcomeConsumer(consumer=None, session_factory=db_session_factory, redis=redis_client)
+    notification_producer = AsyncMock()
+    consumer = PaymentOutcomeConsumer(
+        consumer=None, session_factory=db_session_factory, redis=redis_client, notification_producer=notification_producer
+    )
 
     await consumer._handle(_message("failed", booking_id, ticket_id))
 
@@ -63,6 +72,7 @@ async def test_failed_message_releases_hold_immediately_under_cron_strategy(
         ticket = await session.get(Ticket, ticket_id)
         assert booking.status is BookingStatus.EXPIRED
         assert ticket.status is TicketStatus.AVAILABLE
+    notification_producer.publish_booking_confirmed.assert_not_awaited()
 
 
 async def test_redelivered_message_on_already_confirmed_booking_does_not_touch_a_new_holder(
@@ -74,7 +84,9 @@ async def test_redelivered_message_on_already_confirmed_booking_does_not_touch_a
     # booking may since legitimately hold.
     ticket_id = await seed_ticket(db_session_factory)
     booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
-    consumer = PaymentOutcomeConsumer(consumer=None, session_factory=db_session_factory, redis=redis_client)
+    consumer = PaymentOutcomeConsumer(
+        consumer=None, session_factory=db_session_factory, redis=redis_client, notification_producer=AsyncMock()
+    )
     await consumer._handle(_message("succeeded", booking_id, ticket_id))
 
     # A later booking now legitimately holds the same ticket.
