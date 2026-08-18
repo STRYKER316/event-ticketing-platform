@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import structlog
 from aiokafka import AIOKafkaProducer
 
@@ -18,32 +20,39 @@ class RetryPublisher:
         self._dlq_topic = dlq_topic
 
     async def publish_retry(self, envelope: RetryEnvelope) -> None:
-        # Keyed by booking ID, same reasoning as every other producer in
-        # this system — redelivery/ordering per booking preserved (§7).
-        await self._producer.send_and_wait(
+        await self._send(
+            envelope,
             self._retry_topic,
-            key=str(envelope.original.booking_id).encode(),
-            value=envelope.model_dump_json().encode(),
-        )
-        logger.info(
+            logger.info,
             "notification_retry_scheduled",
-            action=envelope.original.action.value,
-            booking_id=str(envelope.original.booking_id),
             next_attempt=envelope.attempt,
         )
 
     async def publish_dlq(self, envelope: RetryEnvelope) -> None:
-        await self._producer.send_and_wait(
+        await self._send(
+            envelope,
             self._dlq_topic,
+            logger.error,
+            "notification_routed_to_dlq",
+            attempt=envelope.attempt,
+            last_error=envelope.last_error,
+        )
+
+    async def _send(
+        self, envelope: RetryEnvelope, topic: str, log_fn: Callable[..., None], log_event: str, **log_fields
+    ) -> None:
+        # Keyed by booking ID, same reasoning as every other producer in
+        # this system — redelivery/ordering per booking preserved (§7).
+        await self._producer.send_and_wait(
+            topic,
             key=str(envelope.original.booking_id).encode(),
             value=envelope.model_dump_json().encode(),
         )
-        logger.error(
-            "notification_routed_to_dlq",
+        log_fn(
+            log_event,
             action=envelope.original.action.value,
             booking_id=str(envelope.original.booking_id),
-            attempt=envelope.attempt,
-            last_error=envelope.last_error,
+            **log_fields,
         )
 
 

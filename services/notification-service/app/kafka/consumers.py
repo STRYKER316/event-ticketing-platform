@@ -1,8 +1,10 @@
 import asyncio
 from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 import structlog
 from aiokafka import AIOKafkaConsumer
+from pydantic import BaseModel
 
 from app.core import get_settings
 from app.kafka.producers import RetryPublisher
@@ -11,6 +13,19 @@ from app.logic.helpers.backoff import compute_backoff_seconds
 from app.logic.notification_manager import NotificationManager
 
 logger = structlog.get_logger()
+
+_M = TypeVar("_M", bound=BaseModel)
+
+
+def _parse_or_log(model_cls: type[_M], raw: bytes, invalid_event: str) -> _M | None:
+    """Shared parse-or-log-and-drop step for all three consumers below — a
+    malformed payload won't become parseable on retry, so it never enters
+    the retry ladder at all, same handling every consumer here needs."""
+    try:
+        return model_cls.model_validate_json(raw)
+    except Exception:
+        logger.error(invalid_event, raw=raw[:500], exc_info=True)
+        return None
 
 
 async def _consume_with_manual_commit(consumer: AIOKafkaConsumer, handle: Callable[[bytes], Awaitable[None]]) -> None:
@@ -55,14 +70,11 @@ class NotificationConsumer:
         await _consume_with_manual_commit(self._consumer, self._handle)
 
     async def _handle(self, raw: bytes) -> None:
-        try:
-            message = NotificationMessage.model_validate_json(raw)
-        except Exception:
-            # Unretriable poison message — a malformed payload won't become
-            # parseable on retry, so it never enters the retry ladder at
-            # all, same handling ProvisioningConsumer/PaymentOutcomeConsumer
-            # already use for their own parse failures.
-            logger.error("notification_consumer_message_invalid", raw=raw[:500], exc_info=True)
+        # Unretriable poison message on parse failure — same handling
+        # ProvisioningConsumer/PaymentOutcomeConsumer already use for their
+        # own parse failures.
+        message = _parse_or_log(NotificationMessage, raw, "notification_consumer_message_invalid")
+        if message is None:
             return
 
         try:
@@ -98,10 +110,8 @@ class RetryConsumer:
         await _consume_with_manual_commit(self._consumer, self._handle)
 
     async def _handle(self, raw: bytes) -> None:
-        try:
-            envelope = RetryEnvelope.model_validate_json(raw)
-        except Exception:
-            logger.error("retry_consumer_message_invalid", raw=raw[:500], exc_info=True)
+        envelope = _parse_or_log(RetryEnvelope, raw, "retry_consumer_message_invalid")
+        if envelope is None:
             return
 
         # A real, in-process asyncio.sleep — this consumer has no other
@@ -149,10 +159,8 @@ class DlqConsumer:
         await _consume_with_manual_commit(self._consumer, self._handle)
 
     async def _handle(self, raw: bytes) -> None:
-        try:
-            envelope = RetryEnvelope.model_validate_json(raw)
-        except Exception:
-            logger.error("dlq_consumer_message_invalid", raw=raw[:500], exc_info=True)
+        envelope = _parse_or_log(RetryEnvelope, raw, "dlq_consumer_message_invalid")
+        if envelope is None:
             return
 
         logger.error(

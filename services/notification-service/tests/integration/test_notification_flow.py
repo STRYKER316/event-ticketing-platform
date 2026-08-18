@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -12,7 +11,13 @@ from app.kafka.consumers import DlqConsumer, NotificationConsumer, RetryConsumer
 from app.kafka.producers import RetryPublisher
 from app.kafka.schemas import RetryEnvelope
 
-from .conftest import NOTIFICATION_DLQ_TOPIC, NOTIFICATION_RETRY_TOPIC, NOTIFICATIONS_TOPIC, make_topic_consumer
+from .conftest import (
+    NOTIFICATION_DLQ_TOPIC,
+    NOTIFICATION_RETRY_TOPIC,
+    NOTIFICATIONS_TOPIC,
+    make_topic_consumer,
+    running_consumer,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -56,41 +61,19 @@ async def retry_publisher(kafka_container, kafka_producer: AIOKafkaProducer) -> 
 
 
 @pytest.fixture
-async def running_notification_consumer(
-    kafka_container, retry_publisher: RetryPublisher
-) -> AsyncIterator[None]:
-    consumer = AIOKafkaConsumer(
-        NOTIFICATIONS_TOPIC,
-        bootstrap_servers=kafka_container.get_bootstrap_server(),
-        group_id=f"notification-service-test-{uuid.uuid4()}",
-        auto_offset_reset="earliest",
-        enable_auto_commit=False,
-    )
-    await consumer.start()
-    task = asyncio.create_task(NotificationConsumer(consumer, retry_publisher).run())
-    yield
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
-    await consumer.stop()
+async def running_notification_consumer(kafka_container, retry_publisher: RetryPublisher) -> AsyncIterator[None]:
+    async with running_consumer(
+        kafka_container, NOTIFICATIONS_TOPIC, lambda consumer: NotificationConsumer(consumer, retry_publisher)
+    ):
+        yield
 
 
 @pytest.fixture
 async def running_retry_consumer(kafka_container, retry_publisher: RetryPublisher) -> AsyncIterator[None]:
-    consumer = AIOKafkaConsumer(
-        NOTIFICATION_RETRY_TOPIC,
-        bootstrap_servers=kafka_container.get_bootstrap_server(),
-        group_id=f"notification-service-test-{uuid.uuid4()}",
-        auto_offset_reset="earliest",
-        enable_auto_commit=False,
-    )
-    await consumer.start()
-    task = asyncio.create_task(RetryConsumer(consumer, retry_publisher).run())
-    yield
-    task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await task
-    await consumer.stop()
+    async with running_consumer(
+        kafka_container, NOTIFICATION_RETRY_TOPIC, lambda consumer: RetryConsumer(consumer, retry_publisher)
+    ):
+        yield
 
 
 async def test_successful_delivery_produces_no_retry_message(
@@ -185,21 +168,12 @@ async def test_dlq_consumer_logs_receipt(kafka_container, kafka_producer: AIOKaf
         }
     )
 
-    consumer = AIOKafkaConsumer(
-        NOTIFICATION_DLQ_TOPIC,
-        bootstrap_servers=kafka_container.get_bootstrap_server(),
-        group_id=f"notification-service-test-{uuid.uuid4()}",
-        auto_offset_reset="earliest",
-        enable_auto_commit=False,
-    )
-    await consumer.start()
-    task = asyncio.create_task(DlqConsumer(consumer).run())
-    try:
-        # structlog isn't wired through stdlib logging in the test process
-        # (configure_logging() only ever runs from main.py's create_app()),
-        # so structlog's own capture_logs() is used instead of pytest's
-        # stdlib-logging-based caplog fixture.
-        with structlog.testing.capture_logs() as captured:
+    # structlog isn't wired through stdlib logging in the test process
+    # (configure_logging() only ever runs from main.py's create_app()), so
+    # structlog's own capture_logs() is used instead of pytest's
+    # stdlib-logging-based caplog fixture.
+    with structlog.testing.capture_logs() as captured:
+        async with running_consumer(kafka_container, NOTIFICATION_DLQ_TOPIC, DlqConsumer):
             await kafka_producer.send_and_wait(
                 NOTIFICATION_DLQ_TOPIC, key=booking_id.encode(), value=envelope.model_dump_json().encode()
             )
@@ -212,14 +186,9 @@ async def test_dlq_consumer_logs_receipt(kafka_container, kafka_producer: AIOKaf
 
             await _wait_until(logged, timeout=10)
 
-        entry = next(
-            e for e in captured if e.get("event") == "notification_landed_in_dlq" and e.get("booking_id") == booking_id
-        )
-        assert entry["booking_id"] == booking_id
-        assert entry["attempt"] == 4
-        assert entry["last_error"] == "simulated failure for test_dlq_consumer_logs_receipt"
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-        await consumer.stop()
+    entry = next(
+        e for e in captured if e.get("event") == "notification_landed_in_dlq" and e.get("booking_id") == booking_id
+    )
+    assert entry["booking_id"] == booking_id
+    assert entry["attempt"] == 4
+    assert entry["last_error"] == "simulated failure for test_dlq_consumer_logs_receipt"

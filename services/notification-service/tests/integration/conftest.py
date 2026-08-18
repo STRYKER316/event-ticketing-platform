@@ -1,5 +1,8 @@
+import asyncio
+import contextlib
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from typing import Protocol
 
 import pytest
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
@@ -10,6 +13,10 @@ from app.core import get_settings
 NOTIFICATIONS_TOPIC = "notifications"
 NOTIFICATION_RETRY_TOPIC = "notification-retry"
 NOTIFICATION_DLQ_TOPIC = "notification-dlq"
+
+
+class _Runnable(Protocol):
+    async def run(self) -> None: ...
 
 
 @pytest.fixture(scope="session")
@@ -39,6 +46,33 @@ async def make_topic_consumer(kafka_container: "KafkaContainer", topic: str) -> 
     )
     await consumer.start()
     return consumer
+
+
+@contextlib.asynccontextmanager
+async def running_consumer(
+    kafka_container: "KafkaContainer", topic: str, build_runner: Callable[[AIOKafkaConsumer], _Runnable]
+) -> AsyncIterator[None]:
+    """Starts a consumer on `topic` driving the runner `build_runner(consumer)`
+    returns, tears both down on exit — shared shape for every 'consumer
+    under test' fixture in this suite (notification/retry/dlq all start,
+    run, and tear down identically; only the topic and wrapper class
+    differ)."""
+    consumer = AIOKafkaConsumer(
+        topic,
+        bootstrap_servers=kafka_container.get_bootstrap_server(),
+        group_id=f"notification-service-test-{uuid.uuid4()}",
+        auto_offset_reset="earliest",
+        enable_auto_commit=False,
+    )
+    await consumer.start()
+    task = asyncio.create_task(build_runner(consumer).run())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        await consumer.stop()
 
 
 @pytest.fixture
