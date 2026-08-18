@@ -51,6 +51,17 @@ async def _publish_with_retry(
             await asyncio.sleep(PUBLISH_RETRY_BACKOFF_SECONDS)
 
 
+def _error_text(exc: Exception) -> str:
+    """RetryEnvelope.last_error is a NonBlankStr (DTO validation-boundary
+    rule) — some exception types stringify to '' (e.g. bare KeyError()), and
+    constructing the envelope with that would raise ValidationError outside
+    every _publish_with_retry guard, escaping _handle and permanently
+    killing the consumer task (found in code review: this is exactly the
+    failure mode _publish_with_retry exists to prevent). repr() always
+    yields at least the exception's class name."""
+    return str(exc) or repr(exc)
+
+
 def _parse_or_log(model_cls: type[_M], raw: bytes, invalid_event: str) -> _M | None:
     """Shared parse-or-log-and-drop step for all three consumers below — a
     malformed payload won't become parseable on retry, so it never enters
@@ -126,7 +137,7 @@ class NotificationConsumer:
             # _consume_with_manual_commit above) — a crash between the
             # failed delivery and this publish must redeliver from
             # `notifications`, not silently drop the message.
-            envelope = RetryEnvelope(attempt=2, original=message, last_error=str(exc))
+            envelope = RetryEnvelope(attempt=2, original=message, last_error=_error_text(exc))
             await _publish_with_retry(
                 lambda: self._retry_publisher.publish_retry(envelope),
                 retrying_event="notification_consumer_retry_publish_failed_retrying",
@@ -165,7 +176,9 @@ class RetryConsumer:
             settings = get_settings()
             booking_id = str(envelope.original.booking_id)
             if envelope.attempt > settings.retry_max_attempts:
-                dlq_envelope = RetryEnvelope(attempt=envelope.attempt, original=envelope.original, last_error=str(exc))
+                dlq_envelope = RetryEnvelope(
+                    attempt=envelope.attempt, original=envelope.original, last_error=_error_text(exc)
+                )
                 await _publish_with_retry(
                     lambda: self._retry_publisher.publish_dlq(dlq_envelope),
                     retrying_event="retry_consumer_dlq_publish_failed_retrying",
@@ -174,7 +187,7 @@ class RetryConsumer:
                 )
             else:
                 next_envelope = RetryEnvelope(
-                    attempt=envelope.attempt + 1, original=envelope.original, last_error=str(exc)
+                    attempt=envelope.attempt + 1, original=envelope.original, last_error=_error_text(exc)
                 )
                 await _publish_with_retry(
                     lambda: self._retry_publisher.publish_retry(next_envelope),

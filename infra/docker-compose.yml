@@ -268,9 +268,12 @@ services:
         condition: service_healthy
     labels:
       traefik.enable: "true"
-      # Same reasoning as search-service/booking-service's own rule — no DB
-      # of any kind (this phase's resolved "no DB" decision), so nothing
-      # calls this service except its own /healthz through the gateway.
+      # Same PathPrefix convention every non-root service follows, kept for
+      # consistency even though nothing calls this service externally —
+      # /healthz is reachable only directly against the container, not
+      # through this router: PathPrefix doesn't strip itself, so
+      # /notifications/healthz 404s the same way every other service's own
+      # prefix does (live-verified P5.T1, see docs/phases/phase-5-kickoff.md).
       traefik.http.routers.notification-service.rule: PathPrefix(`/notifications`)
       traefik.http.services.notification-service.loadbalancer.server.port: "8005"
 

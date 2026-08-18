@@ -3172,3 +3172,55 @@ new redelivery test added the tenth), `booking-service` 72/72,
 Decisions-log delta: none — these are implementation hardening, not a
 change to the §17 amendment's design.
 `CLAUDE.md` update: none needed.
+
+Re-ran code-review against the fix commit to verify each finding was
+actually resolved (not just trust the commit message) and to catch
+anything the fix itself introduced. The three High findings were confirmed
+correctly fixed. The re-pass also found:
+
+- **The `NonBlankStr` constraint on `RetryEnvelope.last_error` reintroduced
+  the exact failure mode the republish-retry fix had just closed.** The
+  envelope is constructed internally from `last_error=str(exc)` at three
+  call sites, all inside `except Exception` blocks; an exception whose
+  `str()` is empty (`str(KeyError())` is `''`) makes that construction
+  raise `ValidationError`, escaping `_handle` and permanently killing the
+  consumer task — the DTO tightening fixed the untrusted-input half of the
+  overflow finding but broke the trusted-construction half. Fixed with a
+  small `_error_text(exc)` helper (`str(exc) or repr(exc)`, `repr` always
+  yields at least the class name) used at all three sites.
+- `RetryEnvelope.attempt`'s bound (`le=100`) sat flush against
+  `RetryConsumer`'s own `attempt + 1` construction; bumped to `le=1000` for
+  headroom above any sane `retry_max_attempts` config.
+- The `OverflowError` fix in `compute_backoff_seconds` had no test; added
+  `test_backoff_does_not_overflow_on_a_huge_attempt`.
+- `test_redelivery_of_same_message_is_a_safe_no_op` only asserted the
+  *absence* of a retry-topic message, which can't distinguish "handled
+  twice, safely" from "the consumer silently stopped after the first
+  delivery" — strengthened to assert on `structlog.testing.capture_logs()`
+  for two distinct `notification_delivered` log entries, the same pattern
+  `test_dlq_consumer_logs_receipt` already uses.
+- `_run_with_retry` (`booking-service`) and the first version of
+  `_publish_confirmation_with_retry` were two near-identical bounded-retry
+  loops in the same file. Extracted a shared `_retry_with_backoff(operation,
+  *, max_attempts, backoff_seconds, ...)` taking a zero-arg operation;
+  `_run_with_retry` now wraps a DB write's session/commit around it,
+  `_publish_confirmation_with_retry` calls it directly with no session.
+- `infra/docker-compose.yml`'s notification-service Traefik label comment
+  claimed `/healthz` was "reachable... through the gateway," which
+  P5.T1's own live-verification (see this file, above, and
+  `docs/phases/phase-5-kickoff.md`) already established is false — corrected
+  the comment to match what was actually tested.
+
+Two informational-only findings, no code change: a crash between
+`PaymentOutcomeConsumer`'s DB commit and its (now-separate) notification
+publish means that specific redelivery replays into `transition_if_pending`
+returning `False`, so the notification is never sent on that narrow
+path — correct given booking status must outrank a best-effort
+notification, flagged only so no report chapter claims at-least-once
+notification delivery on this call site; and the Redis hold-strategy's
+non-transactional `confirm_hold`/`release_hold` remains a pre-existing,
+out-of-phase-scope gap, unchanged.
+
+Suites re-verified green: `notification-service` 11/11 (the overflow test
+added the eleventh), `booking-service` 72/72. `pyflakes` clean on every
+file touched in this round.

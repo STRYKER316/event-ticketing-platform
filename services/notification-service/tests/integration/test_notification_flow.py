@@ -102,16 +102,32 @@ async def test_redelivery_of_same_message_is_a_safe_no_op(
     # a crash between delivery and offset commit redelivers the same raw
     # record; NotificationConsumer has no way to distinguish that from a
     # second, identical message, so publishing the same key/value twice
-    # exercises the same code path either way (found missing in code review).
+    # exercises the same code path either way (found missing in code
+    # review). Asserting on capture_logs(), not just retry-topic absence —
+    # an absence-only assertion can't tell "handled twice, safely" apart
+    # from "the consumer silently stopped after the first delivery" (also
+    # found in code review, on the first version of this test).
     booking_id = str(uuid.uuid4())
     payload = _notification_message("booking_confirmed", booking_id)
     retry_consumer = await make_topic_consumer(kafka_container, NOTIFICATION_RETRY_TOPIC)
     try:
-        await kafka_producer.send_and_wait(NOTIFICATIONS_TOPIC, key=booking_id.encode(), value=payload)
-        await kafka_producer.send_and_wait(NOTIFICATIONS_TOPIC, key=booking_id.encode(), value=payload)
-        # Both deliveries succeed silently (simulated_failure_attempts=0) —
-        # a safe no-op means no retry envelope for this booking, not a crash
-        # and not a corrupted/duplicated retry-ladder entry.
+        with structlog.testing.capture_logs() as captured:
+            await kafka_producer.send_and_wait(NOTIFICATIONS_TOPIC, key=booking_id.encode(), value=payload)
+            await kafka_producer.send_and_wait(NOTIFICATIONS_TOPIC, key=booking_id.encode(), value=payload)
+
+            async def delivered_twice() -> bool:
+                deliveries = [
+                    entry
+                    for entry in captured
+                    if entry.get("event") == "notification_delivered" and entry.get("booking_id") == booking_id
+                ]
+                return len(deliveries) >= 2
+
+            await _wait_until(delivered_twice, timeout=10)
+
+        # Both deliveries succeed independently (simulated_failure_attempts=0)
+        # — a safe no-op means no retry envelope for this booking, not a
+        # crash and not a corrupted/duplicated retry-ladder entry.
         await _assert_no_matching_record(retry_consumer, booking_id, timeout=3)
     finally:
         await retry_consumer.stop()

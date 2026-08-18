@@ -39,6 +39,34 @@ NOTIFICATION_PUBLISH_MAX_ATTEMPTS = 3
 NOTIFICATION_PUBLISH_RETRY_BACKOFF_SECONDS = 1.0
 
 
+async def _retry_with_backoff(
+    operation: Callable[[], Awaitable[_T]],
+    *,
+    max_attempts: int,
+    backoff_seconds: float,
+    retrying_event: str,
+    failed_event: str,
+    **log_context: object,
+) -> _T | None:
+    """Shared bounded-retry shape (found duplicated in code review, deduped
+    here — same shape the simplify pass already applied elsewhere in this
+    diff): retries a transient failure in place a few times with backoff
+    before giving up, logging critical (not silently) on the last attempt
+    rather than raising. `_run_with_retry` below wraps a DB write in a
+    session/commit; PaymentOutcomeConsumer's notification publish uses this
+    directly with no session at all."""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await operation()
+        except Exception:
+            if attempt == max_attempts:
+                logger.critical(failed_event, attempts=attempt, exc_info=True, **log_context)
+                return None
+            logger.warning(retrying_event, attempt=attempt, exc_info=True, **log_context)
+            await asyncio.sleep(backoff_seconds)
+    return None
+
+
 async def _run_with_retry(
     session_factory: async_sessionmaker[AsyncSession],
     operation: Callable[[AsyncSession], Awaitable[_T]],
@@ -54,19 +82,21 @@ async def _run_with_retry(
     None only once every attempt has failed, at which point the caller
     commits the Kafka offset anyway and moves on (logged at critical, not
     silently)."""
-    for attempt in range(1, DB_WRITE_MAX_ATTEMPTS + 1):
-        try:
-            async with session_factory() as session:
-                result = await operation(session)
-                await session.commit()
+
+    async def _in_session() -> _T:
+        async with session_factory() as session:
+            result = await operation(session)
+            await session.commit()
             return result
-        except Exception:
-            if attempt == DB_WRITE_MAX_ATTEMPTS:
-                logger.critical(failed_event, attempts=attempt, exc_info=True, **log_context)
-                return None
-            logger.warning(retrying_event, attempt=attempt, exc_info=True, **log_context)
-            await asyncio.sleep(DB_WRITE_RETRY_BACKOFF_SECONDS)
-    return None
+
+    return await _retry_with_backoff(
+        _in_session,
+        max_attempts=DB_WRITE_MAX_ATTEMPTS,
+        backoff_seconds=DB_WRITE_RETRY_BACKOFF_SECONDS,
+        retrying_event=retrying_event,
+        failed_event=failed_event,
+        **log_context,
+    )
 
 
 async def _consume_with_manual_commit(consumer: AIOKafkaConsumer, handle: Callable[[bytes], Awaitable[None]]) -> None:
@@ -286,23 +316,14 @@ class PaymentOutcomeConsumer:
         return transitioned
 
     async def _publish_confirmation_with_retry(self, booking_id: uuid.UUID) -> None:
-        for attempt in range(1, NOTIFICATION_PUBLISH_MAX_ATTEMPTS + 1):
-            try:
-                await self._notification_producer.publish_booking_confirmed(booking_id)
-                return
-            except Exception:
-                if attempt == NOTIFICATION_PUBLISH_MAX_ATTEMPTS:
-                    logger.critical(
-                        "payment_outcome_consumer_notification_publish_failed_permanently",
-                        booking_id=str(booking_id),
-                        attempts=attempt,
-                        exc_info=True,
-                    )
-                    return
-                logger.warning(
-                    "payment_outcome_consumer_notification_publish_failed_retrying",
-                    booking_id=str(booking_id),
-                    attempt=attempt,
-                    exc_info=True,
-                )
-                await asyncio.sleep(NOTIFICATION_PUBLISH_RETRY_BACKOFF_SECONDS)
+        async def _publish() -> None:
+            await self._notification_producer.publish_booking_confirmed(booking_id)
+
+        await _retry_with_backoff(
+            _publish,
+            max_attempts=NOTIFICATION_PUBLISH_MAX_ATTEMPTS,
+            backoff_seconds=NOTIFICATION_PUBLISH_RETRY_BACKOFF_SECONDS,
+            retrying_event="payment_outcome_consumer_notification_publish_failed_retrying",
+            failed_event="payment_outcome_consumer_notification_publish_failed_permanently",
+            booking_id=str(booking_id),
+        )

@@ -34,8 +34,10 @@ class RetryEnvelope(BaseModel):
     envelope round-trips through Kafka, so a malformed or tampered message
     is untrusted input at the DTO boundary, not just an internal counter
     (found in code review: an unbounded attempt could overflow
-    compute_backoff_seconds's exponentiation)."""
+    compute_backoff_seconds's exponentiation). RetryConsumer constructs the
+    next envelope as `attempt + 1`, so the bound leaves headroom above any
+    sane retry_max_attempts config rather than sitting flush against it."""
 
-    attempt: Annotated[int, Field(ge=1, le=100)]
+    attempt: Annotated[int, Field(ge=1, le=1000)]
     original: NotificationMessage
     last_error: NonBlankStr
