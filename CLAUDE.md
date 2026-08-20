@@ -344,6 +344,22 @@ issues worth locking in against:
   rejected-input paths at `error`.
 - **Never query inside a loop.** Any endpoint assembling a response across multiple
   related records bulk-fetches first (`.in_()`-style filters), then assembles in memory.
+- **After `session.rollback()` (or `commit()` with default `expire_on_commit`), every
+  attribute on an already-loaded ORM instance is expired — capture any scalar value
+  you'll still need (an id, a status) into a plain local variable *before* the
+  rollback, never re-touch the ORM object afterward.** Re-accessing an expired
+  attribute triggers an implicit lazy-reload that isn't safely awaitable from inside
+  an `except` block under async SQLAlchemy — it raises `sqlalchemy.exc.MissingGreenlet`
+  instead of returning the value, turning a handled error path into an unhandled 500.
+  Found in Phase 7 (`booking-service/app/logic/booking_manager.py`'s
+  `_create_booking_row`, present since Phase 3): its `IntegrityError` compensation
+  path did `await self._session.rollback()` then `ticket.id` two lines later, crashing
+  every time the branch was actually reached — undetected because the one test
+  exercising this exact race (`test_concurrency_suite.py`) caught losses with a bare
+  `except Exception`, indistinguishable from a clean 409. `payment_manager.py`'s
+  equivalent race-loser path already got this right by construction (it re-queries a
+  fresh row via a plain UUID from the request payload rather than touching the stale
+  ORM object) — that's the pattern to match, not the one that broke.
 - **Any multi-row INSERT or `.in_()`/subquery clause built from a list whose size isn't
   bounded by a small, fixed cap must batch through `chunked()`
   (`booking-service/app/db/chunking.py`), not assume the list stays small.** Postgres/
