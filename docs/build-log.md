@@ -3482,3 +3482,91 @@ mechanism (§6), not a design change. `CLAUDE.md` delta: none — the
 existing "test-first for the dual hold strategies" and "P3 gets a
 dedicated code-review pass" rules already cover this class of risk; the
 gap was in that review's actual coverage, not in the rule itself.
+
+## 2026-08-20 — Phase 7 `/pre-pr` gate: simplify + code-review pass
+
+A first simplify subagent was interrupted by the user mid-run; its
+partial output was reviewed by hand (complete and coherent, not
+half-broken — full backend suite 75/75, frontend `tsc`/`vitest`/`oxlint`
+clean), committed, and the gate restarted from Step 1 on the full Phase 7
+diff (`2f583b8..HEAD`) rather than assumed sufficient.
+
+**Simplify (Step 1):** extracted a `useRoles()` hook to stop `Layout` and
+`ProtectedRoute` from each re-deriving the same memoized JWT-role decode;
+derived `OrganizerPage`'s wizard `step` from mutation state instead of
+four hand-synced `setStep()` calls; deduped `addRow` to reuse
+`updateSection`; gave `QueryClient` a default `staleTime` (and
+`EventDetailPage`'s static seat-map query `Infinity`) so unrelated
+queries stop refetching on every remount. Checked `bookings.py`'s four
+routes' identical inline `BookingManager(...)` construction against
+`event-service`/`payment-service` — same convention everywhere, left
+as-is.
+
+**Code-review (Step 2, Opus):** 11 findings. Fixed:
+- **Stale docs** — the §23 amendment, `class-diagrams.md`, and
+  `phase-7-kickoff.md` still described the new ticket-status route as
+  "no Manager class, talks to the Repository directly" after a prior
+  (already-committed) simplify pass had already routed it through
+  `BookingManager.list_tickets_for_event`; that earlier reasoning had
+  misapplied `search-service`'s `EventConsumer` exception (which is for
+  a Kafka consumer with no equivalent API route, not for an API route
+  itself). Corrected all three; decisions-log §23 carries the
+  correction inline rather than editing the original amendment away.
+- **`CheckoutPage.tsx` StrictMode double-hold**: the hold-acquisition
+  effect had no guard against React StrictMode's dev-only double-invoke;
+  the second `createBooking` call lost the race with a 409, and that
+  `HOLD_FAILED` overwrote the correct `HOLD_SUCCEEDED`, showing "This
+  seat was just taken by someone else" for a seat the user actually
+  held. Fixed with a `useRef` guard keyed on `ticketId`.
+- **`CheckoutPage.tsx` unsound `catch` typing**: both `.catch` handlers
+  asserted the rejection was an `ApiError` unconditionally; a
+  network-level `fetch` `TypeError` has no `.status` and would reach the
+  user as a raw, unhandled message. Added `client.ts`'s `errorMessage()`
+  helper and an `instanceof ApiError` narrowing check.
+- **`EventDetailPage.tsx`** silently swallowed `ticketsQuery`'s
+  loading/error state (its two sibling queries handle both) — a failed
+  5s status poll rendered every seat as `unprovisioned` with no
+  indication anything had gone wrong. Added a visible banner on
+  `ticketsQuery.error`.
+- **`seatMap.ts`'s `seatKey`** joined `(section, row, label)` with a
+  plain space — collides for two different triples when an
+  organizer-typed name itself contains a space (e.g. `("Floor A", "1",
+  "1")` vs. `("Floor", "A 1", "1")`), a real risk since section/row
+  names are free text. Switched to `JSON.stringify([...])`, which
+  escapes each part; added a regression test reproducing the exact
+  collision.
+- **`client.ts`** never validated the four `VITE_*_SERVICE_URL` build
+  args were actually set — a missing one would silently resolve fetch
+  URLs to `"undefined/events/..."` instead of failing clearly. Added a
+  startup check that throws with the missing var's name.
+- **Leftover Vite template scaffolding** in `index.css` (`--social-bg`,
+  `--shadow`, `#social .button-icon`, `.counter` — none referenced by
+  any component) and an unused `public/icons.svg` — removed.
+- **Missing test**: `BookingManager.list_tickets_for_event`'s DTO
+  mapping (the manual `id` → `ticket_id` rename its own schema docstring
+  calls out) had no direct test — only the Repository query beneath it
+  did — while `class-diagrams.md` labeled the addition "Tested." Added
+  two unit tests; updated the status line to name both.
+
+Not fixed, by deliberate call:
+- **Unpaginated `GET /bookings/events/{event_id}/tickets`** — returns
+  every ticket for an event in one response, polled every 5s per
+  browser; CLAUDE.md's own `chunked()` precedent flags this as a real
+  risk class at scale (venues past ~6,500 seats). Left unpaginated for
+  this phase — no venue in this project's actual test/benchmark data
+  approaches that size, and building pagination the frontend has no
+  present need for would be scope growth beyond what P7 asked for — but
+  this is a known, accepted limitation, not an oversight, and should be
+  revisited before any real-scale load test.
+- The already-reviewed inline `get_hold_strategy(session, redis)`
+  construction inside the new route's `BookingManager(...)` call
+  (unused by `list_tickets_for_event` itself) — same "matches the
+  established per-route convention" reasoning as the simplify pass's own
+  pass on this.
+
+Backend suite after fixes: 77/77 (75 + 2 new). Frontend: `tsc`/`vitest`
+(8/8, +1 new)/`oxlint` all clean.
+
+Decisions-log delta: §23's amendment corrected in place (see above) —
+not a new decision, a factual fix to an already-recorded one. `CLAUDE.md`
+delta: none.

@@ -840,16 +840,19 @@ _after_retry` recovery sequence with real backoff timing. 11/11 tests green
 
 ## Booking Service additions (Phase 7)
 
-A small, deliberately Manager-less addition: `TicketRepository` gains
-`list_by_event(event_id) -> list[Ticket]` (a plain filtered `SELECT`, no
-business rule), and `api/bookings.py` gains one new route, `GET
-/bookings/events/{event_id}/tickets`, that calls it directly and maps each
-row to a new `TicketStatusResponse` DTO (`ticket_id, section, row_name,
-seat_label, status, price_cents`). No `BookingManager` method backs it —
-matching the class-diagram convention already established for
-`search-service`'s `EventConsumer` (§8's layering doc): a pure read with
-no equivalent write path to unify with talks straight to the Repository,
-still exactly one place that touches the datastore. This is the read half
+`TicketRepository` gains `list_by_event(event_id) -> list[Ticket]` (a
+plain filtered `SELECT`, no business rule), and `api/bookings.py` gains
+one new route, `GET /bookings/events/{event_id}/tickets`, that calls
+`BookingManager.list_tickets_for_event(event_id)`, which runs that
+Repository query and maps each row to a new `TicketStatusResponse` DTO
+(`ticket_id, section, row_name, seat_label, status, price_cents`) — the
+same Manager+Repository shape every other `booking-service` route uses,
+not the `search-service` `EventConsumer` Repository-direct exception:
+that exception applies to a Kafka consumer with no equivalent API route
+to unify with, and this new addition *is* an API route, so it gets its
+own `BookingManager` method like the rest (found and corrected in this
+phase's `/pre-pr` code-review pass — see decisions-log §23's amendment
+correction). This is the read half
 of the seat-map composition decisions-log §23 describes, which had a
 design but no route until this phase — see the Database Schema Design and
 Requirement Gathering chapters' Phase 7 sections for the endpoint's public/
@@ -859,7 +862,7 @@ concurrent-booking bug was found through this exact code path (in
 phase's live testing).
 
 **Status:** Implemented, Tested, Verified (live) — `list_by_event` covered
-by two new integration tests (real Postgres); the route live-verified
-against the real running stack, returning correct per-seat status
-including a real hold flipping a seat from `available` to `held` between
-two polls.
+by two new integration tests (real Postgres) and `BookingManager.list_tickets_for_event`'s
+DTO mapping by two new unit tests; the route live-verified against the
+real running stack, returning correct per-seat status including a real
+hold flipping a seat from `available` to `held` between two polls.

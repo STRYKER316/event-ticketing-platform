@@ -103,8 +103,8 @@ architecture):
 - **The new `GET /bookings/events/{event_id}/tickets` route is a Kafka-free,
   DB-read-only addition** — none of the Kafka-consumer conventions
   (manual offset commit, bounded retry) apply to it; it's a plain FastAPI
-  route + Repository query, same shape as every other public GET already
-  in the system.
+  route calling a `BookingManager` method, same shape as every other
+  route already in the system.
 - **Auth split**: real enforcement is server-side only (existing
   `require_role`/ownership checks, unchanged by this phase). The frontend's
   own role check (hiding the organizer screen from non-organizers) is
@@ -123,10 +123,13 @@ First, the backend addition from this file's intro (gap #1) —
 public route `GET /bookings/events/{event_id}/tickets` in
 `app/api/bookings.py` returning
 `list[{ticket_id, section, row_name, seat_label, status, price_cents}]`
-(a new `TicketStatusResponse` schema in `app/api/schemas.py`). No Manager
-class — a pure read with no business rule, called directly from the route
-the same way `search-service`'s `EventConsumer` talks straight to its
-Repository. Add a unit test and an integration test (seed a few tickets,
+(a new `TicketStatusResponse` schema in `app/api/schemas.py`), routed
+through a new `BookingManager.list_tickets_for_event` method like every
+other route in this file — the route-with-no-Manager shape drafted here
+turned out to misapply `search-service`'s `EventConsumer` exception
+(that one is for a Kafka consumer with no equivalent API route; this
+addition *is* an API route), caught and corrected in the phase's
+`/pre-pr` code-review pass. Add a unit test and an integration test (seed a few tickets,
 assert the route returns them with correct statuses).
 
 Then scaffold `/frontend` as a Vite + React + TypeScript app (`npm create
