@@ -3270,3 +3270,67 @@ extended the "new service = copy the template" bullet with the no-datastore-
 at-all case, and the Kafka-consumer-bounded-retry bullet with the
 republish-stands-in-for-DB-write generalization plus the DTO-tightening-vs-
 internal-construction-sites caution the second review round surfaced.
+
+## 2026-08-20 — Phase 7 kickoff generated; four gaps resolved before P7.T1; P7.T1 backend half: booking-service ticket-status endpoint
+
+No `docs/phases/phase-7-kickoff.md` existed yet, so per `CLAUDE.md` this
+went through a real brainstorming pass (architectural path) rather than
+straight to implementation — questions on the new booking-service endpoint
+shape, frontend tooling (Vite + React + TypeScript + react-router +
+TanStack Query + react-oidc-context, all user-approved), and whether to
+include the optional organizer screen (user opted in). Four gaps found and
+resolved before the task list was finalized, written into the kickoff
+doc's intro:
+
+1. **No read endpoint exposes per-seat live status.** §23 already commits
+   the frontend to composing seat-map layout (Event Service) with live
+   status (Booking Service) client-side, but the read half of that never
+   got a route — `booking-service` only had `POST /bookings`, `/pay`,
+   `/cancel`. Resolved: new public (no-auth) `GET
+   /bookings/events/{event_id}/tickets`.
+2. **Keycloak registration disabled** (`registrationAllowed` unset).
+   Resolved: enable it in the realm export; self-registered users get no
+   realm role, which is fine since no booking route uses `require_role`.
+3. **Frontend Traefik routing must not touch the locked `event-service`
+   catch-all** (`CLAUDE.md` explicitly calls that "left as-is on purpose,
+   not retrofitted"). Resolved: frontend mounts at `PathPrefix('/app')`,
+   its own specific prefix like every other post-`event-service` service,
+   rather than reinterpreting root.
+4. **Stale Keycloak client redirect URIs** pointed at `localhost:3000`,
+   which is actually Grafana's port (`GRAFANA_PORT` in `.env.example`), not
+   Vite's real default (`5173`). Resolved: corrected to `5173` (standalone
+   dev) and `/app` behind Traefik (compose stack).
+
+A self-review of the drafted kickoff doc caught one internal
+inconsistency before implementation started: P7.T3's prompt referenced the
+new ticket-status endpoint as "the new P7.T1-scoped addition," but P7.T1's
+own prompt never actually listed building it — fixed by adding it as the
+first step of P7.T1's prompt.
+
+**P7.T1 backend half implemented and live-verified:**
+`TicketRepository.list_by_event(event_id)` (plain `SELECT` filtered by
+`event_id`, no business logic — mirrors `search-service`'s
+Repository-only shape for a route with no equivalent write path to
+unify with) plus `GET /bookings/events/{event_id}/tickets` returning a
+new `TicketStatusResponse` (`ticket_id, section, row_name, seat_label,
+status, price_cents`), built explicitly in the route rather than via
+`from_attributes` since the response field is named `ticket_id` but the
+model's is `id`. Two new integration tests (real Postgres via
+testcontainers): tickets scoped correctly to their own event, and an
+empty result for an unknown event. Full `booking-service` suite: 74/74
+(up from 72). `pyflakes` clean on every touched file.
+
+Live-verified against the real running stack (rebuilt via `docker compose
+up -d --build`): `GET /events?limit=3` found seeded events, but the first
+one's `booking_db` had zero tickets (published before this service
+existed / before its Kafka consumer group had anything to consume — a
+pre-existing seed-data staleness, not a bug in this endpoint). Verified
+instead against `b77c84a3-3fd7-465f-9037-5db17394f5a9` (a Phase 6 test
+event with a real provisioned ticket): endpoint returned the correct
+shape and the ticket's real `booked` status.
+
+Decisions-log delta: §23 amendment added (this new endpoint), same
+before-implementation timing as the §7.2/§9/§16/§22 amendments. The
+Keycloak-registration and Traefik-`/app`-routing corrections are config,
+not architecture, so they stay documented in the kickoff doc itself and
+`infra/README.md` (at CHECKPOINT) rather than the decisions log.
