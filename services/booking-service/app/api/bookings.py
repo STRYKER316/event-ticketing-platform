@@ -7,7 +7,7 @@ from redis.asyncio import Redis
 from shared_auth import Principal, get_current_user
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import BookingCreate, BookingPayResponse, BookingResponse
+from app.api.schemas import BookingCreate, BookingPayResponse, BookingResponse, TicketStatusResponse
 from app.core import get_http_client, get_redis, get_session
 from app.db.booking_repository import BookingRepository
 from app.db.event_repository import EventRepository
@@ -22,6 +22,28 @@ router = APIRouter()
 # Payment Service unmodified (§9 amendment); it parses the same
 # Authorization header get_current_user already validates, no extra cost.
 _bearer_scheme = HTTPBearer(auto_error=True)
+
+
+@router.get("/bookings/events/{event_id}/tickets", response_model=list[TicketStatusResponse])
+async def list_tickets_for_event(
+    event_id: uuid.UUID,
+    session: AsyncSession = Depends(get_session),
+) -> list[TicketStatusResponse]:
+    """Public — no auth required. Read-only composition source for the
+    frontend's seat map (§23): layout comes from Event Service, live
+    per-seat status and ticket_id come from here."""
+    tickets = await TicketRepository(session).list_by_event(event_id)
+    return [
+        TicketStatusResponse(
+            ticket_id=ticket.id,
+            section=ticket.section,
+            row_name=ticket.row_name,
+            seat_label=ticket.seat_label,
+            status=ticket.status,
+            price_cents=ticket.price_cents,
+        )
+        for ticket in tickets
+    ]
 
 
 @router.post("/bookings", response_model=BookingResponse, status_code=status.HTTP_201_CREATED)

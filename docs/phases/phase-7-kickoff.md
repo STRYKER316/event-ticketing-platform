@@ -101,7 +101,19 @@ config corrections, not architecture):
 
 **Prompt to Claude Code:**
 
-Scaffold `/frontend` as a Vite + React + TypeScript app (`npm create
+First, the backend addition from this file's intro (gap #1) —
+`booking-service`: a new `TicketRepository.list_by_event(event_id)` method
+(`SELECT` on `Ticket` filtered by `event_id`, no business logic) and a new
+public route `GET /bookings/events/{event_id}/tickets` in
+`app/api/bookings.py` returning
+`list[{ticket_id, section, row_name, seat_label, status, price_cents}]`
+(a new `TicketStatusResponse` schema in `app/api/schemas.py`). No Manager
+class — a pure read with no business rule, called directly from the route
+the same way `search-service`'s `EventConsumer` talks straight to its
+Repository. Add a unit test and an integration test (seed a few tickets,
+assert the route returns them with correct statuses).
+
+Then scaffold `/frontend` as a Vite + React + TypeScript app (`npm create
 vite@latest frontend -- --template react-ts`, then adjust into the
 monorepo layout — no nested `.git`). Add:
 

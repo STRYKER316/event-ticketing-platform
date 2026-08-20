@@ -1,5 +1,6 @@
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,3 +53,10 @@ class TicketRepository(BaseRepository[Ticket]):
             inserted += result.rowcount
         await self._session.flush()
         return inserted
+
+    async def list_by_event(self, event_id: uuid.UUID) -> list[Ticket]:
+        """Every ticket for the event, regardless of status — the frontend's
+        seat map (§23) joins this against Event Service's layout client-side
+        to render live per-seat availability."""
+        result = await self._session.execute(select(Ticket).where(Ticket.event_id == event_id))
+        return list(result.scalars().all())
