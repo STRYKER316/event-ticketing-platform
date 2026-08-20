@@ -58,8 +58,17 @@ class BookingManager:
             raise HTTPException(status.HTTP_409_CONFLICT, "seat unavailable")
 
     async def _create_booking_row(self, user: Principal, ticket: Ticket) -> Booking:
+        # Captured before any commit/rollback: session.rollback() below expires
+        # every attribute on `ticket` (an ORM instance bound to this session),
+        # and accessing an expired attribute triggers an implicit lazy-reload
+        # that isn't safely awaitable from inside this except block — it
+        # raises sqlalchemy.exc.MissingGreenlet instead, turning a clean 409
+        # into an unhandled 500. Found live: a stale PENDING booking left over
+        # from earlier testing (ticket.status said AVAILABLE, but an old
+        # active booking row still referenced it) hit this exact branch.
+        ticket_id = ticket.id
         booking = Booking(
-            user_subject=user.subject, event_id=ticket.event_id, ticket_id=ticket.id, status=BookingStatus.PENDING
+            user_subject=user.subject, event_id=ticket.event_id, ticket_id=ticket_id, status=BookingStatus.PENDING
         )
         try:
             await self._bookings.create(booking)
@@ -71,8 +80,8 @@ class BookingManager:
             # hold we just (wrongly) acquired, not by attempting a
             # distributed rollback (no distributed transactions, §8).
             await self._session.rollback()
-            await self._hold_strategy.release_hold(ticket.id)
-            logger.warning("booking_integrity_race_lost", ticket_id=str(ticket.id))
+            await self._hold_strategy.release_hold(ticket_id)
+            logger.warning("booking_integrity_race_lost", ticket_id=str(ticket_id))
             raise HTTPException(status.HTTP_409_CONFLICT, "seat unavailable") from None
         return booking
 
