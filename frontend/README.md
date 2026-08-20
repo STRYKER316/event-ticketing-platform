@@ -36,3 +36,9 @@ npm run test   # Vitest — the seat-map join and checkout state machine
 npm run lint   # oxlint
 npm run build  # tsc -b && vite build
 ```
+
+`npm run test` needs Node >=22.12 (see `engines` in `package.json`) — its
+jsdom environment pulls in a dependency that only resolves cleanly once
+`require(esm)` is on by default. Verified failing on 22.7.0, passing on
+26.1.0. `npm run build` and `npm run dev` have no such floor; the
+Dockerfile's `node:22-alpine` build stage never runs the test suite.
