@@ -1,8 +1,8 @@
 # Requirement Gathering
 
-*Status: draft, partial — roles/permissions evidence from Phases 1, 3, and 4.
-Cancellation/refund flows fill in as that phase lands; this draft covers
-what's actually enforced in the codebase today, not aspirational scope.*
+*Status: draft, partial — roles/permissions evidence from Phases 1, 3, 4, 5,
+6, and now 7. This draft covers what's actually enforced in the codebase
+today, not aspirational scope.*
 
 ## Actors
 
@@ -223,6 +223,36 @@ chapters' Phase 5 sections for the mechanism, the design reasoning (no
 database, so retry state rides on the Kafka message itself via a
 `RetryEnvelope`), and the live-verification detail (both a forced failure
 recovering on retry, and exhausted retries landing in the DLQ).
+
+## Roles/permissions table — new Booking Service route (Phase 7)
+
+| Endpoint | Anonymous | Any authenticated caller |
+|---|---|---|
+| `GET /bookings/events/{event_id}/tickets` | Allow (200) | Allow |
+
+Public, no role or ownership check — browsing which seats are available
+shouldn't require login, matching Event Service's own public `GET
+/events*` routes; only the act of booking (already authenticated,
+ownership-scoped where relevant) requires one. Added specifically because
+the frontend's seat map (§23) needed a read path this system never
+exposed before Phase 7 — see the Database Schema Design and Class
+Diagrams chapters' Phase 7 sections for the mechanism.
+
+**Frontend auth, stated explicitly so it isn't mistaken for a second
+enforcement layer**: the React app checks the logged-in user's `organizer`
+realm role client-side, purely to decide whether to show or hide the
+organizer screen. That check has zero authority — every organizer route
+it calls (`POST /venues`, `POST /events`, `PUT /events/{id}/seat-map`,
+`POST /events/{id}/publish`) is still `require_role("organizer")`-gated
+server-side exactly as it always was. This phase's live verification
+confirmed the split holds in both directions: a request from a
+non-organizer token still 403s, independent of whether the frontend would
+have shown the button.
+
+**Status:** Implemented, Tested, Verified (live) for the new endpoint and
+the auth split. Full organizer flow (venue → event → seat map → publish)
+live-verified end to end via the same request shapes the frontend sends;
+the published event was immediately searchable and bookable afterward.
 
 ## What this chapter still needs
 

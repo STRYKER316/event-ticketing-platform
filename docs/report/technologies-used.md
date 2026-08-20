@@ -2,8 +2,8 @@
 
 *Status: draft, running list — appended each phase per the DOCUMENT step.
 "Real-world framing" polish pass happens at P11.T2; until then this is
-accurate but unpolished. Entries below cover what Phases 0-3 actually
-introduced and verified running.*
+accurate but unpolished. Entries below cover what Phases 0-3, 8, and now
+7 actually introduced and verified running.*
 
 Each entry: what it is, why it was chosen over the alternatives considered,
 and its status in this build.
@@ -169,15 +169,22 @@ stack's `apache/kafka`, since that container helper's bootstrap scripts are
 Confluent-specific; noted as a test-infrastructure detail, not a production
 concern.
 
-**Phase 3 addendum:** Booking Service's own integration suite passes
-`KafkaContainer("apache/kafka:3.8.0")` directly — the same image the
-compose stack actually runs, not the Confluent substitute above — and it
-boots and works without needing `.with_kraft()` or any other override,
-since the `apache/kafka` image already runs KRaft mode by default. Worth
-noting as a small, real discrepancy between the two services' test
-infrastructure rather than glossing over it: Search Service's Confluent
-workaround may no longer be strictly necessary, but re-verifying that and
-switching it over is out of scope for this phase and not revisited here.
+**Phase 3 addendum, corrected in Phase 6:** this section originally
+claimed Booking Service's own integration suite passed
+`KafkaContainer("apache/kafka:3.8.0")` directly, no Confluent substitute
+needed. That claim was never actually exercised by a real test —
+Booking Service's `kafka_container` fixture sat unused from Phase 3 until
+Phase 6's P6.T4 became its first real caller, and hit an immediate
+failure: both the `apache/kafka` image's Zookeeper and KRaft boot paths
+shell out to `/etc/confluent/docker/configure`, which that image doesn't
+ship, so the container exits (code 2) regardless of `.with_kraft()`. The
+correct, verified pairing is `KafkaContainer("confluentinc/cp-kafka:7.6.0")
+.with_kraft()` — the same combination Search Service's suite already used
+since Phase 2 — now used by both services' fixtures. Left here, corrected
+rather than silently deleted, because the original wrong claim is itself
+an instance of this report's own Integrity rule: a claim that was never
+executed shouldn't have been written as fact, and the record should show
+the correction happened, not just the corrected end state.
 
 **Phase 3 review finding: offset-commit semantics matter for idempotency,
 not just the write itself.** `ProvisioningConsumer` originally left
@@ -482,3 +489,77 @@ against a temporarily shortened `HOLD_TTL_SECONDS=5`/
 window for their respective release mechanisms. Full contention-burst and
 release-latency runs at the P8.T3/T4 fixed load profile, archived under
 `/docs`, are that phase's task, not this one's.
+
+## React + Vite + TypeScript (frontend)
+
+**What:** the minimal five-screen frontend (§10) — Vite as the build
+tool/dev server, React 19, TypeScript throughout, built to static assets
+and served by a plain `nginx:1.27-alpine` container behind Traefik at
+`PathPrefix('/app')`.
+
+**Why:** decisions-log §10 already settled on a minimal React UI over a
+polished product build — the backend stays the graded emphasis. Vite over
+Create React App (unmaintained) or a Next.js-style framework (server
+rendering, routing conventions, and a build pipeline this project has no
+use for — every page here is client-rendered against already-JSON APIs).
+TypeScript specifically to catch API-shape mismatches against the
+backend's own Pydantic schemas at compile time rather than at runtime in
+the browser.
+
+**Status:** Implemented, Tested (Vitest — the seat-map layout/status join
+and the checkout hold→pay state machine, the two pieces of real,
+non-trivial logic; presentational components aren't unit-tested).
+`tsc -b`, `oxlint`, and a production `vite build` all clean. Live-verified
+at the API-contract level (real HTTP through the real container, not
+mocked) — a rendered, clicked-through browser pass is still owed (tracked
+on this phase's own exit checklist).
+
+## `@tanstack/react-query`
+
+**What:** the frontend's entire data-fetching/caching layer — every
+`GET`/mutation call to `event-service`, `search-service`, and
+`booking-service` goes through it, including the seat map's live status
+poll.
+
+**Why:** decisions-log §23's "polling, not push" design for the seat
+map needs an interval-based refetch with request de-duplication and
+cache invalidation; React Query's `refetchInterval` gives that for one
+config line instead of hand-rolled `setInterval`/cleanup logic repeated
+across every screen that needs live data. Chosen over plain
+`fetch`-in-`useEffect` specifically because this project already has one
+genuinely recurring-fetch requirement (the seat map poll) that a bespoke
+hook would otherwise reinvent per call site.
+
+**Status:** Implemented, Tested (indirectly — the seat-map join function
+it feeds is unit-tested; the poll itself is live-verified: a real hold in
+one request flipped a real seat's status in the polled response within
+one interval).
+
+## `react-oidc-context` / `oidc-client-ts` (frontend OIDC client)
+
+**What:** drives the browser-side half of Authorization Code + PKCE
+against Keycloak's `ticketing-frontend` public client (`standardFlowEnabled:
+true`, `directAccessGrantsEnabled: false`, PKCE `S256` required) — login/
+register redirect, callback handling, token storage, and exposing the
+current user/token to the rest of the app via a React context.
+
+**Why:** the realm's frontend client was already configured for a real
+Authorization Code + PKCE flow (§5) before Phase 7 began — building that
+exchange by hand (state/nonce generation, code-verifier storage across the
+redirect, token-endpoint POST, silent renew) is exactly the "don't roll
+your own auth" reasoning §5 already applied to the backend, now applied to
+the one place a browser-side OIDC client is actually needed.
+
+**Status:** Implemented, Tested (live) — but not by trusting the library.
+A full Authorization Code + PKCE exchange was independently driven with
+raw HTTP requests (`curl`, no library) performing the exact same steps
+`react-oidc-context` performs in the browser: fetch the real login page,
+submit real credentials, follow the real redirect back to
+`http://localhost/app/`, exchange the real code for a real token. This is
+what caught a real bug the library itself couldn't have surfaced on its
+own: the issued token carried no `aud` claim at all, because
+`ticketing-frontend` was missing the audience-mapper every backend service
+requires (decisions-log §5 amendment) — fixed, then re-verified the same
+way. See the Testing Strategy chapter's Phase 7 section for the full
+finding and the double-booking-path bug this same live-testing pass also
+caught.

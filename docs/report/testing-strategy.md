@@ -752,3 +752,99 @@ suite, all net-new; `booking-service` 72/72 and `payment-service` 22/22,
 unchanged in count from Phase 6 (this phase's changes to both were covered
 by existing tests plus updated mocks/assertions, not new test cases).
 `pyflakes` clean on every file touched across both review rounds.
+
+## A fifth test tier this phase (Phase 7): live traffic through the real stack finds what mocks and unit-level fakes structurally cannot
+
+Every prior phase's testing tiers — unit tests against fakes, `testcontainers`
+integration tests against real datastores, adversarial `/code-review`
+passes on P3/P8 — all operate on this system's *backend* in isolation.
+Phase 7 added a genuinely new kind of check: driving real, unmocked HTTP
+traffic through the *entire* deployed stack the way an actual browser
+user would, rather than calling a Manager method directly or hitting one
+service's own test client. This found two real, previously-undetected
+bugs that no earlier tier could have caught — worth documenting as its own
+tier, not folded into "self-verification," because both findings share a
+specific mechanism: each depended on a code path that was structurally
+unreachable by every test written before it.
+
+**Finding 1 — an identity-configuration gap invisible to every prior
+phase's tests.** A full Authorization Code + PKCE login was driven with
+raw HTTP requests (fetch the real Keycloak login page, submit real
+credentials, follow the real redirect, exchange the real authorization
+code for a real token) against the `ticketing-frontend` client — the same
+sequence the frontend's OIDC library performs in a browser. The resulting
+token carried no `aud` claim, and every authenticated call with it 401'd
+at every backend service. Root cause: only `ticketing-service` (the
+direct-grant client every prior phase's tests and manual `curl` checks
+actually used) had the `oidc-audience-mapper` protocol mapper that stamps
+`aud: ticketing-services` onto issued tokens; `ticketing-frontend` never
+did. This gap existed from Phase 0 but was unreachable by any test before
+this one, since nothing before Phase 7 ever drove a token through this
+specific client. Fixed (decisions-log §5 amendment); re-verified with a
+real login producing a token with the correct claim.
+
+**Finding 2 — a crash on the double-booking-critical path itself, present
+since Phase 3.** Reproducing P7.T4's own required two-client seat race
+with real concurrent `curl` requests (not `asyncio.gather` inside one test
+process) returned two `500`s instead of the expected one-`201`-one-`409`.
+Traced through the real logs: a pre-existing data inconsistency (a stale
+`PENDING` `Booking` row from earlier Phase 6 testing, still referencing a
+ticket whose `status` had reset to `AVAILABLE`) meant both concurrent
+callers correctly acquired the hold — `_acquire_hold` has no way to see a
+stale booking row — and both reached `_create_booking_row`. The second
+correctly hit `IntegrityError` on `uq_bookings_active_ticket` and entered
+its own documented "defense-in-depth" compensation path, present in
+`booking_manager.py` since Phase 3. That path itself crashed:
+`session.rollback()` expires every attribute on the in-memory `ticket`
+ORM object, and the very next line's `ticket.id` access triggered an
+implicit lazy-reload that isn't safely awaitable there —
+`sqlalchemy.exc.MissingGreenlet` instead of the intended clean `409`.
+
+**Why this matters more than an ordinary bug find**: this is the exact
+mechanism the project's own `CLAUDE.md` singles out P3 for a *dedicated
+adversarial `/code-review` pass* to protect — "the double-booking-critical
+path" — and the bug survived that pass, the concurrency test suite, and
+every phase since. The reason is structural, not a review oversight: the
+existing `test_n_clients_race_one_seat_under_{cron,redis}_strategy_
+exactly_one_wins` tests (real Postgres via `testcontainers`, 25 real
+concurrent clients) already exercise this exact `IntegrityError` branch
+under load, but their helper caught a losing client's exception with a
+bare `except Exception: return False` — indistinguishable from a clean
+`HTTPException(409)` loss. A losing client silently crashing with
+`MissingGreenlet` counted as "lost correctly" for three phases running.
+Fixed both the bug (capture `ticket_id = ticket.id` before the
+commit/rollback, use the captured local afterward — now a `CLAUDE.md`
+convention for any future code touching an ORM attribute post-rollback)
+and the test gap that hid it (narrowed the race-helper's exception catch
+to `HTTPException` with an explicit `status_code == 409` assertion; added
+`test_integrity_race_compensation_does_not_crash`, which reproduces the
+exact scenario deterministically rather than relying on the probabilistic
+25-client race to happen to hit this specific branch).
+
+**The regression test was verified to actually catch the bug, not just
+pass by construction**: reverted only the `booking_manager.py` fix (`git
+stash`) and re-ran `test_integrity_race_compensation_does_not_crash` —
+failed with the exact `MissingGreenlet` traceback the live incident
+produced. Restored the fix, re-ran — passed. Then rebuilt and redeployed
+`booking-service` against the real running stack and repeated the
+original two-client `curl` race with the fix live: one real `201`, one
+clean `409`, no `500`.
+
+**Frontend testing itself** (Vitest): the two pieces of genuinely
+non-trivial logic — `joinSeatMapWithStatus` (the seat-map/ticket-status
+composition, including a case a naive join misses: a layout seat with no
+matching ticket yet, from asynchronous post-publish provisioning, renders
+`unprovisioned` rather than a false `available`) and `checkoutReducer`
+(the hold→pay state machine — a failed hold has no booking to retry
+payment against; a failed payment keeps the existing `PENDING` booking so
+retry is possible) — both unit-tested (7 tests). Presentational
+components are not unit-tested, matching this project's "minimal
+functional UI" scope (§10) — the live end-to-end traffic above is what
+actually exercises them.
+
+**Status:** Implemented, Tested, Verified (live) for both findings and
+their fixes. `booking-service`: 75/75 (74 + the new regression test).
+Frontend: 7/7 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. A
+rendered, clicked-through browser pass (not just the wire-level HTTP
+traffic documented above) is still owed before this phase's own exit
+checklist is fully checked off.

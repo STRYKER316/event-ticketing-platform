@@ -837,3 +837,29 @@ real `notification_delivered` log lines for both `payment_confirmed` and
 untouched, a real `notification_delivery_failed` → `notification_delivered
 _after_retry` recovery sequence with real backoff timing. 11/11 tests green
 (5 unit, 6 `testcontainers` integration against a real Kafka broker).
+
+## Booking Service additions (Phase 7)
+
+A small, deliberately Manager-less addition: `TicketRepository` gains
+`list_by_event(event_id) -> list[Ticket]` (a plain filtered `SELECT`, no
+business rule), and `api/bookings.py` gains one new route, `GET
+/bookings/events/{event_id}/tickets`, that calls it directly and maps each
+row to a new `TicketStatusResponse` DTO (`ticket_id, section, row_name,
+seat_label, status, price_cents`). No `BookingManager` method backs it —
+matching the class-diagram convention already established for
+`search-service`'s `EventConsumer` (§8's layering doc): a pure read with
+no equivalent write path to unify with talks straight to the Repository,
+still exactly one place that touches the datastore. This is the read half
+of the seat-map composition decisions-log §23 describes, which had a
+design but no route until this phase — see the Database Schema Design and
+Requirement Gathering chapters' Phase 7 sections for the endpoint's public/
+no-auth reasoning and the Testing Strategy chapter for how a real
+concurrent-booking bug was found through this exact code path (in
+`_create_booking_row`, not the new route itself, but exercised by the same
+phase's live testing).
+
+**Status:** Implemented, Tested, Verified (live) — `list_by_event` covered
+by two new integration tests (real Postgres); the route live-verified
+against the real running stack, returning correct per-seat status
+including a real hold flipping a seat from `available` to `held` between
+two polls.

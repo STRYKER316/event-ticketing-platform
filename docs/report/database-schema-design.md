@@ -470,3 +470,14 @@ real traffic without one. See the Class Diagrams chapter's Notification
 Service section for the full `RetryEnvelope` shape and retry-ladder
 mechanism, and the Testing Strategy chapter's Phase 5 section for the
 live-verification and code-review detail.
+
+## Phase 7 — no new schema, one new column-free query
+
+The frontend introduces no schema of its own — it's a static build with no
+datastore, the same "no store" case Notification Service already
+established above, for the same reason (nothing here needs one). The one
+backend addition, `GET /bookings/events/{event_id}/tickets`, adds no
+table, column, or migration to `booking_db` — it's a plain `SELECT`
+against the existing `tickets` table (`TicketRepository.list_by_event`),
+filtered by an already-indexed column (`event_id`, indexed since Phase 3).
+See the Class Diagrams chapter's Phase 7 section for the method itself.
