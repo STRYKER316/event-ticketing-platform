@@ -47,6 +47,48 @@ async def test_create_booking_happy_path():
     assert result.event_id == event_id
 
 
+async def test_list_tickets_for_event_maps_ticket_id_from_model_id():
+    # The DTO field is named ticket_id (clearer for a frontend joining it
+    # against a seat map) but the model's own field is id — this is the one
+    # manual mapping step from_attributes can't do for us, so it's the one
+    # thing this test exists to pin down.
+    event_id = uuid.uuid4()
+    ticket = Ticket(
+        id=uuid.uuid4(), event_id=event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.AVAILABLE
+    )
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(list_by_event=AsyncMock(return_value=[ticket])),
+        bookings=AsyncMock(),
+        hold_strategy=FakeHoldStrategy(),
+        events=AsyncMock(),
+    )
+
+    result = await manager.list_tickets_for_event(event_id)
+
+    assert len(result) == 1
+    assert result[0].ticket_id == ticket.id
+    assert result[0].section == "A"
+    assert result[0].row_name == "1"
+    assert result[0].seat_label == "A1"
+    assert result[0].status is TicketStatus.AVAILABLE
+    assert result[0].price_cents == 2500
+
+
+async def test_list_tickets_for_event_empty_for_no_tickets():
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(list_by_event=AsyncMock(return_value=[])),
+        bookings=AsyncMock(),
+        hold_strategy=FakeHoldStrategy(),
+        events=AsyncMock(),
+    )
+
+    result = await manager.list_tickets_for_event(uuid.uuid4())
+
+    assert result == []
+
+
 async def test_create_booking_on_unknown_ticket_404s():
     manager = BookingManager(
         session=AsyncMock(),
