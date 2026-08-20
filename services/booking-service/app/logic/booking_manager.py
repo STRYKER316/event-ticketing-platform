@@ -8,7 +8,7 @@ from shared_auth import Principal
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.schemas import BookingPayResponse, BookingResponse
+from app.api.schemas import BookingPayResponse, BookingResponse, TicketStatusResponse
 from app.core import get_settings
 from app.db.booking_repository import BookingRepository
 from app.db.event_repository import EventRepository
@@ -34,6 +34,23 @@ class BookingManager:
         self._bookings = bookings
         self._hold_strategy = hold_strategy
         self._events = events
+
+    async def list_tickets_for_event(self, event_id: uuid.UUID) -> list[TicketStatusResponse]:
+        """Public, read-only composition source for the frontend's seat map
+        (§23): layout comes from Event Service, live per-seat status and
+        ticket_id come from here."""
+        tickets = await self._tickets.list_by_event(event_id)
+        return [
+            TicketStatusResponse(
+                ticket_id=ticket.id,
+                section=ticket.section,
+                row_name=ticket.row_name,
+                seat_label=ticket.seat_label,
+                status=ticket.status,
+                price_cents=ticket.price_cents,
+            )
+            for ticket in tickets
+        ]
 
     async def create_booking(self, user: Principal, ticket_id: uuid.UUID) -> BookingResponse:
         ticket = await self._fetch_bookable_ticket(ticket_id)

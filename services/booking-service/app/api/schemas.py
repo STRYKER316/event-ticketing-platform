@@ -26,7 +26,7 @@ class BookingResponse(BaseModel):
 
 
 class TicketStatusResponse(BaseModel):
-    """Built explicitly from a Ticket row in the route, not via
+    """Built explicitly from a Ticket row in BookingManager, not via
     from_attributes — the field is named ticket_id here (clearer for a
     frontend joining it against a seat map) but id on the model, so
     automatic attribute mapping doesn't apply."""
