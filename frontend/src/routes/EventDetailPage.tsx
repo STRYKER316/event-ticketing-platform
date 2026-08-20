@@ -18,8 +18,12 @@ export function EventDetailPage() {
   const eventId = id!
 
   const eventQuery = useQuery({ queryKey: ['event', eventId], queryFn: () => getEvent(eventId) })
-  // Layout is static per event (§23) — fetched once, no polling.
-  const seatMapQuery = useQuery({ queryKey: ['seat-map', eventId], queryFn: () => getSeatMap(eventId) })
+  // Layout is static per event (§23) — fetched once, no polling, never refetched.
+  const seatMapQuery = useQuery({
+    queryKey: ['seat-map', eventId],
+    queryFn: () => getSeatMap(eventId),
+    staleTime: Infinity,
+  })
   // Live status polls per §23's "polling, not push" decision.
   const ticketsQuery = useQuery({
     queryKey: ['tickets', eventId],

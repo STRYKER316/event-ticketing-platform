@@ -1,3 +1,6 @@
+import { useMemo } from 'react'
+import { useAuth } from 'react-oidc-context'
+
 // Client-side-only role check for hiding UI, not a security boundary —
 // real enforcement is server-side (require_role, unchanged by this phase).
 // The access token (not the ID token profile) carries realm_access.roles.
@@ -11,4 +14,10 @@ export function accessTokenRoles(accessToken: string | undefined): string[] {
   } catch {
     return []
   }
+}
+
+// Shared memoized accessor — avoids every consumer re-deriving its own useMemo.
+export function useRoles(): string[] {
+  const auth = useAuth()
+  return useMemo(() => accessTokenRoles(auth.user?.access_token), [auth.user?.access_token])
 }

@@ -7,7 +7,10 @@ import './index.css'
 import App from './App.tsx'
 import { oidcConfig } from './auth/oidcConfig.ts'
 
-const queryClient = new QueryClient()
+// Default staleTime avoids refetching unchanged data on every remount/window
+// refocus; queries that need fresher data (e.g. live ticket status) opt into
+// their own refetchInterval/staleTime instead.
+const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 30_000 } } })
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

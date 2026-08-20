@@ -11,37 +11,40 @@ type Step = 'venue' | 'event' | 'seat-map' | 'publish' | 'done'
 export function OrganizerPage() {
   const auth = useAuth()
   const token = auth.user!.access_token
-  const [step, setStep] = useState<Step>('venue')
   const [venueId, setVenueId] = useState<string | null>(null)
   const [eventId, setEventId] = useState<string | null>(null)
   const [sections, setSections] = useState<SeatMapSectionInput[]>([])
 
   const venueMutation = useMutation({
     mutationFn: (payload: { name: string; address: string; capacity: number }) => createVenue(payload, token),
-    onSuccess: (venue) => {
-      setVenueId(venue.id)
-      setStep('event')
-    },
+    onSuccess: (venue) => setVenueId(venue.id),
   })
 
   const eventMutation = useMutation({
     mutationFn: (payload: { title: string; description: string; start_time: string; end_time: string }) =>
       createEvent({ ...payload, venue_id: venueId! }, token),
-    onSuccess: (event) => {
-      setEventId(event.id)
-      setStep('seat-map')
-    },
+    onSuccess: (event) => setEventId(event.id),
   })
 
   const seatMapMutation = useMutation({
     mutationFn: () => upsertSeatMap(eventId!, sections, token),
-    onSuccess: () => setStep('publish'),
   })
 
   const publishMutation = useMutation({
     mutationFn: () => publishEvent(eventId!, token),
-    onSuccess: () => setStep('done'),
   })
+
+  // Derived from the state each step's completion actually produces, rather
+  // than tracked separately and kept in sync by hand in each onSuccess.
+  const step: Step = !venueId
+    ? 'venue'
+    : !eventId
+      ? 'event'
+      : !seatMapMutation.isSuccess
+        ? 'seat-map'
+        : !publishMutation.isSuccess
+          ? 'publish'
+          : 'done'
 
   const addSection = () => {
     setSections((prev) => [...prev, { name: '', price_cents: 0, rows: [] }])
@@ -56,19 +59,13 @@ export function OrganizerPage() {
       .split(',')
       .map((s) => s.trim())
       .filter(Boolean)
-    setSections((prev) =>
-      prev.map((section, i) =>
-        i !== sectionIndex
-          ? section
-          : {
-              ...section,
-              rows: [
-                ...section.rows,
-                { name: rowName, seats: labels.map((label, idx) => ({ label, x: idx + 1, y: section.rows.length + 1 })) },
-              ],
-            },
-      ),
-    )
+    const currentRows = sections[sectionIndex].rows
+    updateSection(sectionIndex, {
+      rows: [
+        ...currentRows,
+        { name: rowName, seats: labels.map((label, idx) => ({ label, x: idx + 1, y: currentRows.length + 1 })) },
+      ],
+    })
   }
 
   return (

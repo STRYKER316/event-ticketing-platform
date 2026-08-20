@@ -1,7 +1,6 @@
-import { useMemo } from 'react'
 import type { ReactNode } from 'react'
 import { useAuth } from 'react-oidc-context'
-import { accessTokenRoles } from '../auth/roles'
+import { useRoles } from '../auth/roles'
 
 interface ProtectedRouteProps {
   children: ReactNode
@@ -10,7 +9,7 @@ interface ProtectedRouteProps {
 
 export function ProtectedRoute({ children, requireRole }: ProtectedRouteProps) {
   const auth = useAuth()
-  const roles = useMemo(() => accessTokenRoles(auth.user?.access_token), [auth.user?.access_token])
+  const roles = useRoles()
 
   if (auth.isLoading) return <p>Loading...</p>
 
