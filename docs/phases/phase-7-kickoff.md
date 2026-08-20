@@ -35,10 +35,13 @@ architecture):
    row per ticket. Public because browsing seat availability (like
    `event-service`'s own `GET /events*` routes) shouldn't require login —
    only booking itself does. Thin addition: a new
-   `TicketRepository.list_by_event` query method + a route calling it
-   directly (no Manager needed — pure read, no business rule, mirrors how
-   `search-service`'s `EventConsumer` talks straight to its Repository
-   when there's no equivalent write path to unify with).
+   `TicketRepository.list_by_event` query method plus a route calling
+   `BookingManager.list_tickets_for_event` — the same Manager+Repository
+   shape every other route in this file uses, not the
+   `search-service`-`EventConsumer` Repository-direct exception (that
+   exception is for a Kafka consumer with no equivalent API route to
+   unify with; this addition *is* the equivalent API route, so it gets
+   its own Manager method like the rest).
 2. **Keycloak registration is currently disabled.** `registrationAllowed`
    is unset (defaults false) on the `ticketing` realm; only the three
    seeded demo users (`alice`/`bob`/`carol`) exist. P7.T1's "login/register"

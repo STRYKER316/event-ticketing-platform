@@ -3570,3 +3570,37 @@ Backend suite after fixes: 77/77 (75 + 2 new). Frontend: `tsc`/`vitest`
 Decisions-log delta: §23's amendment corrected in place (see above) —
 not a new decision, a factual fix to an already-recorded one. `CLAUDE.md`
 delta: none.
+
+## 2026-08-20 — Phase 7 `/pre-pr` gate: code-review re-run finds 3 more, gate clean
+
+Re-ran Step 2 (code-review) after the prior entry's 9 fixes, per the
+skill's own "fix, then re-run before continuing" rule rather than
+assuming the fixes held. All 8 verified good; 3 new, smaller findings:
+
+- The prior entry's doc correction (the ticket-status route's "no
+  Manager class" claim) missed a third occurrence — `phase-7-kickoff.md`'s
+  gap-1 "Resolved:" paragraph still asserted it, contradicting the same
+  file's own corrected P7.T1 sections a few dozen lines down. Fixed.
+- `VITE_KEYCLOAK_ISSUER` — a fourth `VITE_*` build arg alongside the
+  three `*_SERVICE_URL` ones — had the identical unset-silently-breaks
+  failure mode the prior entry's `client.ts` check was meant to close,
+  just left uncovered because it lives in `oidcConfig.ts`, not
+  `client.ts`. Fixed with the same throw-on-missing pattern.
+  **Correction to the prior entry**: it described that fix as validating
+  "the four `VITE_*_SERVICE_URL` build args" — there are three
+  `*_SERVICE_URL` vars, not four; `VITE_KEYCLOAK_ISSUER` is the fourth
+  `VITE_*` var overall, and it's the one that was actually still
+  unvalidated until this entry.
+- `npm run test` failed on Node 22.7.0 (an `ERR_REQUIRE_ESM` inside
+  vitest's jsdom environment) but passed on 26.1.0 — a real local-dev
+  footgun not caught earlier because this session's own dev shell had
+  already been using 26.1.0 throughout. Added an `engines.node
+  >=22.12.0` floor to `package.json` and a note in the frontend README;
+  confirmed the Dockerfile's `node:22-alpine` build stage never runs the
+  test suite, so this doesn't affect the container build.
+
+Backend suite: 77/77 (unchanged — no Python touched this round).
+Frontend: `tsc`/`vitest` (8/8)/`oxlint` all clean. Code-review re-run a
+third time after these three fixes: no new findings — gate closed.
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.
