@@ -3411,3 +3411,74 @@ checked off as fully done until that happens.
 Full booking-service suite still 74/74 (unchanged by this session's
 frontend/infra work). Decisions-log delta: §5 amendment (audience mapper)
 added.
+
+## 2026-08-20 — P7.T4 live race testing finds a real crash on the double-booking-critical path, missed since Phase 3
+
+Working through P7.T4's own "done when" bar (reproduce the 409 seat-race
+case with two concurrent requests against the same seat) with two real
+concurrent `curl` requests — real `alice`/`bob` tokens, real Booking
+Service, not the unit-level `FakeHoldStrategy` suite — both requests came
+back `500 Internal Server Error`, not the expected one-201-one-409.
+
+**Root cause, traced through the real logs**: the ticket picked for the
+test had a genuine pre-existing data inconsistency (from Phase 6 test
+data): `Ticket.status` said `AVAILABLE`, but an old `PENDING` `Booking` row
+still referenced it. `BookingManager._acquire_hold` has no way to see
+that — it correctly grants the hold to both concurrent callers based on
+`Ticket.status` alone — so both reached `_create_booking_row`, and the
+second correctly hit `IntegrityError` on `uq_bookings_active_ticket`,
+entering its own "defense-in-depth" compensation path (`booking_manager.py`,
+present since Phase 3). That path itself crashed:
+`await self._session.rollback()` expires every attribute on the in-memory
+`ticket` ORM object, and the very next line's `ticket.id` access triggers
+an implicit lazy-reload that isn't safely awaitable there —
+`sqlalchemy.exc.MissingGreenlet` instead of the intended clean 409. This
+turned a correctly-caught race into an unhandled 500 for *both* concurrent
+requests.
+
+**This is the double-booking-critical path** (§6, the reason P3 got a
+dedicated adversarial `/code-review` pass on top of self-verification) —
+worth being honest that it was missed there, and how: the existing
+`test_n_clients_race_one_seat_under_{cron,redis}_strategy_exactly_one_wins`
+integration tests (real Postgres via testcontainers, 25 real concurrent
+clients) already exercise this exact IntegrityError branch under load, but
+their helper caught losses with a bare `except Exception: return False` —
+indistinguishable from a clean `HTTPException(409)` loss, so a losing
+client silently crashing with `MissingGreenlet` still counted as "lost
+correctly." The bug has been reachable by that test since Phase 3;
+nothing in its assertions could have caught it.
+
+Fixed both the bug and the test gap that hid it:
+- `booking_manager.py`: capture `ticket_id = ticket.id` before the
+  commit/rollback, use the captured local for both the `release_hold` call
+  and the warning log instead of re-touching the (now-expired) `ticket`
+  object.
+- `test_concurrency_suite.py`: the race-helper's `except Exception` narrowed
+  to `except HTTPException`, with an explicit `assert exc.status_code ==
+  409` — any other exception (a real crash) now fails the test instead of
+  silently counting as an ordinary loss.
+- Added `test_integrity_race_compensation_does_not_crash`: reproduces the
+  exact live scenario deterministically (seed an `AVAILABLE` ticket, insert
+  a stale `PENDING` booking against it directly, then attempt
+  `create_booking` again) rather than relying on the probabilistic
+  25-client race to happen to hit this specific branch.
+
+**Verified the regression test actually catches the bug**: reverted just
+`booking_manager.py` via `git stash`, re-ran
+`test_integrity_race_compensation_does_not_crash` — failed with the exact
+`MissingGreenlet` traceback from the live incident. Restored the fix,
+re-ran: passed. Full suite: 75/75 (74 + this new test). `pyflakes` clean.
+
+Rebuilt and redeployed `booking-service` against the real stack; cleaned
+up the stale Phase 6 test data that had exposed the bug
+(`DELETE FROM bookings WHERE ticket_id=... AND status IN ('CANCELLED',
+'PENDING')` — local dev data, not production); re-ran the original live
+race with fresh tokens: one real `201` (a genuine `PENDING` booking), one
+real clean `409 {"detail":"seat unavailable"}`. This also directly
+satisfies P7.T4's own required 409-race demonstration.
+
+Decisions-log delta: none — this is a bug fix on an already-decided
+mechanism (§6), not a design change. `CLAUDE.md` delta: none — the
+existing "test-first for the dual hold strategies" and "P3 gets a
+dedicated code-review pass" rules already cover this class of risk; the
+gap was in that review's actual coverage, not in the rule itself.
