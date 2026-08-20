@@ -3334,3 +3334,80 @@ before-implementation timing as the §7.2/§9/§16/§22 amendments. The
 Keycloak-registration and Traefik-`/app`-routing corrections are config,
 not architecture, so they stay documented in the kickoff doc itself and
 `infra/README.md` (at CHECKPOINT) rather than the decisions log.
+
+## 2026-08-20 — P7.T1 frontend half: scaffold, auth, and a real login-flow bug the earlier backend-only verification couldn't have caught
+
+Scaffolded `/frontend` (Vite + React 19 + TypeScript, `react-router-dom`,
+`@tanstack/react-query`, `react-oidc-context`/`oidc-client-ts`; node wasn't
+on `PATH` directly — resolved via the machine's existing `nvm`, node
+22.7.0 for `create-vite` then 26.1.0 for everything else since
+`create-vite@9`/most current packages require `>=22.12`). App shell:
+`AuthProvider` (Authorization Code + PKCE against `ticketing-frontend`),
+`QueryClientProvider`, `BrowserRouter basename="/app"`; routes for all
+five screens (`/search`, `/events/:id`, `/checkout/:ticketId`,
+`/confirmation`, `/organizer`); a thin `apiFetch` client attaching the
+bearer token and resolving each backend service's base URL.
+
+Two pure, non-trivial pieces pulled out for real unit tests per the
+kickoff doc's testing section: `joinSeatMapWithStatus` (the seat-map/
+ticket-status composition from §23 — also handles a case the naive join
+wouldn't: a layout seat with no matching ticket row yet, from async
+post-publish provisioning, renders `unprovisioned` rather than a false
+`available`) and `checkoutReducer` (the hold→pay state machine — a failed
+hold has no booking to retry payment against; a failed payment keeps the
+existing `PENDING` booking so retry is possible). 7 Vitest tests, all
+green; `tsc -b` and `oxlint` both clean; production build succeeds
+(`vite build`, 349KB JS gzipped to 105KB).
+
+`frontend/Dockerfile` (multi-stage: `node:22-alpine` build, `nginx:1.27-
+alpine` runtime serving `/app`), `nginx.conf` (SPA `try_files` fallback
+under `/app/`), and the `frontend` service + Traefik labels added to
+`infra/docker-compose.yml` (`PathPrefix('/app')`, verified via
+`GET :8080/api/http/routers` to win over `event-service`'s catch-all by
+priority — 18 vs. 15 — exactly as CLAUDE.md's routing convention predicts,
+no explicit `priority` label needed). Built and brought up against the
+real stack; `/app/`, a built JS asset, and a deep-linked route
+(`/app/events/{id}`) all returned real 200s.
+
+**Live-verifying login (not mocked) found a real bug no earlier phase's
+tests could have caught**: a full Authorization Code + PKCE flow driven
+with `curl` (fetch the real login page, submit real credentials as
+`alice`, follow the real redirect, exchange the real code for a real
+token — the same sequence `react-oidc-context` performs in the browser)
+succeeded at every OIDC step, but the resulting access token carried no
+`aud` claim at all, and every backend call with it 401'd
+("Invalid token"). Root cause: `ticketing-frontend` never had the
+`oidc-audience-mapper` protocol mapper that stamps `aud: ticketing-services`
+onto issued tokens — only `ticketing-service` (the direct-grant client
+every earlier phase's tests and manual curl checks actually exercised)
+had one. This gap existed since Phase 0 but was structurally unreachable
+by any test before this one, since nothing before P7 ever drove a token
+through `ticketing-frontend` end-to-end. Fixed by adding the identical
+mapper to `ticketing-frontend` (decisions-log §5 amendment); Keycloak
+container recreated to pick up both this and the earlier realm edits
+(dev-mode Keycloak only imports `realm-export.json` on startup, and has
+no persistent volume in this compose file, so a plain recreate is
+sufficient — no manual realm re-import needed).
+
+Re-verified the full authenticated path after the fix, still against the
+real stack: `alice` login → real token with `aud: ticketing-services` and
+`realm_access.roles: ["user"]` → real `POST /bookings/events/{id}/tickets`
+showing a real seat as `available` → real `POST /bookings` → the same
+tickets endpoint immediately showing that seat as `held` (proving the
+polling endpoint reflects a real hold, not just its own test data) →
+`POST /bookings/{id}/pay` reached Payment Service and failed only at
+Stripe's placeholder-key boundary — the same pre-existing, already-
+documented gap Phase 4/6 carry, not a Phase 7 regression.
+
+**Not yet done, deferred to before CHECKPOINT**: an actual browser-based
+visual check (Claude in Chrome's extension wasn't connected this
+session) — the curl-driven flow proves every wire-level contract the
+browser flow depends on (redirect_uri acceptance, PKCE exchange, token
+shape, CORS-relevant `webOrigins`), but hasn't confirmed the rendered UI
+itself looks/behaves correctly. P7.T2 onward should include a real
+browser pass once available, and P7.T1's own exit-checklist item isn't
+checked off as fully done until that happens.
+
+Full booking-service suite still 74/74 (unchanged by this session's
+frontend/infra work). Decisions-log delta: §5 amendment (audience mapper)
+added.

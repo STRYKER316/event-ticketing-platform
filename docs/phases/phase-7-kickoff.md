@@ -17,9 +17,11 @@ hold strategies), P4 (Payment Service, charge flow) all complete and
 checkpointed. Per the locked build order (§27), Phase 7 runs after Phase 6
 and Phase 5, both already checkpointed.
 
-**Four gaps found and resolved before this task list was finalized** (a
-decisions-log §23 amendment records the first two; the last two are local
-config corrections, not architecture):
+**Five gaps found and resolved** — the first four before this task list was
+finalized, the fifth only surfaced once P7.T1's live verification actually
+drove a token through the real frontend client (decisions-log §23 records
+the first two, §5 the fifth; gaps 3-4 are local config corrections, not
+architecture):
 
 1. **The seat map's live per-seat status has no read endpoint.**
    `booking-service` only exposes `POST /bookings`, `POST /bookings/{id}/pay`,
@@ -74,6 +76,20 @@ config corrections, not architecture):
    `http://localhost:5173/*` (standalone `npm run dev`) and
    `http://localhost/app/*` (full docker-compose stack through Traefik on
    port 80), replacing the stale `http://localhost:3000/*` entry.
+5. **`ticketing-frontend` had no audience-mapper, so its tokens carried no
+   `aud` claim at all** — found only by live-verifying a real login against
+   the real stack (P7.T1's own "done when" bar), not by any earlier
+   phase's tests, since none of them drive a token through this specific
+   client. Every backend service's `shared_auth` validates
+   `AUTH_EXPECTED_AUDIENCE: ticketing-services`; only `ticketing-service`
+   (the direct-grant client every prior phase's own tests and manual
+   curl checks actually used) carried the `oidc-audience-mapper` that
+   stamps that claim on. Every authenticated call from the real frontend
+   would have 401'd with "Invalid token" at every service. **Resolved:**
+   added the identical protocol mapper to `ticketing-frontend`
+   (decisions-log §5 amendment) — re-verified with a real `alice` login
+   producing `aud: ticketing-services` and a real `POST /bookings`
+   succeeding.
 
 **Process notes specific to this phase (per `CLAUDE.md`):**
 - **Build-then-test for everything** — nothing here is on the test-first
@@ -134,12 +150,15 @@ monorepo layout — no nested `.git`). Add:
   attaches `Authorization: Bearer <token>` from the current OIDC user when
   present, base URLs per backend service read from `import.meta.env`
   (`VITE_EVENT_SERVICE_URL`, `VITE_SEARCH_SERVICE_URL`,
-  `VITE_BOOKING_SERVICE_URL`) — through Traefik in the compose stack
-  (`http://localhost`, path-prefixed per service, same prefixes
-  `infra/README.md`'s router table already documents), directly to each
-  service's own port in standalone dev (`.env.example`'s
-  `*_SERVICE_PORT` values) since Traefik isn't running outside compose.
-  A 401 response triggers `signinRedirect()`.
+  `VITE_BOOKING_SERVICE_URL`). **Correction from this file's original
+  draft**: none of the backend services publish a host port in
+  `infra/docker-compose.yml` — only Traefik does (`"80:80"`). So all three
+  always resolve to `http://localhost` through Traefik, path-prefixed per
+  service (same prefixes `infra/README.md`'s router table documents),
+  in both the containerized frontend *and* standalone `npm run dev` — the
+  backend stack (`docker compose up`, frontend container excluded) must be
+  running either way; there is no direct-port fallback. A 401 response
+  triggers `signinRedirect()`.
 - Route shell: `/` (redirect to `/search`), `/login` (or a button that
   just calls `signinRedirect` — no separate screen needed since Keycloak
   hosts the actual form), `/search`, `/events/:id`, `/checkout/:ticketId`,

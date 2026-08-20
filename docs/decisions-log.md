@@ -58,6 +58,8 @@ Auth is not a separate microservice — each service independently validates Key
 
 The gateway swap (Spring Cloud Gateway / hand-built → Traefik) was judged close to a free trade — real infra skill either way, minimal cost either way.
 
+**Amendment (Phase 7, 2026-08-20):** live-verifying the frontend's login (a real Authorization Code + PKCE exchange against `ticketing-frontend`, not a mock) surfaced a gap every prior phase's testing had no way to reach — every backend service validates `AUTH_EXPECTED_AUDIENCE: ticketing-services` (`shared_auth`), but only the `ticketing-service` client (used for direct-grant service-to-service tokens in earlier phases' own integration tests) carried the `oidc-audience-mapper` protocol mapper that actually stamps that claim onto issued tokens. `ticketing-frontend` had none, so every token it issued had no `aud` claim at all — every authenticated call from the real frontend would have 401'd with "Invalid token" at every backend service, undetected until an actual browser-shaped login flow was exercised, since no earlier phase's test suite drives a token through this specific client. Resolved: added the identical `ticketing-services-audience` protocol mapper to `ticketing-frontend` in `infra/keycloak/realm-export.json`. Re-verified end-to-end after the fix: a real `alice` login now yields `aud: ticketing-services`, and a real `POST /bookings` with that token succeeds (reaches a real `PENDING` booking, not an auth rejection).
+
 ## 6. Booking Hold Mechanism — Decided
 
 Both strategies implemented behind a common interface (e.g. `TicketHoldStrategy`) in Booking Service, swappable via config:

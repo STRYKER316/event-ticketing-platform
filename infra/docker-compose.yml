@@ -277,6 +277,27 @@ services:
       traefik.http.routers.notification-service.rule: PathPrefix(`/notifications`)
       traefik.http.services.notification-service.loadbalancer.server.port: "8005"
 
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        # Vite bakes these into the bundle at build time (frontend/Dockerfile).
+        # None of the backend services publish their own host port — only
+        # Traefik does — so every one of these always resolves through it.
+        VITE_EVENT_SERVICE_URL: http://localhost
+        VITE_SEARCH_SERVICE_URL: http://localhost
+        VITE_BOOKING_SERVICE_URL: http://localhost
+        VITE_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
+    labels:
+      traefik.enable: "true"
+      # event-service keeps its locked PathPrefix('/') catch-all as-is
+      # (CLAUDE.md — "left as-is on purpose rather than retrofitted"), so
+      # the frontend gets its own specific prefix like every other
+      # post-event-service addition, not a competing catch-all
+      # (decisions-log §23 amendment).
+      traefik.http.routers.frontend.rule: PathPrefix(`/app`)
+      traefik.http.services.frontend.loadbalancer.server.port: "80"
+
   prometheus:
     image: prom/prometheus:v2.55.1
     profiles: ["benchmark"]

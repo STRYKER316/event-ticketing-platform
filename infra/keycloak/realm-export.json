@@ -2,6 +2,7 @@
   "realm": "ticketing",
   "enabled": true,
   "sslRequired": "none",
+  "registrationAllowed": true,
   "roles": {
     "realm": [
       { "name": "user", "description": "Can browse events and book tickets" },
@@ -21,8 +22,21 @@
       "attributes": {
         "pkce.code.challenge.method": "S256"
       },
-      "redirectUris": ["http://localhost:3000/*"],
-      "webOrigins": ["http://localhost:3000"]
+      "redirectUris": ["http://localhost/app/*", "http://localhost:5173/*"],
+      "webOrigins": ["http://localhost", "http://localhost:5173"],
+      "protocolMappers": [
+        {
+          "name": "ticketing-services-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "ticketing-services",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
     },
     {
       "clientId": "ticketing-service",
