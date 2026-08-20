@@ -57,6 +57,9 @@ export function EventDetailPage() {
       <p>
         {event.venue.name} — {new Date(event.start_time).toLocaleString()}
       </p>
+      {ticketsQuery.error && (
+        <ErrorText message="Live seat status is temporarily unavailable — seats shown below may be out of date." />
+      )}
       <SeatMap sections={sections} onSelectSeat={handleSelectSeat} />
     </div>
   )

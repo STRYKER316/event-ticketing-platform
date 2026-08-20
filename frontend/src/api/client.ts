@@ -4,6 +4,12 @@ const SERVICE_BASE_URLS = {
   booking: import.meta.env.VITE_BOOKING_SERVICE_URL,
 } as const
 
+// Fail loudly at startup rather than resolving fetch URLs to "undefined/..."
+// if a build/deploy forgot to set one of these.
+for (const [service, url] of Object.entries(SERVICE_BASE_URLS)) {
+  if (!url) throw new Error(`Missing VITE_${service.toUpperCase()}_SERVICE_URL`)
+}
+
 type Service = keyof typeof SERVICE_BASE_URLS
 
 export class ApiError extends Error {
@@ -46,4 +52,12 @@ export async function apiFetch<T>(
 
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
+}
+
+// A rejection reaching a .catch isn't guaranteed to be the ApiError apiFetch
+// throws — a network-level failure (offline, CORS, DNS) surfaces as a plain
+// fetch TypeError with no .status — so callers that want to branch on status
+// must narrow with instanceof rather than assuming the type.
+export function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Something went wrong.'
 }

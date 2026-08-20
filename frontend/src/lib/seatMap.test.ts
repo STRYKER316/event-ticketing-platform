@@ -57,4 +57,24 @@ describe('joinSeatMapWithStatus', () => {
     expect(floor.rows[0].seats[0].ticketId).toBe('t-floor')
     expect(balcony.rows[0].seats[0].ticketId).toBeNull()
   })
+
+  it('does not cross-match when a space-separated join of section/row/label would collide', () => {
+    // ("Floor A", "1", "1") and ("Floor", "A 1", "1") joined with a plain
+    // space produce the same string — organizer-typed section/row names are
+    // free text, so this must not happen (found in code review).
+    const collidingMap: SeatMap = {
+      event_id: 'e1',
+      sections: [
+        { name: 'Floor A', price_cents: 5000, rows: [{ name: '1', seats: [{ label: '1', x: 1, y: 1 }] }] },
+        { name: 'Floor', price_cents: 3000, rows: [{ name: 'A 1', seats: [{ label: '1', x: 1, y: 1 }] }] },
+      ],
+    }
+    const tickets: TicketStatusEntry[] = [
+      { ticket_id: 't-real', section: 'Floor A', row_name: '1', seat_label: '1', status: 'booked', price_cents: 5000 },
+    ]
+
+    const [first, second] = joinSeatMapWithStatus(collidingMap, tickets)
+    expect(first.rows[0].seats[0].ticketId).toBe('t-real')
+    expect(second.rows[0].seats[0].ticketId).toBeNull()
+  })
 })

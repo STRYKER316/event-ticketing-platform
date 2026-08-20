@@ -1,8 +1,8 @@
-import { useEffect, useReducer } from 'react'
+import { useEffect, useReducer, useRef } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useAuth } from 'react-oidc-context'
 import { createBooking, payBooking } from '../api/booking'
-import { ApiError } from '../api/client'
+import { ApiError, errorMessage } from '../api/client'
 import { checkoutReducer, initialCheckoutState } from '../lib/checkout'
 import { formatMoney } from '../lib/format'
 import type { SelectedSeatInfo } from '../components/SeatMap'
@@ -18,20 +18,26 @@ export function CheckoutPage() {
 
   const token = auth.user?.access_token
 
+  // Guards against React StrictMode's dev-only double-invoke of this effect:
+  // without it, the second invocation re-holds the same ticket, loses the
+  // real API's race to the first hold, and its 409 overwrites the correct
+  // HOLD_SUCCEEDED with a false "someone else took this seat" error.
+  const heldTicketRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (!ticketId || !token) return
+    if (heldTicketRef.current === ticketId) return
+    heldTicketRef.current = ticketId
     dispatch({ type: 'HOLD_REQUESTED' })
     createBooking(ticketId, token)
       .then((booking) => dispatch({ type: 'HOLD_SUCCEEDED', booking }))
-      .catch((err: ApiError) =>
+      .catch((err: unknown) =>
         dispatch({
           type: 'HOLD_FAILED',
-          error: err.status === 409 ? 'This seat was just taken by someone else.' : err.message,
+          error: err instanceof ApiError && err.status === 409 ? 'This seat was just taken by someone else.' : errorMessage(err),
         }),
       )
-    // Runs once per mount — re-holding on every render would double-acquire.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ticketId])
+  }, [ticketId, token])
 
   const handlePay = () => {
     if (state.status !== 'held' && state.status !== 'payment_failed') return
@@ -42,7 +48,7 @@ export function CheckoutPage() {
         dispatch({ type: 'PAY_SUCCEEDED', payment })
         navigate('/confirmation', { state: { payment, seatInfo } })
       })
-      .catch((err: ApiError) => dispatch({ type: 'PAY_FAILED', error: err.message }))
+      .catch((err: unknown) => dispatch({ type: 'PAY_FAILED', error: errorMessage(err) }))
   }
 
   if (state.status === 'idle' || state.status === 'holding') return <p>Holding your seat...</p>

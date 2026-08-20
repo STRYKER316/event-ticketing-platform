@@ -20,8 +20,14 @@ export interface JoinedSection {
   rows: JoinedRow[]
 }
 
+// JSON-encoded, not a plain join — organizer-typed section/row names are free
+// text (OrganizerPage's form has no character restriction), so a joining
+// separator that could itself appear in one of the three parts (e.g. a space)
+// risks two distinct (section, row, label) triples colliding on the same key.
+// JSON.stringify escapes each part, so this is collision-safe regardless of
+// what an organizer types.
 function seatKey(section: string, row: string, label: string): string {
-  return [section, row, label].join(' ')
+  return JSON.stringify([section, row, label])
 }
 
 // Composes Event Service's static layout with Booking Service's live
