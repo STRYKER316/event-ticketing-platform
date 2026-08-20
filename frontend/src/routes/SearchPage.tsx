@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { searchEvents } from '../api/search'
+import { ErrorText } from '../components/ErrorText'
 
 const PAGE_SIZE = 20
 
@@ -35,7 +36,7 @@ export function SearchPage() {
       />
 
       {isLoading && <p>Loading...</p>}
-      {error && <p role="alert">Failed to load events: {error.message}</p>}
+      {error && <ErrorText message={`Failed to load events: ${error.message}`} />}
 
       <ul>
         {data?.items.map((item) => (

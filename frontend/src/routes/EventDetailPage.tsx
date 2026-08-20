@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { useAuth } from 'react-oidc-context'
@@ -6,6 +7,7 @@ import { getTicketsForEvent } from '../api/booking'
 import { joinSeatMapWithStatus } from '../lib/seatMap'
 import { SeatMap } from '../components/SeatMap'
 import type { SelectedSeatInfo } from '../components/SeatMap'
+import { ErrorText } from '../components/ErrorText'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -25,13 +27,16 @@ export function EventDetailPage() {
     refetchInterval: POLL_INTERVAL_MS,
   })
 
+  const seatMap = seatMapQuery.data
+  const tickets = ticketsQuery.data
+  // Hook must run every render regardless of the loading/error early-returns below.
+  const sections = useMemo(() => (seatMap ? joinSeatMapWithStatus(seatMap, tickets ?? []) : []), [seatMap, tickets])
+
   if (eventQuery.isLoading || seatMapQuery.isLoading) return <p>Loading...</p>
-  if (eventQuery.error) return <p role="alert">Failed to load event: {eventQuery.error.message}</p>
-  if (seatMapQuery.error) return <p role="alert">Failed to load seat map: {seatMapQuery.error.message}</p>
+  if (eventQuery.error) return <ErrorText message={`Failed to load event: ${eventQuery.error.message}`} />
+  if (seatMapQuery.error) return <ErrorText message={`Failed to load seat map: ${seatMapQuery.error.message}`} />
 
   const event = eventQuery.data!
-  const seatMap = seatMapQuery.data!
-  const sections = joinSeatMapWithStatus(seatMap, ticketsQuery.data ?? [])
 
   const handleSelectSeat = (ticketId: string, info: SelectedSeatInfo) => {
     if (!auth.isAuthenticated) {

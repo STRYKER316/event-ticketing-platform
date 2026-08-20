@@ -4,7 +4,9 @@ import { useAuth } from 'react-oidc-context'
 import { createBooking, payBooking } from '../api/booking'
 import { ApiError } from '../api/client'
 import { checkoutReducer, initialCheckoutState } from '../lib/checkout'
+import { formatMoney } from '../lib/format'
 import type { SelectedSeatInfo } from '../components/SeatMap'
+import { ErrorText } from '../components/ErrorText'
 
 export function CheckoutPage() {
   const { ticketId } = useParams<{ ticketId: string }>()
@@ -48,7 +50,7 @@ export function CheckoutPage() {
   if (state.status === 'hold_failed') {
     return (
       <div>
-        <p role="alert">{state.error}</p>
+        <ErrorText message={state.error} />
         <button onClick={() => navigate(-1)}>Back to seat map</button>
       </div>
     )
@@ -60,10 +62,10 @@ export function CheckoutPage() {
       {seatInfo && (
         <p>
           {seatInfo.sectionName} {seatInfo.rowName}
-          {seatInfo.seatLabel} — {(seatInfo.priceCents / 100).toFixed(2)}
+          {seatInfo.seatLabel} — {formatMoney(seatInfo.priceCents)}
         </p>
       )}
-      {state.status === 'payment_failed' && <p role="alert">Payment failed: {state.error}</p>}
+      {state.status === 'payment_failed' && <ErrorText message={`Payment failed: ${state.error}`} />}
       <button onClick={handlePay} disabled={state.status === 'paying'}>
         {state.status === 'paying' ? 'Paying...' : 'Pay'}
       </button>

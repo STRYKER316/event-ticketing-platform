@@ -1,6 +1,7 @@
 import { Link, useLocation } from 'react-router-dom'
 import type { BookingPayResponse } from '../api/types'
 import type { SelectedSeatInfo } from '../components/SeatMap'
+import { formatMoney } from '../lib/format'
 
 // Renders only from the state a successful CheckoutPage payment hands off —
 // there is no GET /bookings/{id} route (a documented, deliberate limitation,
@@ -30,7 +31,7 @@ export function ConfirmationPage() {
         </p>
       )}
       <p>
-        Paid {(payment.amount_cents / 100).toFixed(2)} {payment.currency.toUpperCase()} — status: {payment.status}
+        Paid {formatMoney(payment.amount_cents)} {payment.currency.toUpperCase()} — status: {payment.status}
       </p>
       <p>Payment ID: {payment.payment_id}</p>
       <Link to="/search">Back to browsing</Link>

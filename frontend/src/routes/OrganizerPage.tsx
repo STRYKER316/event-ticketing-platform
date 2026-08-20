@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from 'react-oidc-context'
 import { createEvent, createVenue, publishEvent, upsertSeatMap } from '../api/organizer'
 import type { SeatMapSectionInput } from '../api/organizer'
+import { ErrorText } from '../components/ErrorText'
 
 type Step = 'venue' | 'event' | 'seat-map' | 'publish' | 'done'
 
@@ -44,6 +45,10 @@ export function OrganizerPage() {
 
   const addSection = () => {
     setSections((prev) => [...prev, { name: '', price_cents: 0, rows: [] }])
+  }
+
+  const updateSection = (index: number, patch: Partial<SeatMapSectionInput>) => {
+    setSections((prev) => prev.map((s, i) => (i === index ? { ...s, ...patch } : s)))
   }
 
   const addRow = (sectionIndex: number, rowName: string, seatLabelsCsv: string) => {
@@ -89,7 +94,7 @@ export function OrganizerPage() {
           <button type="submit" disabled={venueMutation.isPending}>
             Next
           </button>
-          {venueMutation.error && <p role="alert">{venueMutation.error.message}</p>}
+          {venueMutation.error && <ErrorText message={venueMutation.error.message} />}
         </form>
       )}
 
@@ -118,7 +123,7 @@ export function OrganizerPage() {
           <button type="submit" disabled={eventMutation.isPending}>
             Next
           </button>
-          {eventMutation.error && <p role="alert">{eventMutation.error.message}</p>}
+          {eventMutation.error && <ErrorText message={eventMutation.error.message} />}
         </form>
       )}
 
@@ -130,19 +135,13 @@ export function OrganizerPage() {
               <input
                 placeholder="Section name"
                 value={section.name}
-                onChange={(e) =>
-                  setSections((prev) => prev.map((s, i) => (i === sectionIndex ? { ...s, name: e.target.value } : s)))
-                }
+                onChange={(e) => updateSection(sectionIndex, { name: e.target.value })}
               />
               <input
                 type="number"
                 placeholder="Price (cents)"
                 value={section.price_cents || ''}
-                onChange={(e) =>
-                  setSections((prev) =>
-                    prev.map((s, i) => (i === sectionIndex ? { ...s, price_cents: Number(e.target.value) } : s)),
-                  )
-                }
+                onChange={(e) => updateSection(sectionIndex, { price_cents: Number(e.target.value) })}
               />
               <ul>
                 {section.rows.map((row) => (
@@ -176,7 +175,7 @@ export function OrganizerPage() {
             >
               Save seat map
             </button>
-            {seatMapMutation.error && <p role="alert">{seatMapMutation.error.message}</p>}
+            {seatMapMutation.error && <ErrorText message={seatMapMutation.error.message} />}
           </div>
         </div>
       )}
@@ -187,7 +186,7 @@ export function OrganizerPage() {
           <button disabled={publishMutation.isPending} onClick={() => publishMutation.mutate()}>
             Publish event
           </button>
-          {publishMutation.error && <p role="alert">{publishMutation.error.message}</p>}
+          {publishMutation.error && <ErrorText message={publishMutation.error.message} />}
         </div>
       )}
 

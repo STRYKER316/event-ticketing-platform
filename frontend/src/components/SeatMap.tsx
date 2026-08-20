@@ -1,4 +1,5 @@
 import type { JoinedSection } from '../lib/seatMap'
+import { formatMoney } from '../lib/format'
 
 const STATUS_COLOR: Record<string, string> = {
   available: '#4caf50',
@@ -25,7 +26,7 @@ export function SeatMap({ sections, onSelectSeat }: SeatMapProps) {
       {sections.map((section) => (
         <section key={section.name}>
           <h3>
-            {section.name} — {(section.priceCents / 100).toFixed(2)} base
+            {section.name} — {formatMoney(section.priceCents)} base
           </h3>
           {section.rows.map((row) => (
             <div key={row.name} style={{ display: 'flex', gap: 4, alignItems: 'center', marginBottom: 4 }}>

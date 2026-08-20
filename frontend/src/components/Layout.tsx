@@ -1,11 +1,12 @@
-import type { ReactNode } from 'react'
+import { useMemo } from 'react'
 import { Link, Outlet } from 'react-router-dom'
 import { useAuth } from 'react-oidc-context'
 import { accessTokenRoles } from '../auth/roles'
 
-export function Layout({ children }: { children?: ReactNode }) {
+export function Layout() {
   const auth = useAuth()
-  const isOrganizer = accessTokenRoles(auth.user?.access_token).includes('organizer')
+  const roles = useMemo(() => accessTokenRoles(auth.user?.access_token), [auth.user?.access_token])
+  const isOrganizer = roles.includes('organizer')
 
   return (
     <div>
@@ -25,7 +26,9 @@ export function Layout({ children }: { children?: ReactNode }) {
           )}
         </div>
       </header>
-      <main>{children ?? <Outlet />}</main>
+      <main>
+        <Outlet />
+      </main>
     </div>
   )
 }
