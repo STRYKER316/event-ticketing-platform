@@ -1,0 +1,202 @@
+import { useState } from 'react'
+import { useMutation } from '@tanstack/react-query'
+import { Link } from 'react-router-dom'
+import { useAuth } from 'react-oidc-context'
+import { createEvent, createVenue, publishEvent, upsertSeatMap } from '../api/organizer'
+import type { SeatMapSectionInput } from '../api/organizer'
+
+type Step = 'venue' | 'event' | 'seat-map' | 'publish' | 'done'
+
+export function OrganizerPage() {
+  const auth = useAuth()
+  const token = auth.user!.access_token
+  const [step, setStep] = useState<Step>('venue')
+  const [venueId, setVenueId] = useState<string | null>(null)
+  const [eventId, setEventId] = useState<string | null>(null)
+  const [sections, setSections] = useState<SeatMapSectionInput[]>([])
+
+  const venueMutation = useMutation({
+    mutationFn: (payload: { name: string; address: string; capacity: number }) => createVenue(payload, token),
+    onSuccess: (venue) => {
+      setVenueId(venue.id)
+      setStep('event')
+    },
+  })
+
+  const eventMutation = useMutation({
+    mutationFn: (payload: { title: string; description: string; start_time: string; end_time: string }) =>
+      createEvent({ ...payload, venue_id: venueId! }, token),
+    onSuccess: (event) => {
+      setEventId(event.id)
+      setStep('seat-map')
+    },
+  })
+
+  const seatMapMutation = useMutation({
+    mutationFn: () => upsertSeatMap(eventId!, sections, token),
+    onSuccess: () => setStep('publish'),
+  })
+
+  const publishMutation = useMutation({
+    mutationFn: () => publishEvent(eventId!, token),
+    onSuccess: () => setStep('done'),
+  })
+
+  const addSection = () => {
+    setSections((prev) => [...prev, { name: '', price_cents: 0, rows: [] }])
+  }
+
+  const addRow = (sectionIndex: number, rowName: string, seatLabelsCsv: string) => {
+    const labels = seatLabelsCsv
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+    setSections((prev) =>
+      prev.map((section, i) =>
+        i !== sectionIndex
+          ? section
+          : {
+              ...section,
+              rows: [
+                ...section.rows,
+                { name: rowName, seats: labels.map((label, idx) => ({ label, x: idx + 1, y: section.rows.length + 1 })) },
+              ],
+            },
+      ),
+    )
+  }
+
+  return (
+    <div>
+      <h1>Create an event</h1>
+
+      {step === 'venue' && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            const form = new FormData(e.currentTarget)
+            venueMutation.mutate({
+              name: String(form.get('name')),
+              address: String(form.get('address')),
+              capacity: Number(form.get('capacity')),
+            })
+          }}
+        >
+          <h2>1. Venue</h2>
+          <input name="name" placeholder="Venue name" required />
+          <input name="address" placeholder="Address" required />
+          <input name="capacity" type="number" min={1} placeholder="Capacity" required />
+          <button type="submit" disabled={venueMutation.isPending}>
+            Next
+          </button>
+          {venueMutation.error && <p role="alert">{venueMutation.error.message}</p>}
+        </form>
+      )}
+
+      {step === 'event' && (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            const form = new FormData(e.currentTarget)
+            eventMutation.mutate({
+              title: String(form.get('title')),
+              description: String(form.get('description') ?? ''),
+              start_time: new Date(String(form.get('start_time'))).toISOString(),
+              end_time: new Date(String(form.get('end_time'))).toISOString(),
+            })
+          }}
+        >
+          <h2>2. Event</h2>
+          <input name="title" placeholder="Title" required />
+          <textarea name="description" placeholder="Description" />
+          <label>
+            Start <input name="start_time" type="datetime-local" required />
+          </label>
+          <label>
+            End <input name="end_time" type="datetime-local" required />
+          </label>
+          <button type="submit" disabled={eventMutation.isPending}>
+            Next
+          </button>
+          {eventMutation.error && <p role="alert">{eventMutation.error.message}</p>}
+        </form>
+      )}
+
+      {step === 'seat-map' && (
+        <div>
+          <h2>3. Seat map</h2>
+          {sections.map((section, sectionIndex) => (
+            <fieldset key={sectionIndex}>
+              <input
+                placeholder="Section name"
+                value={section.name}
+                onChange={(e) =>
+                  setSections((prev) => prev.map((s, i) => (i === sectionIndex ? { ...s, name: e.target.value } : s)))
+                }
+              />
+              <input
+                type="number"
+                placeholder="Price (cents)"
+                value={section.price_cents || ''}
+                onChange={(e) =>
+                  setSections((prev) =>
+                    prev.map((s, i) => (i === sectionIndex ? { ...s, price_cents: Number(e.target.value) } : s)),
+                  )
+                }
+              />
+              <ul>
+                {section.rows.map((row) => (
+                  <li key={row.name}>
+                    Row {row.name}: {row.seats.map((s) => s.label).join(', ')}
+                  </li>
+                ))}
+              </ul>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const form = new FormData(e.currentTarget)
+                  addRow(sectionIndex, String(form.get('rowName')), String(form.get('seatLabels')))
+                  e.currentTarget.reset()
+                }}
+              >
+                <input name="rowName" placeholder="Row name" required />
+                <input name="seatLabels" placeholder="Seat labels, comma-separated (e.g. 1,2,3)" required />
+                <button type="submit">Add row</button>
+              </form>
+            </fieldset>
+          ))}
+          <button type="button" onClick={addSection}>
+            Add section
+          </button>
+          <div>
+            <button
+              type="button"
+              disabled={sections.length === 0 || seatMapMutation.isPending}
+              onClick={() => seatMapMutation.mutate()}
+            >
+              Save seat map
+            </button>
+            {seatMapMutation.error && <p role="alert">{seatMapMutation.error.message}</p>}
+          </div>
+        </div>
+      )}
+
+      {step === 'publish' && (
+        <div>
+          <h2>4. Publish</h2>
+          <button disabled={publishMutation.isPending} onClick={() => publishMutation.mutate()}>
+            Publish event
+          </button>
+          {publishMutation.error && <p role="alert">{publishMutation.error.message}</p>}
+        </div>
+      )}
+
+      {step === 'done' && eventId && (
+        <div>
+          <p>Event published.</p>
+          <Link to={`/events/${eventId}`}>View event</Link>
+        </div>
+      )}
+    </div>
+  )
+}
