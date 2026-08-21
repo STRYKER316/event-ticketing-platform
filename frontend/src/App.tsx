@@ -8,7 +8,9 @@ import { CheckoutPage } from './routes/CheckoutPage'
 import { ConfirmationPage } from './routes/ConfirmationPage'
 import { OrganizerPage } from './routes/OrganizerPage'
 
-// "/" is also the OIDC redirect_uri; redirecting before auth.isLoading settles wins the race against AuthProvider's callback processing and strips ?code=&state= before login can complete.
+// "/" is also the OIDC redirect_uri; redirecting before auth.isLoading
+// settles wins the race against AuthProvider's callback processing and
+// strips ?code=&state= before login can complete.
 function IndexRoute() {
   const auth = useAuth()
   if (auth.isLoading) return null
