@@ -4,7 +4,7 @@ import { useAuth } from 'react-oidc-context'
 import { createBooking, payBooking } from '../api/booking'
 import { ApiError, errorMessage } from '../api/client'
 import { checkoutReducer, initialCheckoutState } from '../lib/checkout'
-import { formatMoney } from '../lib/format'
+import { formatMoney, formatSeatLabel } from '../lib/format'
 import type { SelectedSeatInfo } from '../components/SeatMap'
 import { ErrorText } from '../components/ErrorText'
 
@@ -67,7 +67,7 @@ export function CheckoutPage() {
       <h1>Checkout</h1>
       {seatInfo && (
         <p>
-          {seatInfo.sectionName}, Row {seatInfo.rowName}, Seat {seatInfo.seatLabel} — {formatMoney(seatInfo.priceCents)}
+          {formatSeatLabel(seatInfo.sectionName, seatInfo.rowName, seatInfo.seatLabel)} — {formatMoney(seatInfo.priceCents)}
         </p>
       )}
       {state.status === 'payment_failed' && <ErrorText message={`Payment failed: ${state.error}`} />}

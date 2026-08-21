@@ -1,5 +1,5 @@
 import type { JoinedSection } from '../lib/seatMap'
-import { formatMoney } from '../lib/format'
+import { formatMoney, formatSeatLabel } from '../lib/format'
 
 const STATUS_COLOR: Record<string, string> = {
   available: '#4caf50',
@@ -37,7 +37,7 @@ export function SeatMap({ sections, onSelectSeat }: SeatMapProps) {
                   <button
                     key={seat.label}
                     disabled={!bookable}
-                    title={`${section.name}, Row ${row.name}, Seat ${seat.label} — ${seat.status}`}
+                    title={`${formatSeatLabel(section.name, row.name, seat.label)} — ${seat.status}`}
                     onClick={() =>
                       bookable &&
                       onSelectSeat(seat.ticketId!, {

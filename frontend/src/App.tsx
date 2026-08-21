@@ -8,12 +8,7 @@ import { CheckoutPage } from './routes/CheckoutPage'
 import { ConfirmationPage } from './routes/ConfirmationPage'
 import { OrganizerPage } from './routes/OrganizerPage'
 
-// "/" is also the OIDC redirect_uri, so Keycloak lands here with ?code=&state=
-// after login. Navigating away immediately (the naive <Navigate> this used to
-// be) wins the race against AuthProvider's own callback-processing effect and
-// strips those params before it can exchange the code — login then silently
-// never completes. Waiting out auth.isLoading first (same guard ProtectedRoute
-// already uses) lets that effect finish before this route redirects.
+// "/" is also the OIDC redirect_uri; redirecting before auth.isLoading settles wins the race against AuthProvider's callback processing and strips ?code=&state= before login can complete.
 function IndexRoute() {
   const auth = useAuth()
   if (auth.isLoading) return null

@@ -10,11 +10,11 @@ export function Layout() {
   return (
     <div>
       <header>
-        <nav style={{ display: 'flex', gap: 12 }}>
+        <nav style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
           <Link to="/search">Browse events</Link>
           {isOrganizer && <Link to="/organizer">Organizer</Link>}
         </nav>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'center' }}>
           {auth.isAuthenticated ? (
             <>
               <span>{auth.user?.profile.preferred_username}</span>
