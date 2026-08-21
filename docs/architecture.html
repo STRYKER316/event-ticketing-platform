@@ -246,7 +246,7 @@
     <span class="badge ok">Phase 4 complete (Stripe live-verification pending real credentials)</span>
     <span class="badge ok">Phase 6 complete (Stripe live-verification pending real credentials)</span>
     <span class="badge ok">Phase 5 complete</span>
-    <span class="badge">Phase 7 complete (API-level and browser-walkthrough live-verified)</span>
+    <span class="badge ok">Phase 7 complete (API-level and browser-walkthrough live-verified)</span>
     <span class="badge">52 tasks · P0.T1–T7, P1.T1–T7, P2.T1–T5, P3.T1–T7, P8.T1–T6, P4.T1–T7, P6.T1–T4, P5.T1–T4, P7.T1–T5</span>
     <span class="badge">+ P1 addendum: venue/seat-map write API</span>
     <span class="badge">15 containers (+2, benchmark profile on demand)</span>
@@ -908,7 +908,7 @@
         <li><span class="check">✓</span> one command (<code>make up</code>) boots all 15 containers</li>
         <li><span class="check">✓</span> a sixth container (<code>frontend</code>) coexists behind Traefik at its own <code>PathPrefix('/app')</code>, verified via Traefik's own router API to correctly outrank <code>event-service</code>'s catch-all by priority (18 vs. 15) without touching that locked rule</li>
         <li><span class="check">✓</span> new public <code>GET /bookings/events/{event_id}/tickets</code> — live-verified: a real hold flips its response for that seat within one poll interval, no page/manual refresh</li>
-        <li><span class="check">✓</span> real Keycloak Authorization Code + PKCE login against the <code>ticketing-frontend</code> client — driven with real HTTP requests through the actual OIDC steps (not mocked), including self-registration (<code>registrationAllowed</code>, newly enabled this phase)</li>
+        <li><span class="check">✓</span> real Keycloak Authorization Code + PKCE login against the <code>ticketing-frontend</code> client — driven with real HTTP requests through the actual OIDC steps (not mocked); <code>registrationAllowed</code> confirmed enabled this phase, a real self-registration itself driven later, in the browser walkthrough below</li>
         <li><span class="check">✓</span> a real, previously-invisible bug found by that login: <code>ticketing-frontend</code> had no audience-mapper, so its tokens carried no <code>aud</code> claim and every authenticated call would have 401'd everywhere — fixed (decisions-log §5 amendment), re-verified with a real token carrying <code>aud: ticketing-services</code></li>
         <li><span class="check">✓</span> organizer flow (venue → event → seat map → publish) live-verified via the same request shapes the frontend sends — event immediately searchable and bookable afterward; a non-organizer account correctly 403s</li>
         <li><span class="check">✓</span> a real two-client concurrent seat race, live, against the deployed stack — found and fixed a crash on the double-booking-critical path itself (present since Phase 3, undetected by the existing test suite's own too-broad exception handling) — see <code>build-log.md</code>'s 2026-08-20 entry; now returns one clean <code>201</code> and one clean <code>409</code>, no 500</li>

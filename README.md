@@ -142,9 +142,15 @@ here (decisions-log §23 amendment). A CHECKPOINT `/pre-pr` review (three
 rounds) caught and fixed a StrictMode double-hold race, a seat-key
 collision risk in organizer-typed section/row names, and a documentation
 drift where the new endpoint's Manager routing had been described
-inconsistently across three docs; see `docs/build-log.md` for the full
-list. This is the locked build order's final backend/frontend phase before
-Phase 10 (deployment) and Phase 9/11 (report assembly); see `/docs/phases/`
-for task checklists and `/docs/architecture.html` for current system
-state.
+inconsistently across three docs. A follow-up live Claude-in-Chrome
+walkthrough then drove the actual rendered UI end to end and found three
+more real bugs no wire-level testing could reach — most notably login
+never actually completing, since the index route (also the OIDC
+`redirect_uri`) stripped Keycloak's callback query string before login
+could process it — plus a seat-label display bug and a nav-spacing
+misclick hazard; all fixed and live re-verified. See `docs/build-log.md`
+for the full list. This is the locked build order's final backend/frontend
+phase before Phase 10 (deployment) and Phase 9/11 (report assembly); see
+`/docs/phases/` for task checklists and `/docs/architecture.html` for
+current system state.
 
