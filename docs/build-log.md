@@ -3727,3 +3727,45 @@ Claude-in-Chrome session hits the same silent-click symptom.
 
 Decisions-log delta: none — these are bug fixes, not scope/architecture
 changes. `CLAUDE.md` delta: none.
+
+## 2026-08-21 — Correction to the walkthrough entry above, plus its own `/pre-pr` pass
+
+A scoped `/pre-pr` review of the walkthrough fixes above (diff
+`e4c0c9b..HEAD`) caught two inaccuracies in that entry, corrected here per
+this project's append-only build-log convention:
+
+1. The claim that `IndexRoute`'s `auth.isLoading` guard is "the same guard
+   `ProtectedRoute.tsx` already used for exactly this reason" overstates
+   the similarity — both check `auth.isLoading`, but `ProtectedRoute`
+   guards against rendering its logged-out prompt mid-load (falling back
+   to a `Loading...` message), not against a callback race; `IndexRoute`
+   renders `null` and exists specifically to stop `<Navigate>` from firing
+   before `AuthProvider` can consume `?code=&state=`. Same condition,
+   different purpose — the code comment made the identical overclaim and
+   has also been trimmed/corrected.
+2. The entry describes all three seat-label sites as formatted inline
+   as `` `Row {rowName}, Seat {seatLabel}` ``; the simplify pass that ran
+   as part of this `/pre-pr` review consolidated that into a shared
+   `formatSeatLabel()` helper in `frontend/src/lib/format.ts` (actual
+   output: `{sectionName}, Row {rowName}, Seat {seatLabel}`), which the
+   original entry predates and never mentions.
+
+The review also flagged a real regression the walkthrough fixes
+introduced and I hadn't caught: `Layout.tsx`'s `display: flex` on the
+nav/auth-controls containers overrode the `text-align: center` the whole
+page inherits from `#root` (`index.css`), silently shifting the header
+from centered to left-aligned. Fixed by adding `justifyContent: 'center'`
+to both containers alongside the existing `gap`. `5ccc52d`'s commit
+message was also reworded (a 4-line body violated the single-subject-line
+convention) via the same `git filter-branch --msg-filter` approach used
+earlier this phase, since `git commit --amend`/`rebase -i` weren't options
+here either.
+
+`tsc -b`, 8/8 vitest, and `oxlint` all clean after every fix in this pass;
+rebuilt and redeployed the frontend container each time. The centering
+fix was reasoned through CSS semantics rather than re-confirmed visually
+in the browser — the Claude-in-Chrome extension had disconnected again by
+this point and reconnecting wasn't pursued further, consistent with this
+skill's guidance not to loop on flaky tooling.
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.
