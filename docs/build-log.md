@@ -3755,17 +3755,31 @@ introduced and I hadn't caught: `Layout.tsx`'s `display: flex` on the
 nav/auth-controls containers overrode the `text-align: center` the whole
 page inherits from `#root` (`index.css`), silently shifting the header
 from centered to left-aligned. Fixed by adding `justifyContent: 'center'`
-to both containers alongside the existing `gap`. `5ccc52d`'s commit
+to both containers alongside the existing `gap`. `2798c43`'s commit
 message was also reworded (a 4-line body violated the single-subject-line
-convention) via the same `git filter-branch --msg-filter` approach used
-earlier this phase, since `git commit --amend`/`rebase -i` weren't options
-here either.
+convention) via `git filter-branch --msg-filter`, since `git commit
+--amend`/`rebase -i` weren't options here either — note the hash above is
+the post-reword one; the rewrite orphaned the original.
 
-`tsc -b`, 8/8 vitest, and `oxlint` all clean after every fix in this pass;
-rebuilt and redeployed the frontend container each time. The centering
-fix was reasoned through CSS semantics rather than re-confirmed visually
-in the browser — the Claude-in-Chrome extension had disconnected again by
-this point and reconnecting wasn't pursued further, consistent with this
-skill's guidance not to loop on flaky tooling.
+`tsc -b` and `oxlint` clean after every fix in this pass; rebuilt and
+redeployed the frontend container each time. A `/pre-pr` Step 2 re-check
+confirmed the centering fix empirically rather than just by CSS reasoning:
+it extracted the real `index.css` and `Layout` DOM into a probe page and
+measured actual pixel positions in a headless browser before and after the
+fix, at two viewport widths, confirming the centered position was restored
+exactly and that no wrap/overflow issue exists at a narrow width either.
+
+That same re-check found three more small things, fixed in a follow-up
+round: the `App.tsx`/`format.ts` comments above were technically one
+physical line but far past this codebase's own ~72-80 col wrapping
+convention, so both were rewrapped rather than shortened further; the new
+`formatSeatLabel()` helper had no test despite every sibling `lib/`
+module having one, so `frontend/src/lib/format.test.ts` was added; and
+this entry's own `5ccc52d` reference had gone stale from the reword
+above and was corrected to `2798c43` in place, since the entry was still
+local/unpushed and being actively iterated on within this same pass, not
+settled history. Vitest is 9/9 with that new test, not the 8/8 the
+original walkthrough entry above reported (correct as of when it was
+written, before this pass's own additions).
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.

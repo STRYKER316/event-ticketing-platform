@@ -372,8 +372,10 @@ none needed).
       (`claude-walkthrough`) registered through Keycloak's real
       registration form and landed back in the app already authenticated.
 - [x] Vitest suite green for the seat-map join/polling logic and the
-      checkout state machine. Evidence: 8/8 passing, confirmed repeatedly
-      across all three `/pre-pr` code-review rounds (2026-08-20).
+      checkout state machine. Evidence: 8/8 passing across the three
+      `/pre-pr` code-review rounds on 2026-08-20; now 9/9 as of 2026-08-21
+      after the scoped `/pre-pr` pass on the walkthrough fixes added a
+      `formatSeatLabel` test.
 - [x] `docs/architecture.html` updated: frontend container in the topology
       diagram, the `/app` Traefik route, current proven/not-built lists.
       Evidence: commit `e5bf8a3`.
