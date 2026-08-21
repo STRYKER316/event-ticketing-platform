@@ -410,19 +410,32 @@ none needed).
       built at the time this box was first checked (no stale "5 screens"
       planning language). That sweep predated the Claude-in-Chrome
       walkthrough above (this checklist's first two items), which
-      invalidated four more docs — `testing-strategy.md` and
+      invalidated six more docs — `testing-strategy.md` and
       `technologies-used.md` each still said a rendered browser pass was
-      "still owed"; `README.md`'s chapter table listed only the two
+      "still owed"; `README.md`'s report chapter table listed only the two
       pre-walkthrough curl-driven findings and never mentioned it;
       `architecture.html` still carried a "Phase 7 in progress" badge and
-      a "not built yet" list item for the same pass — successive
-      `/pre-pr` Step 2 rounds caught this gap and all four were corrected
-      2026-08-21.
+      a "not built yet" list item for the same pass; root `README.md`'s
+      own Phase 7 paragraph stopped at the CHECKPOINT `/pre-pr` review's
+      findings; `project-description.md` still named only the two
+      pre-walkthrough findings — eight successive `/pre-pr` Step 2 rounds
+      on the scoped diff `e4c0c9b..HEAD` caught this gap piece by piece
+      and all six were corrected, 2026-08-21.
 - [x] `/pre-pr` run against the diff since `2f583b8` (the commit this phase
       started from); findings triaged and real ones fixed. Step 1
       (simplify), Step 2 (code-review, three rounds — 11, 3, then 1
       finding), and Step 3 (verify, live-tested against the real stack)
-      all complete and clean as of 2026-08-21.
+      all complete and clean as of 2026-08-21 for the original diff. The
+      three walkthrough bug fixes that landed after that pass closed
+      (`2798c43`) got their own scoped `/pre-pr` re-run against
+      `e4c0c9b..HEAD` — Step 1 (simplify, consolidated a duplicated
+      seat-label formatter) and Step 2 (code-review, eight rounds:
+      real code issues only through round 3, everything after was
+      documentation cross-reference staleness, shrinking each round to a
+      final terminal pass finding one real stale test count and two
+      cosmetic wording nits, all fixed) — closed clean, 2026-08-21.
 - [x] `docs/build-log.md` entries appended per task plus the CHECKPOINT
       entry. Evidence: entries at 2026-08-20 for kickoff/T1-backend,
-      T1-frontend, T4 race-testing, and the two `/pre-pr` gate rounds.
+      T1-frontend, T4 race-testing, and the two `/pre-pr` gate rounds;
+      2026-08-21 for the Claude-in-Chrome walkthrough CHECKPOINT entry
+      and its own scoped `/pre-pr` correction entry.

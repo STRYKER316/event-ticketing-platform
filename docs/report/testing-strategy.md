@@ -880,7 +880,9 @@ unit-tested, matching this project's "minimal functional UI" scope (§10)
 actually exercise them.
 
 **Status:** Implemented, Tested, Verified (live) for all five findings
-and their fixes. `booking-service`: 75/75 (74 + the new regression test).
+and their fixes. `booking-service`: 77/77 (74 + the race-compensation
+regression test above, + 2 later DTO-mapping tests for the new
+`list_tickets_for_event` endpoint).
 Frontend: 9/9 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. This
 phase's exit checklist is now fully checked off; see `docs/build-log.md`'s
 2026-08-21 entries for the walkthrough's full narrative.
