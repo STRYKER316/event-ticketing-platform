@@ -833,22 +833,22 @@ original two-client `curl` race with the fix live: one real `201`, one
 clean `409`, no `500`.
 
 **Finding 3 — login never actually completed, only reachable by a real
-rendered browser pass.** The wire-level `curl` testing above drove OIDC
-requests and read responses directly; it never let a *browser's own
-router* run against the callback URL the way Finding 1's fix produced.
-`/` is both the app's index route and the OIDC `redirect_uri`, so Keycloak
-lands there with `?code=&state=` after login. The index route's
-`<Navigate to="/search" replace />` fired immediately on mount and won the
-race against `AuthProvider`'s own callback-processing effect, stripping
-those params via client-side routing before OIDC could ever read them.
-The result: every login attempt silently failed after real credentials
-and a real Keycloak redirect — no console error, no exception, just an
-orphaned, never-consumed PKCE `code_verifier` record left in
-`localStorage`. No test before this one exercised the actual browser
-round-trip through this specific route, since `curl`-driven testing reads
-the token directly off the redirect response rather than letting a
-mounted SPA's router process it. Root-caused via `localStorage`/
-network-request inspection (the leftover unconsumed record was the tell);
+rendered browser pass.** `/` is both the app's index route and the OIDC
+`redirect_uri`, so Keycloak lands there with `?code=&state=` after login.
+The index route's `<Navigate to="/search" replace />` fired immediately on
+mount and won the race against `AuthProvider`'s own callback-processing
+effect, stripping those params via client-side routing before OIDC could
+ever read them. The result: every login attempt silently failed after
+real credentials and a real Keycloak redirect — no console error, no
+exception, just an orphaned, never-consumed PKCE `code_verifier` record
+left in `localStorage`. No test before this one exercised this specific
+failure mode: the wire-level `curl` testing behind Finding 1 exchanged the
+authorization code for a token directly at Keycloak's token endpoint,
+never routing that exchange through the SPA's own mounted router the way
+a real browser redirect does — so it could never have hit a bug that only
+exists in how the router handles the callback URL. Root-caused via
+`localStorage`/network-request inspection (the leftover unconsumed record
+was the tell);
 fixed by gating the redirect on `auth.isLoading`, the same guard
 `ProtectedRoute.tsx` already used against a different symptom of the same
 underlying `auth.isLoading` state. Live re-verified: both a returning and

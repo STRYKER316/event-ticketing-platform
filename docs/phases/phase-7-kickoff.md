@@ -348,11 +348,11 @@ none needed).
       confirmation, all against the real docker-compose stack, not mocked.
       Evidence: joint Claude-in-Chrome session, 2026-08-21 — `alice` logged
       in, searched, opened a seat map, watched it flip a seat from
-      available to held live (5s poll) while `bob` held it via a separate
-      session, held a seat herself, and reached checkout; payment failed
+      available to held live (5s poll) while `bob` held it via a direct API
+      call, held a seat herself, and reached checkout; payment failed
       only at the pre-existing placeholder-Stripe-key boundary (Phase 4/6's
       documented gap, not a Phase 7 issue) with the retry-capable error UI
-      working correctly. Found and fixed a real login-completing bug along
+      working correctly. Found and fixed a real login-completion bug along
       the way (OIDC callback query string was being stripped before
       `AuthProvider` could process it) — see build-log.
 - [x] Organizer flow live-verified: venue → event → seat map → publish →
@@ -378,7 +378,11 @@ none needed).
       `formatSeatLabel` test.
 - [x] `docs/architecture.html` updated: frontend container in the topology
       diagram, the `/app` Traefik route, current proven/not-built lists.
-      Evidence: commit `e5bf8a3`.
+      Evidence: commit `e5bf8a3`; a round of this `/pre-pr` pass found that
+      commit predated the walkthrough and left the "Phase 7 in progress"
+      badge, a stale prose paragraph, and a "not built yet" list item all
+      unclosed — corrected 2026-08-21 to move the browser-walkthrough item
+      into the proven column and reflect Phase 7 as complete.
 - [x] `decisions-log.md` §23 amendment added (the new booking-service
       endpoint) and §26 limitations pull-list extended (no
       confirmation-page refresh persistence). Evidence: §23 amendment plus
@@ -406,11 +410,13 @@ none needed).
       built at the time this box was first checked (no stale "5 screens"
       planning language). That sweep predated the Claude-in-Chrome
       walkthrough above (this checklist's first two items), which
-      invalidated three more report claims — `testing-strategy.md` and
+      invalidated four more docs — `testing-strategy.md` and
       `technologies-used.md` each still said a rendered browser pass was
       "still owed"; `README.md`'s chapter table listed only the two
-      pre-walkthrough curl-driven findings and never mentioned it — a
-      `/pre-pr` Step 2 round caught this gap and all three were corrected
+      pre-walkthrough curl-driven findings and never mentioned it;
+      `architecture.html` still carried a "Phase 7 in progress" badge and
+      a "not built yet" list item for the same pass — successive
+      `/pre-pr` Step 2 rounds caught this gap and all four were corrected
       2026-08-21.
 - [x] `/pre-pr` run against the diff since `2f583b8` (the commit this phase
       started from); findings triaged and real ones fixed. Step 1

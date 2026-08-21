@@ -125,15 +125,19 @@ service. It needed one new backend route that nothing before it had
 exposed: a public `GET /bookings/events/{event_id}/tickets` on Booking
 Service, since the seat map's live half (§23) had a design but no read
 endpoint until this phase. Live-verifying the frontend's actual login (a
-real Keycloak Authorization Code + PKCE exchange, not a mock) surfaced two
+real Keycloak Authorization Code + PKCE exchange, not a mock) surfaced
 findings worth naming in a project-description sense, not just a testing
 one: an identity-configuration gap (the frontend's OIDC client had never
 been issued a token carrying the audience claim every backend service
 requires, so every authenticated call from the real frontend would have
-failed silently) and a genuine concurrency bug on the double-booking
-guarantee itself, both found only because this phase was the first to
-drive real, non-mocked traffic through the entire stack the way an actual
-user would — see the Testing Strategy chapter's Phase 7 section for both.
+failed silently), a genuine concurrency bug on the double-booking
+guarantee itself, and — only surfaced once a later pass drove login
+through the app's own rendered router rather than curl — login never
+actually completing at all, since the index route stripped Keycloak's
+callback query string before it could be processed. All found only
+because this phase was the first to drive real, non-mocked traffic
+through the entire stack the way an actual user would — see the Testing
+Strategy chapter's Phase 7 section for the full account.
 
 ## What this section still needs
 
