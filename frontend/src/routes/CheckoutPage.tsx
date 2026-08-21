@@ -67,8 +67,7 @@ export function CheckoutPage() {
       <h1>Checkout</h1>
       {seatInfo && (
         <p>
-          {seatInfo.sectionName} {seatInfo.rowName}
-          {seatInfo.seatLabel} — {formatMoney(seatInfo.priceCents)}
+          {seatInfo.sectionName}, Row {seatInfo.rowName}, Seat {seatInfo.seatLabel} — {formatMoney(seatInfo.priceCents)}
         </p>
       )}
       {state.status === 'payment_failed' && <ErrorText message={`Payment failed: ${state.error}`} />}

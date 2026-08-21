@@ -26,8 +26,7 @@ export function ConfirmationPage() {
       <h1>Booking confirmed</h1>
       {seatInfo && (
         <p>
-          {seatInfo.sectionName} {seatInfo.rowName}
-          {seatInfo.seatLabel}
+          {seatInfo.sectionName}, Row {seatInfo.rowName}, Seat {seatInfo.seatLabel}
         </p>
       )}
       <p>

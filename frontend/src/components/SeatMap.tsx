@@ -37,7 +37,7 @@ export function SeatMap({ sections, onSelectSeat }: SeatMapProps) {
                   <button
                     key={seat.label}
                     disabled={!bookable}
-                    title={`${section.name} ${row.name}${seat.label} — ${seat.status}`}
+                    title={`${section.name}, Row ${row.name}, Seat ${seat.label} — ${seat.status}`}
                     onClick={() =>
                       bookable &&
                       onSelectSeat(seat.ticketId!, {
