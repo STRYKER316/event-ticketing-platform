@@ -19,7 +19,8 @@ architectural or scope decision.
   /payment-service      Postgres (payment_db); Stripe (test mode)
   /notification-service no DB (or minimal delivery log); hand-rolled retry/DLQ
   /_shared/auth          shared FastAPI JWT-validation dependency, built once, reused everywhere
-/frontend                minimal React, 5 screens, Nginx-served (Phase 7, not before)
+/frontend                minimal React, 5 screens, Nginx-served (§10) — behind Traefik
+                         at PathPrefix('/app')
 /infra                   docker-compose.yml, Traefik config, Keycloak realm export
 /benchmark               standalone P8 load harness (own pyproject.toml/uv venv)
 /docs                    decisions-log.md, master-development-plan.md, build-log.md,
@@ -45,6 +46,12 @@ make test            # run suites that don't need live infra (currently: shared-
 make bench-up         # prometheus + grafana, on demand only (P8 hold-mechanism benchmark)
 make bench-down
 ```
+
+Frontend: `docker compose up frontend` from `/infra` serves it at `http://localhost/app/`
+(or `cd frontend && npm install && npm run dev` for a hot-reloading dev server at
+`http://localhost:5173` — see `frontend/README.md`). Either way it talks to the same
+Traefik-routed backend, configured via `frontend/.env` (`VITE_EVENT_SERVICE_URL`,
+`VITE_SEARCH_SERVICE_URL`, `VITE_BOOKING_SERVICE_URL`, `VITE_KEYCLOAK_ISSUER`).
 
 Seed users (see `infra/keycloak/realm-export.json`), all password `changeme`:
 
@@ -122,7 +129,22 @@ kill a consumer task, a publish-before-commit ordering bug that could roll
 back an already-confirmed booking while losing the payment-outcome
 message, and a DTO-validation gap that could crash a consumer on its own
 internally-constructed error message; see `docs/build-log.md` for the full
-list. Phase 7 (Frontend) is next per the locked build order; see
-`/docs/phases/` for task checklists and `/docs/architecture.html` for
-current system state.
+list.
+
+**Phase 7** added the frontend: five React screens (browse/search, event
+detail with a polling interactive seat map, checkout, confirmation, and a
+minimal organizer create-event flow) served as static assets behind Traefik
+at `PathPrefix('/app')`, authenticated via Keycloak Authorization Code +
+PKCE. It also added a new booking-service endpoint,
+`GET /bookings/events/{event_id}/tickets`, as the seat map's live per-seat
+status source — layout comes from Event Service, status and ticket IDs from
+here (decisions-log §23 amendment). A CHECKPOINT `/pre-pr` review (three
+rounds) caught and fixed a StrictMode double-hold race, a seat-key
+collision risk in organizer-typed section/row names, and a documentation
+drift where the new endpoint's Manager routing had been described
+inconsistently across three docs; see `docs/build-log.md` for the full
+list. This is the locked build order's final backend/frontend phase before
+Phase 10 (deployment) and Phase 9/11 (report assembly); see `/docs/phases/`
+for task checklists and `/docs/architecture.html` for current system
+state.
 

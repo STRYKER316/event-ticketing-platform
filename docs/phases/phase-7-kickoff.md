@@ -352,21 +352,42 @@ none needed).
       fixed: `GET /bookings/events/{event_id}/tickets` returns real data
       against a seeded event; Keycloak registration produces a working new
       login.
-- [ ] Vitest suite green for the seat-map join/polling logic and the
-      checkout state machine.
-- [ ] `docs/architecture.html` updated: frontend container in the topology
+- [x] Vitest suite green for the seat-map join/polling logic and the
+      checkout state machine. Evidence: 8/8 passing, confirmed repeatedly
+      across all three `/pre-pr` code-review rounds (2026-08-20).
+- [x] `docs/architecture.html` updated: frontend container in the topology
       diagram, the `/app` Traefik route, current proven/not-built lists.
-- [ ] `decisions-log.md` §23 amendment added (the new booking-service
+      Evidence: commit `e5bf8a3`.
+- [x] `decisions-log.md` §23 amendment added (the new booking-service
       endpoint) and §26 limitations pull-list extended (no
-      confirmation-page refresh persistence).
-- [ ] `CLAUDE.md` self-update check done (frontend conventions, if any
+      confirmation-page refresh persistence). Evidence: §23 amendment plus
+      a same-session correction paragraph after the `BookingManager`
+      routing fix; §26 line added this session (`ConfirmationPage.tsx`'s
+      own code comment referenced this decisions-log entry before it
+      actually existed — now it does).
+- [x] `CLAUDE.md` self-update check done (frontend conventions, if any
       emerged worth locking in — e.g. the `/app` Traefik mount pattern for
-      future non-API services, if applicable).
-- [ ] Cross-doc staleness sweep: root `README.md`, `infra/README.md`
+      future non-API services, if applicable). Evidence: explicitly
+      checked this session — no addition made, since Phase 7 is this
+      project's one and only frontend phase (no further screens or
+      non-API services are planned in the locked build order), so none of
+      this phase's frontend-specific patterns (StrictMode double-invoke
+      guards, fail-loud `VITE_*`/OIDC-issuer startup checks) have a future
+      call site in this repo to generalize for.
+- [x] Cross-doc staleness sweep: root `README.md`, `infra/README.md`
       (router table gets a `frontend` row; `.env.example` port docs), any
       report chapter referencing "5 screens" as still-planned rather than
-      built.
+      built. Evidence: root `README.md`'s Layout/Local-Development/Status
+      sections and `infra/README.md`'s intro paragraph + ports table
+      updated this session (both were stale — `infra/README.md`'s intro
+      was already missing `notification-service` from Phase 5, not just
+      `frontend`); `docs/report/` already correctly describes Phase 7 as
+      built (checked via grep for stale "5 screens" planning language —
+      none found) and its chapter-status table already lists P7 evidence.
 - [ ] `/pre-pr` run against the diff since `2f583b8` (the commit this phase
-      started from); findings triaged and real ones fixed.
-- [ ] `docs/build-log.md` entries appended per task plus the CHECKPOINT
-      entry.
+      started from); findings triaged and real ones fixed. Step 1
+      (simplify) and Step 2 (code-review, three rounds — 11, 3, then 1
+      finding) complete and clean; Step 3 (verify) in progress.
+- [x] `docs/build-log.md` entries appended per task plus the CHECKPOINT
+      entry. Evidence: entries at 2026-08-20 for kickoff/T1-backend,
+      T1-frontend, T4 race-testing, and the two `/pre-pr` gate rounds.
