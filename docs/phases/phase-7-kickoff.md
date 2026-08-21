@@ -405,9 +405,11 @@ none needed).
       `frontend`); `docs/report/` already correctly described Phase 7 as
       built at the time this box was first checked (no stale "5 screens"
       planning language). That sweep predated the Claude-in-Chrome
-      walkthrough below, which invalidated three more report claims
-      (`testing-strategy.md`, `technologies-used.md`, `README.md`'s
-      chapter table each still said a browser pass was "still owed") — a
+      walkthrough above (this checklist's first two items), which
+      invalidated three more report claims — `testing-strategy.md` and
+      `technologies-used.md` each still said a rendered browser pass was
+      "still owed"; `README.md`'s chapter table listed only the two
+      pre-walkthrough curl-driven findings and never mentioned it — a
       `/pre-pr` Step 2 round caught this gap and all three were corrected
       2026-08-21.
 - [x] `/pre-pr` run against the diff since `2f583b8` (the commit this phase

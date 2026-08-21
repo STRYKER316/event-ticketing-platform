@@ -32,7 +32,7 @@ Or as part of the full stack: `docker compose up frontend` from `/infra` —
 ## Test
 
 ```sh
-npm run test   # Vitest — the seat-map join and checkout state machine
+npm run test   # Vitest — seat-map join, checkout state machine, seat-label formatting
 npm run lint   # oxlint
 npm run build  # tsc -b && vite build
 ```

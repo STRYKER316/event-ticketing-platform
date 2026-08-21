@@ -761,9 +761,11 @@ passes on P3/P8 — all operate on this system's *backend* in isolation.
 Phase 7 added a genuinely new kind of check: driving real, unmocked HTTP
 traffic through the *entire* deployed stack the way an actual browser
 user would, rather than calling a Manager method directly or hitting one
-service's own test client. This found two real, previously-undetected
-bugs that no earlier tier could have caught — worth documenting as its own
-tier, not folded into "self-verification," because both findings share a
+service's own test client. This tier ran twice — first with `curl` driving
+the wire-level protocol directly, then later with a full rendered-browser
+pass — and together found five real, previously-undetected bugs that no
+earlier tier could have caught, worth documenting as its own tier rather
+than folded into "self-verification," because every finding shares a
 specific mechanism: each depended on a code path that was structurally
 unreachable by every test written before it.
 
@@ -830,6 +832,38 @@ produced. Restored the fix, re-ran — passed. Then rebuilt and redeployed
 original two-client `curl` race with the fix live: one real `201`, one
 clean `409`, no `500`.
 
+**Finding 3 — login never actually completed, only reachable by a real
+rendered browser pass.** The wire-level `curl` testing above drove OIDC
+requests and read responses directly; it never let a *browser's own
+router* run against the callback URL the way Finding 1's fix produced.
+`/` is both the app's index route and the OIDC `redirect_uri`, so Keycloak
+lands there with `?code=&state=` after login. The index route's
+`<Navigate to="/search" replace />` fired immediately on mount and won the
+race against `AuthProvider`'s own callback-processing effect, stripping
+those params via client-side routing before OIDC could ever read them.
+The result: every login attempt silently failed after real credentials
+and a real Keycloak redirect — no console error, no exception, just an
+orphaned, never-consumed PKCE `code_verifier` record left in
+`localStorage`. No test before this one exercised the actual browser
+round-trip through this specific route, since `curl`-driven testing reads
+the token directly off the redirect response rather than letting a
+mounted SPA's router process it. Root-caused via `localStorage`/
+network-request inspection (the leftover unconsumed record was the tell);
+fixed by gating the redirect on `auth.isLoading`, the same guard
+`ProtectedRoute.tsx` already used against a different symptom of the same
+underlying `auth.isLoading` state. Live re-verified: both a returning and
+a brand-new (self-registered) user logged in cleanly after the fix.
+
+**Findings 4 and 5 — display-only bugs only visible in a rendered UI.**
+Seat labels concatenated two independent organizer-typed fields
+(`rowName`, `seatLabel`) with no separator, producing confusing strings
+like `"11-1"` for row `"1"` seat `"1-1"` — invisible to any test asserting
+on structured data rather than rendered text. Separately, two header
+containers rendered adjacent links/controls with no CSS gap between them,
+which caused a real misclick during the walkthrough itself (a click aimed
+at the "Organizer" link landed on "Browse events" instead). Both fixed
+and live re-verified.
+
 **Frontend testing itself** (Vitest): the two pieces of genuinely
 non-trivial logic — `joinSeatMapWithStatus` (the seat-map/ticket-status
 composition, including a case a naive join misses: a layout seat with no
@@ -842,16 +876,11 @@ test for a seat-key collision found in code review), plus a small
 `formatSeatLabel` display-formatting helper (1 test) extracted during a
 later `/pre-pr` pass. Presentational components are otherwise not
 unit-tested, matching this project's "minimal functional UI" scope (§10)
-— the live end-to-end traffic above, and the browser walkthrough below,
-is what actually exercises them.
+— the live end-to-end traffic and the browser walkthrough above are what
+actually exercise them.
 
-**Status:** Implemented, Tested, Verified (live) for both findings and
-their fixes. `booking-service`: 75/75 (74 + the new regression test).
-Frontend: 9/9 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. A
-rendered, clicked-through browser pass has since happened (a live
-Claude-in-Chrome walkthrough, 2026-08-21) and found three more real bugs
-of its own — most notably login never actually completing, since the
-index route (also the OIDC `redirect_uri`) stripped Keycloak's callback
-query string before `AuthProvider` could process it — see
-`docs/build-log.md`'s 2026-08-21 entries for the full list. All fixed and
-live re-verified; this phase's exit checklist is now fully checked off.
+**Status:** Implemented, Tested, Verified (live) for all five findings
+and their fixes. `booking-service`: 75/75 (74 + the new regression test).
+Frontend: 9/9 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. This
+phase's exit checklist is now fully checked off; see `docs/build-log.md`'s
+2026-08-21 entries for the walkthrough's full narrative.
