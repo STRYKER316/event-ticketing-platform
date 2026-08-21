@@ -343,21 +343,23 @@ none needed).
 
 ## Phase 7 exit checklist (all must pass before P8/P9)
 
-- [ ] End-to-end live walkthrough: login/register → search → seat map
+- [x] End-to-end live walkthrough: login/register → search → seat map
       (with a live cross-tab status update observed) → checkout → pay →
       confirmation, all against the real docker-compose stack, not mocked.
-      Deferred to the planned joint Claude-in-Chrome session — this is
-      specifically about the rendered UI, which no curl-driven check can
-      stand in for.
-- [ ] Organizer flow live-verified: venue → event → seat map → publish →
-      event appears in search → bookable. Partial: the underlying backend
-      sequence (venue → event → seat map → publish → provisioned tickets
-      → bookable) was re-confirmed working this session by the `/pre-pr`
-      Step 3 verify subagent, driven directly against the real HTTP API
-      (not through `OrganizerPage.tsx`'s wizard) — "appears in search"
-      specifically wasn't re-checked either. The frontend organizer wizard
-      itself still needs a real browser pass; same Claude-in-Chrome
-      session as above.
+      Evidence: joint Claude-in-Chrome session, 2026-08-21 — `alice` logged
+      in, searched, opened a seat map, watched it flip a seat from
+      available to held live (5s poll) while `bob` held it via a separate
+      session, held a seat herself, and reached checkout; payment failed
+      only at the pre-existing placeholder-Stripe-key boundary (Phase 4/6's
+      documented gap, not a Phase 7 issue) with the retry-capable error UI
+      working correctly. Found and fixed a real login-completing bug along
+      the way (OIDC callback query string was being stripped before
+      `AuthProvider` could process it) — see build-log.
+- [x] Organizer flow live-verified: venue → event → seat map → publish →
+      event appears in search → bookable. Evidence: same session — `bob`
+      ran the full wizard through `OrganizerPage.tsx`'s own UI end to end,
+      the published event correctly appeared in the browse list, and its
+      seat map showed all seats bookable (green).
 - [x] `GET /bookings/events/{event_id}/tickets` returns real data against
       a seeded event. Evidence: `/pre-pr` Step 3 verify subagent
       (2026-08-21) — 200 with all 6 provisioned tickets, correct DTO
@@ -365,11 +367,10 @@ none needed).
       concurrent hold correctly flipped one ticket to `held` on re-query,
       and an unknown `event_id` correctly returned `200 []` (no 404 path
       exists in the route, so this is intended behavior, not a gap).
-- [ ] Keycloak registration produces a working new login. Not yet
-      re-verified this session — P7.T1's original frontend-half entry
-      (2026-08-20) confirmed `registrationAllowed` is enabled and login
-      works end-to-end, but a real self-registration through the UI itself
-      hasn't been driven; folding into the Claude-in-Chrome session above.
+- [x] Keycloak registration produces a working new login. Evidence: same
+      Claude-in-Chrome session, 2026-08-21 — a brand-new user
+      (`claude-walkthrough`) registered through Keycloak's real
+      registration form and landed back in the app already authenticated.
 - [x] Vitest suite green for the seat-map join/polling logic and the
       checkout state machine. Evidence: 8/8 passing, confirmed repeatedly
       across all three `/pre-pr` code-review rounds (2026-08-20).

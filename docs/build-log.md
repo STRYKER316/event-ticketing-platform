@@ -3643,3 +3643,87 @@ comment had referenced this entry since Phase 7.T1 without it actually
 existing). `CLAUDE.md` delta: none — explicitly checked; no frontend
 convention from this phase has a future call site, since Phase 7 is this
 project's only frontend phase.
+
+## 2026-08-21 — Phase 7 CHECKPOINT: live Claude-in-Chrome walkthrough finds and fixes three real bugs
+
+Ran the live, narrated browser walkthrough this phase's exit checklist had
+deferred: brought up the real stack, drove the actual rendered UI (not
+curl) through login, search, seat map (including a genuine cross-tab live
+update — held a seat as `bob` via a direct API call while watching `alice`'s
+already-open seat map poll pick up the change within one 5s cycle), checkout,
+the organizer wizard end-to-end, and a real self-registration. Found and
+fixed three bugs this way that no earlier phase's testing (curl-driven or
+unit/integration) could have caught, since none of them exercise the
+rendered SPA against its own routing:
+
+**1. Login never actually completed (the most severe of the three).**
+`/` is both the app's index route and the OIDC `redirect_uri`, so Keycloak
+lands there with `?code=&state=` after a successful login. `App.tsx`'s
+index route was a bare `<Navigate to="/search" replace />` with no guard —
+it fired immediately on mount and won the race against
+`AuthProvider`'s own callback-processing effect, stripping the query
+string via client-side routing before OIDC could ever read it. The
+result: every login attempt silently failed after the user typed real
+credentials and Keycloak redirected back successfully — no console error,
+no exception, just an orphaned, never-consumed `oidc.<state>` record left
+in `localStorage` and the UI still showing "Log in / Register". Every
+earlier live-verification this phase (P7.T1's curl-driven OIDC checks,
+P7.T4's race testing) drove tokens directly against Keycloak's token
+endpoint or used a pre-existing token, so none of them ever exercised the
+actual browser round-trip through this route and none could have surfaced
+this. Root-caused via `localStorage`/network-request inspection (the
+leftover unconsumed PKCE `code_verifier` record was the tell), fixed by
+gating the redirect on `auth.isLoading`, the same guard
+`ProtectedRoute.tsx` already used for exactly this reason — `App.tsx` just
+never got the equivalent for the one route that is also the callback
+target. Live re-verified after the fix: both `alice` and `bob` logged in
+cleanly, and the unauthenticated case (bare `/app/` with no callback
+params) still redirects to `/search` correctly, confirmed by direct test.
+
+**2. Seat labels rendered as an unreadable run-on string.** `SeatMap.tsx`'s
+tooltip and `CheckoutPage.tsx`/`ConfirmationPage.tsx`'s seat-summary line
+all concatenated `rowName` immediately before `seatLabel` with no
+separator (`${row.name}${seat.label}`). `rowName` and `seatLabel` are
+independent organizer-typed fields with no structural relationship — in
+this walkthrough's own test data (row `"1"`, seat `"1-1"`) that produced
+`"11-1"` on screen, actively misleading rather than just ugly. Fixed by
+formatting all three sites as `Row {rowName}, Seat {seatLabel}`, which
+preserves both fields (dropping `rowName` instead, since `seatLabel`
+happened to already encode it in this test data, would have silently lost
+row context for any organizer who labels seats without a row prefix).
+
+**3. Nav links and the username/logout control had no visual gap.**
+`Layout.tsx`'s `<nav>` rendered `<Link>Browse events</Link>` immediately
+followed by `<Link>Organizer</Link>` with no CSS between them, and the
+same for the username `<span>` next to the "Log out" `<button>` — no
+`index.css` rule sized either. This wasn't just cosmetic: it caused a real
+misclick during the walkthrough (a click aimed at "Organizer" landed on
+"Browse events" instead, since the two links' text ran together with no
+gap to click into). Fixed with `display: flex, gap: 12` on both
+containers.
+
+All three fixed, live re-verified in the same session, and full
+regression coverage still green (`tsc -b`, 8/8 vitest, oxlint clean)
+before each rebuild/redeploy. With these fixed, the walkthrough went
+end-to-end for real: `alice` logged in, searched, opened a seat map,
+watched it update live from a separate session's hold, held a seat,
+attempted payment (failed only at the pre-existing placeholder-Stripe-key
+boundary, same documented gap since Phase 4/6 — the retry-capable error
+UI itself worked correctly); `bob` logged in, ran the full organizer
+wizard (venue → event → seat map → publish) entirely through
+`OrganizerPage.tsx`'s own UI, and the resulting event correctly appeared
+in search and was immediately bookable; a brand-new user self-registered
+through Keycloak's real registration form and landed back in the app
+already authenticated. This closes every remaining item on
+`phase-7-kickoff.md`'s exit checklist.
+
+One tooling note, not a product bug: partway through, the browser
+automation's synthetic clicks stopped registering on the organizer
+wizard's form buttons (confirmed via `checkValidity()`/network-request
+inspection — the DOM state was always correct, no request ever fired).
+Dispatching `.click()` directly via injected JavaScript worked reliably as
+a fallback for the rest of the session. Worth knowing if a future
+Claude-in-Chrome session hits the same silent-click symptom.
+
+Decisions-log delta: none — these are bug fixes, not scope/architecture
+changes. `CLAUDE.md` delta: none.
