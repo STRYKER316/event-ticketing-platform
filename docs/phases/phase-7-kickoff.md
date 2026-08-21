@@ -402,9 +402,14 @@ none needed).
       sections and `infra/README.md`'s intro paragraph + ports table
       updated this session (both were stale — `infra/README.md`'s intro
       was already missing `notification-service` from Phase 5, not just
-      `frontend`); `docs/report/` already correctly describes Phase 7 as
-      built (checked via grep for stale "5 screens" planning language —
-      none found) and its chapter-status table already lists P7 evidence.
+      `frontend`); `docs/report/` already correctly described Phase 7 as
+      built at the time this box was first checked (no stale "5 screens"
+      planning language). That sweep predated the Claude-in-Chrome
+      walkthrough below, which invalidated three more report claims
+      (`testing-strategy.md`, `technologies-used.md`, `README.md`'s
+      chapter table each still said a browser pass was "still owed") — a
+      `/pre-pr` Step 2 round caught this gap and all three were corrected
+      2026-08-21.
 - [x] `/pre-pr` run against the diff since `2f583b8` (the commit this phase
       started from); findings triaged and real ones fixed. Step 1
       (simplify), Step 2 (code-review, three rounds — 11, 3, then 1

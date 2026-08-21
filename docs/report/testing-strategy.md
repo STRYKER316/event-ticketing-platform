@@ -837,14 +837,21 @@ matching ticket yet, from asynchronous post-publish provisioning, renders
 `unprovisioned` rather than a false `available`) and `checkoutReducer`
 (the hold→pay state machine — a failed hold has no booking to retry
 payment against; a failed payment keeps the existing `PENDING` booking so
-retry is possible) — both unit-tested (7 tests). Presentational
-components are not unit-tested, matching this project's "minimal
-functional UI" scope (§10) — the live end-to-end traffic above is what
-actually exercises them.
+retry is possible) — both unit-tested (8 tests, including a regression
+test for a seat-key collision found in code review), plus a small
+`formatSeatLabel` display-formatting helper (1 test) extracted during a
+later `/pre-pr` pass. Presentational components are otherwise not
+unit-tested, matching this project's "minimal functional UI" scope (§10)
+— the live end-to-end traffic above, and the browser walkthrough below,
+is what actually exercises them.
 
 **Status:** Implemented, Tested, Verified (live) for both findings and
 their fixes. `booking-service`: 75/75 (74 + the new regression test).
-Frontend: 7/7 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. A
-rendered, clicked-through browser pass (not just the wire-level HTTP
-traffic documented above) is still owed before this phase's own exit
-checklist is fully checked off.
+Frontend: 9/9 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. A
+rendered, clicked-through browser pass has since happened (a live
+Claude-in-Chrome walkthrough, 2026-08-21) and found three more real bugs
+of its own — most notably login never actually completing, since the
+index route (also the OIDC `redirect_uri`) stripped Keycloak's callback
+query string before `AuthProvider` could process it — see
+`docs/build-log.md`'s 2026-08-21 entries for the full list. All fixed and
+live re-verified; this phase's exit checklist is now fully checked off.

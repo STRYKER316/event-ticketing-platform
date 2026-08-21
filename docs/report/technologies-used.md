@@ -508,11 +508,13 @@ the browser.
 
 **Status:** Implemented, Tested (Vitest — the seat-map layout/status join
 and the checkout hold→pay state machine, the two pieces of real,
-non-trivial logic; presentational components aren't unit-tested).
-`tsc -b`, `oxlint`, and a production `vite build` all clean. Live-verified
-at the API-contract level (real HTTP through the real container, not
-mocked) — a rendered, clicked-through browser pass is still owed (tracked
-on this phase's own exit checklist).
+non-trivial logic, plus a small display-formatting helper; presentational
+components otherwise aren't unit-tested). `tsc -b`, `oxlint`, and a
+production `vite build` all clean. Verified (live) both at the
+API-contract level (real HTTP through the real container) and via a
+rendered, clicked-through browser pass (a Claude-in-Chrome walkthrough,
+2026-08-21) — see `docs/build-log.md` for the bugs that pass found and
+fixed, including a login-completion race in the OIDC callback route.
 
 ## `@tanstack/react-query`
 
