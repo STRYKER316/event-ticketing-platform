@@ -3604,3 +3604,42 @@ Frontend: `tsc`/`vitest` (8/8)/`oxlint` all clean. Code-review re-run a
 third time after these three fixes: no new findings — gate closed.
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-21 — Phase 7 `/pre-pr` gate: Step 3 verify, closing the gate for real
+
+The prior gate entries above closed Steps 1-2 (simplify, code-review) but a
+build-log entry mistakenly claimed the gate closed without Step 3 (verify)
+ever running — caught and flagged before it went further. Ran Step 3 for
+real this session: brought up the full local stack, created a real
+venue → event → seat map (2 sections, 6 seats) → published it through the
+real HTTP API as `bob`, letting booking-service's `ProvisioningConsumer`
+provision 6 real `Ticket` rows off the real Kafka message.
+
+`GET /bookings/events/{event_id}/tickets` (the new route this phase's diff
+added, now routed through `BookingManager.list_tickets_for_event`):
+200 with all 6 tickets, correct DTO shape, a spot-checked row matched
+`booking_db.tickets` exactly via `psql`. Held one ticket as `alice`
+(`POST /bookings`, unmodified adjacent endpoint) and re-queried — the same
+ticket correctly flipped to `held`, proving the read endpoint composes live
+hold state rather than serving stale data. A nonexistent `event_id`
+correctly returned `200 []` (no 404 path exists in the route — checked the
+code first rather than assuming this was a bug).
+
+Nothing failed, nothing unexpected. Cross-doc staleness sweep also done
+this session (root `README.md` and `infra/README.md` were both stale —
+`infra/README.md`'s intro paragraph had been missing `notification-service`
+since Phase 5, not just `frontend`) and `phase-7-kickoff.md`'s own exit
+checklist checked off with evidence per item, per CLAUDE.md's phase-end
+checklist item 9. Three items remain open on that checklist, all requiring
+a real browser rather than curl: the end-to-end UI walkthrough, the
+frontend organizer wizard specifically (its underlying backend sequence was
+re-confirmed working here, but not driven through `OrganizerPage.tsx`
+itself), and a real self-registration through the UI — deferred to the
+planned joint Claude-in-Chrome session.
+
+Decisions-log delta: §26 limitations pull-list extended (no
+confirmation-page refresh persistence — `ConfirmationPage.tsx`'s own code
+comment had referenced this entry since Phase 7.T1 without it actually
+existing). `CLAUDE.md` delta: none — explicitly checked; no frontend
+convention from this phase has a future call site, since Phase 7 is this
+project's only frontend phase.

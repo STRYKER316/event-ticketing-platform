@@ -346,12 +346,30 @@ none needed).
 - [ ] End-to-end live walkthrough: login/register → search → seat map
       (with a live cross-tab status update observed) → checkout → pay →
       confirmation, all against the real docker-compose stack, not mocked.
+      Deferred to the planned joint Claude-in-Chrome session — this is
+      specifically about the rendered UI, which no curl-driven check can
+      stand in for.
 - [ ] Organizer flow live-verified: venue → event → seat map → publish →
-      event appears in search → bookable.
-- [ ] The two documented gaps from this file's intro are live-verified as
-      fixed: `GET /bookings/events/{event_id}/tickets` returns real data
-      against a seeded event; Keycloak registration produces a working new
-      login.
+      event appears in search → bookable. Partial: the underlying backend
+      sequence (venue → event → seat map → publish → provisioned tickets
+      → bookable) was re-confirmed working this session by the `/pre-pr`
+      Step 3 verify subagent, driven directly against the real HTTP API
+      (not through `OrganizerPage.tsx`'s wizard) — "appears in search"
+      specifically wasn't re-checked either. The frontend organizer wizard
+      itself still needs a real browser pass; same Claude-in-Chrome
+      session as above.
+- [x] `GET /bookings/events/{event_id}/tickets` returns real data against
+      a seeded event. Evidence: `/pre-pr` Step 3 verify subagent
+      (2026-08-21) — 200 with all 6 provisioned tickets, correct DTO
+      shape, a spot-checked row matched `booking_db.tickets` exactly, a
+      concurrent hold correctly flipped one ticket to `held` on re-query,
+      and an unknown `event_id` correctly returned `200 []` (no 404 path
+      exists in the route, so this is intended behavior, not a gap).
+- [ ] Keycloak registration produces a working new login. Not yet
+      re-verified this session — P7.T1's original frontend-half entry
+      (2026-08-20) confirmed `registrationAllowed` is enabled and login
+      works end-to-end, but a real self-registration through the UI itself
+      hasn't been driven; folding into the Claude-in-Chrome session above.
 - [x] Vitest suite green for the seat-map join/polling logic and the
       checkout state machine. Evidence: 8/8 passing, confirmed repeatedly
       across all three `/pre-pr` code-review rounds (2026-08-20).
@@ -384,10 +402,11 @@ none needed).
       `frontend`); `docs/report/` already correctly describes Phase 7 as
       built (checked via grep for stale "5 screens" planning language —
       none found) and its chapter-status table already lists P7 evidence.
-- [ ] `/pre-pr` run against the diff since `2f583b8` (the commit this phase
+- [x] `/pre-pr` run against the diff since `2f583b8` (the commit this phase
       started from); findings triaged and real ones fixed. Step 1
-      (simplify) and Step 2 (code-review, three rounds — 11, 3, then 1
-      finding) complete and clean; Step 3 (verify) in progress.
+      (simplify), Step 2 (code-review, three rounds — 11, 3, then 1
+      finding), and Step 3 (verify, live-tested against the real stack)
+      all complete and clean as of 2026-08-21.
 - [x] `docs/build-log.md` entries appended per task plus the CHECKPOINT
       entry. Evidence: entries at 2026-08-20 for kickoff/T1-backend,
       T1-frontend, T4 race-testing, and the two `/pre-pr` gate rounds.
