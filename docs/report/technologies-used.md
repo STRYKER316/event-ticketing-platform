@@ -110,11 +110,54 @@ event loop. JSON logging over plain text specifically so log lines are
 machine-parseable — a real requirement once there is more than one service
 producing logs to correlate.
 
-**Status:** Implemented, Tested. Verified that both application-level log
-calls and the framework's own request-access logging render as JSON —
-initially only the former did, until the logging configuration was extended
-to route stdlib/uvicorn logging through the same formatter (see build-log,
-P0.T5). `/metrics` confirmed scraping through the gateway.
+**Status:** Implemented, Tested, Verified. Verified that both
+application-level log calls and the framework's own request-access logging
+render as JSON — initially only the former did, until the logging
+configuration was extended to route stdlib/uvicorn logging through the same
+formatter (see build-log, P0.T5).
+
+**Correction (P9.T2):** this section previously claimed "`/metrics`
+confirmed scraping through the gateway" — true only for `event-service`,
+which happens to hold Traefik's catch-all `PathPrefix('/')` router
+(priority 15, the lowest of the six routers, per `GET :8080/api/http/routers`
+— every other service's more specific `PathPrefix` rule outranks it, per
+CLAUDE.md's Traefik-routing convention, but none of those rules match the
+literal path `/metrics`, so a request to it always falls through to
+`event-service`'s router regardless of which service's metrics were
+intended). The other four services' `/metrics` endpoints are not reachable
+through the gateway at all; Prometheus's own scrape config
+(`infra/prometheus/prometheus.yml`, unchanged since P8.T1) already reflects
+this correctly — it targets each service directly on the Docker network
+(`booking-service:8003`, etc.), not through Traefik. Confirmed live this
+phase via Prometheus's targets API (`GET /api/v1/targets`): all five
+services report `health: "up"` from that direct-network scrape path.
+`/metrics` on all five was also confirmed independently reachable and
+correctly service-scoped (verified both through the gateway for
+`event-service` and directly on each service's own container port for the
+other four), so the underlying instrumentation was never the gap — only
+this section's overbroad claim about how the gateway routes it was.
+
+**Log-level discipline audit (P9.T2):** every `logger.debug/info/warning/
+error/critical` call site across all five services (48 call sites total)
+was read against CLAUDE.md's log-level rule — debug for normal flow,
+info for notable events, warning for expected/handled failures (validation
+rejections, business-rule raises), error/critical reserved for genuine
+incidents. Found one real inconsistency: `payment-service`'s
+`PaymentManager._submit_to_stripe` (the synchronous charge path) logged a
+`stripe.error.StripeError` at `error`, while
+`_submit_refund_to_stripe` — catching the identical exception type a few
+methods away in the same file — already logged it at `warning`, with an
+explicit comment reasoning that a Stripe-side decline or failure is
+"expected, handled... not a system incident." The charge path had no such
+reasoning and was simply inconsistent with its sibling. Fixed by aligning
+`_submit_to_stripe`'s log call to `warning`, matching the refund path's
+already-correct precedent. No other call site was misclassified — the
+retry-ladder pattern shared by `booking-service`, `payment-service`, and
+`notification-service`'s Kafka consumers (`warning` while retrying,
+`critical` once retries are exhausted) and every Manager's business-rule
+rejection (`warning`, never `error`, across `event_manager.py`,
+`booking_manager.py`, and `payment_manager.py`) were already consistent
+with the rule as found.
 
 ## PostgreSQL, database-per-service credential isolation
 

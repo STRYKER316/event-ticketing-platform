@@ -84,7 +84,12 @@ class PaymentManager:
                 automatic_payment_methods={"enabled": True, "allow_redirects": "never"},
             )
         except stripe.error.StripeError as exc:
-            logger.error("stripe_charge_submission_failed", booking_id=str(payment.booking_id), error=str(exc))
+            # Warning, not error — same log-level-discipline reasoning as
+            # _submit_refund_to_stripe's identical exception type below: a
+            # decline or Stripe-side failure is expected/handled, not a
+            # system incident (found in P9.T2's cross-service audit — this
+            # call site previously logged the same exception class at error).
+            logger.warning("stripe_charge_submission_failed", booking_id=str(payment.booking_id), error=str(exc))
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "payment provider unreachable") from exc
         payment.stripe_charge_id = intent.id
 
