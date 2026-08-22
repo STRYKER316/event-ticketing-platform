@@ -26,13 +26,40 @@ make bench-up    # from repo root; docker compose --profile benchmark up -d
 make bench-down
 ```
 
-Prometheus (`infra/prometheus/prometheus.yml`) scrapes `event-service`,
-`search-service`, `booking-service`, and `payment-service`'s existing
-`/metrics` endpoints (`prometheus-fastapi-instrumentator`, wired since
-P0.T5 — no new instrumentation) every 5s. Grafana auto-provisions the Prometheus datasource
+Prometheus (`infra/prometheus/prometheus.yml`) scrapes all five services'
+(`event-service`, `search-service`, `booking-service`, `payment-service`,
+`notification-service`) existing `/metrics` endpoints
+(`prometheus-fastapi-instrumentator`, wired since P0.T5 — no new
+instrumentation) every 5s, directly on the Docker network rather than
+through Traefik — confirmed live via Prometheus's own targets API
+(P9.T2; see `docs/report/technologies-used.md`'s log-level-discipline
+section for why the gateway path specifically doesn't apply here). Grafana auto-provisions the Prometheus datasource
 and a `booking-service` dashboard
 (`infra/grafana/provisioning/dashboards/json/booking-service.json`)
 from `infra/grafana/provisioning/` on startup — no manual setup needed.
+
+## Reset to a known-good demo state (P9.T4)
+
+```sh
+make reset    # from repo root — stack must already be `make up`'d and `make migrate`'d
+```
+
+Truncates everything a demo run accumulates — `event_db`/`booking_db`/
+`payment_db` tables, the Mongo `seat_maps` collection, the Elasticsearch
+`events` index, every Redis hold key — then re-runs `make seed`, all
+against the running containers (no volume drop/recreate, no re-running
+migrations). Live-verified idempotent: re-running it against an
+already-reset stack, or one with real accumulated bookings/tickets/
+payments from a prior demo/walkthrough session, both land on the same
+baseline the seed script itself defines (2 venues, 3 performers, 3
+events, 1 seat map; `booking_db`/`payment_db`/the search index start
+empty, same as they would after a genuinely fresh `make up && make
+migrate && make seed`, since the seed script writes directly to
+`event_db` rather than through the publish API and so never triggers the
+Kafka provisioning/indexing points). Deliberately does not touch
+Keycloak — its realm/user data is imported configuration
+(`keycloak/realm-export.json`), not demo-accumulated state. See
+`reset-demo-state.sh` for the exact commands.
 
 ## Ports (host-mapped, from `.env`)
 

@@ -1,4 +1,4 @@
-.PHONY: up down logs test seed migrate bench-up bench-down
+.PHONY: up down logs test seed migrate bench-up bench-down reset
 
 # Local dev workflow (§25). Run from repo root.
 
@@ -51,3 +51,14 @@ migrate:
 # Populates baseline demo data (§19). Run against a running, migrated stack.
 seed:
 	set -a && . .env && set +a && cd services/event-service && uv run --package event-service python -m app.seed
+
+# Returns a running, migrated stack to a known-good demo state in one
+# command (P9.T4) — truncates everything a demo run accumulates
+# (Postgres tables, Mongo seat-map docs, the ES search index, Redis hold
+# keys) and re-seeds, without tearing down containers or re-running
+# migrations. Does not touch Keycloak (imported config, not demo state —
+# see infra/reset-demo-state.sh). Run against a stack already `make up`'d
+# and `make migrate`'d.
+reset:
+	@test -f .env || cp .env.example .env
+	./infra/reset-demo-state.sh
