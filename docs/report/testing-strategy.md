@@ -886,3 +886,29 @@ regression test above, + 2 later DTO-mapping tests for the new
 Frontend: 9/9 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. This
 phase's exit checklist is now fully checked off; see `docs/build-log.md`'s
 2026-08-21 entries for the walkthrough's full narrative.
+
+## Phase 9 — Kafka idempotency coverage matrix
+
+Every phase from Phase 2 onward built its own Kafka consumer's redelivery
+test as part of that phase's own work (see the phase sections above) —
+the general idempotent-consumer rule (§7) was never a Phase 9 invention.
+What Phase 9 (P9.T1) adds is the one point that had never gotten a
+literal identical-message-redelivered-twice test, and a single table that
+names all five integration points' redelivery test in one place rather
+than leaving that claim scattered across five phases' worth of prose:
+
+| # | Integration point (§7) | Redelivery test | What it asserts |
+|---|---|---|---|
+| 1 | Event → Search | `search-service/tests/integration/test_event_consumer_flow.py::test_publish_makes_event_searchable_and_redelivery_is_a_noop`, `::test_delete_removes_document_and_redelivered_delete_is_a_noop` | Redelivered upsert creates no duplicate ES document; redelivered delete on an already-deleted document doesn't raise |
+| 2 | Event → Booking (provisioning) | `booking-service/tests/integration/test_provisioning_consumer.py::test_redelivered_message_creates_no_duplicate_tickets` | Redelivered "event published" message provisions no duplicate `Ticket` rows |
+| 3 | Booking/Payment → Notification | `notification-service/tests/integration/test_notification_flow.py::test_redelivery_of_same_message_is_a_safe_no_op` | Redelivering the identical raw message after a successful delivery produces no second retry-ladder entry |
+| 4 | Payment → Booking (outcome) | `booking-service/tests/integration/test_payment_outcome_consumer.py::test_redelivered_succeeded_message_confirms_and_notifies_exactly_once` (added this phase) | Redelivering the identical "succeeded" message confirms the booking and notifies exactly once, not twice — the one point that previously only had a *stale cross-message* test (`test_redelivered_message_on_already_confirmed_booking_does_not_touch_a_new_holder`, a genuinely different scenario: a late "failed" arriving after a different outcome already won), not a literal same-message-twice test |
+| 5 | Booking → Payment (refund) | `payment-service/tests/integration/test_refund_flow.py::test_booking_cancelled_consumer_redelivery_is_a_safe_no_op` | Redelivering the identical "booking cancelled" message issues exactly one Stripe refund, not two |
+
+All five confirmed green against real Postgres/MongoDB/Redis/Kafka
+testcontainers as of this phase (`31 passed` booking-service,
+`2 passed` search-service, `9 passed` payment-service, `6 passed`
+notification-service integration suites). Point 4's addition is the only
+new test this task added; points 1, 2, 3, and 5 already had their own
+redelivery coverage from the phase that built them and needed no new
+test, only citing.

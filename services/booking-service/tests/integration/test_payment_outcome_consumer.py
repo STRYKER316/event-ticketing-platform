@@ -75,6 +75,35 @@ async def test_failed_message_releases_hold_immediately_under_cron_strategy(
     notification_producer.publish_booking_confirmed.assert_not_awaited()
 
 
+async def test_redelivered_succeeded_message_confirms_and_notifies_exactly_once(
+    db_session_factory: async_sessionmaker[AsyncSession], redis_client: Redis
+):
+    # Literal redelivery of the identical message (not a stale cross-message
+    # scenario) — the same shape every other Kafka integration point's own
+    # redelivery test already uses (§7's general idempotent-consumer rule).
+    ticket_id = await seed_ticket(db_session_factory)
+    async with db_session_factory() as session:
+        ticket = await session.get(Ticket, ticket_id)
+        ticket.status = TicketStatus.HELD
+        await session.commit()
+    booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
+    notification_producer = AsyncMock()
+    consumer = PaymentOutcomeConsumer(
+        consumer=None, session_factory=db_session_factory, redis=redis_client, notification_producer=notification_producer
+    )
+    raw = _message("succeeded", booking_id, ticket_id)
+
+    await consumer._handle(raw)
+    await consumer._handle(raw)  # redelivery of the identical message
+
+    async with db_session_factory() as session:
+        booking = await session.get(Booking, booking_id)
+        ticket = await session.get(Ticket, ticket_id)
+        assert booking.status is BookingStatus.CONFIRMED
+        assert ticket.status is TicketStatus.BOOKED
+    notification_producer.publish_booking_confirmed.assert_awaited_once_with(booking_id)
+
+
 async def test_redelivered_message_on_already_confirmed_booking_does_not_touch_a_new_holder(
     db_session_factory: async_sessionmaker[AsyncSession], redis_client: Redis
 ):
