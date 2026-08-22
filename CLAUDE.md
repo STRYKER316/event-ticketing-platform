@@ -227,7 +227,7 @@ dependency/workspace management (one shared venv/lockfile across `/services`, §
   commit should still `docker compose up` cleanly. Config-gate anything half-finished
   rather than leaving `main` broken.
 - **Build order is locked (report-first):** P0 → P1 → P2 → P3 → **P8 (benchmark)** →
-  P4 → P6 → P5 → P7 → P10 → P9/P11. The benchmark runs right after Booking, before
+  P4 → P6 → P5 → P7 → P9 → P10 → P11. The benchmark runs right after Booking, before
   Payment — it's the report's only Measured chapter. Don't reorder this without
   updating the master plan.
 - Each phase's task-by-task prompts live in `/docs/phases/phase-N-kickoff.md` (Phase 0's

@@ -106,7 +106,7 @@ End-of-September lands at **~50–60% — exactly the stated fallback band.** Se
 
 The **benchmark (P8) runs immediately after Booking (P3)**, ahead of Payment (P4). It is the report's only *Measured* chapter and needs only Booking's two hold strategies — nothing downstream — so running it right after P3 secures the strongest chapter by ~Sep 21–22, inside the showcase window. **Decision:** a report-with-benchmark ready by the end of September's 3rd week outranks having the full payment loop demoable early. The showcase deliverable is a *report alongside a working core*, not a polished product demo.
 
-**Locked order:** `P0 → P1 → P2 → P3 → P8 → P4 → P6 → P5 → P7 → P10 → P9/P11`
+**Locked order:** `P0 → P1 → P2 → P3 → P8 → P4 → P6 → P5 → P7 → P9 → P10 → P11`
 
 ### Showcase milestones (always-demoable checkpoints)
 

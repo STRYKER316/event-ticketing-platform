@@ -69,7 +69,7 @@ for now (§19), no SendGrid/etc. needed.
 
 ## Status
 
-Phases 0-6 and 8 complete: walking skeleton, Event Service, Search Service +
+Phases 0-9 complete: walking skeleton, Event Service, Search Service +
 Kafka #1, Booking Service (dual hold strategy: cron sweep + Redis TTL,
 proven under real concurrent load), and Payment Service (Stripe test-mode
 charge + webhook, Kafka #4 payment-outcome confirm/release, the system's one
@@ -150,7 +150,21 @@ never actually completing, since the index route (also the OIDC
 could process it — plus a seat-label display bug and a nav-spacing
 misclick hazard; all fixed and live re-verified. See `docs/build-log.md`
 for the full list. This is the locked build order's final backend/frontend
-phase before Phase 10 (deployment) and Phase 9/11 (report assembly); see
-`/docs/phases/` for task checklists and `/docs/architecture.html` for
-current system state.
+build phase, followed by Phase 9 (hardening) and then Phase 10
+(deployment); see `/docs/phases/` for task checklists and
+`/docs/architecture.html` for current system state.
+
+**Phase 9** closed integration-test gaps and verified idempotency
+invariants system-wide rather than adding new architecture: a literal
+identical-message-redelivery test for the one Kafka integration point that
+lacked it (Payment→Booking outcome), a log-level-discipline and `/metrics`
+parity audit across all five services (one real inconsistency found and
+fixed), and tests proving two previously-untested-but-already-implemented
+guards actually hold (double-cancelling an already-CANCELLED booking;
+paying against a booking whose hold already expired). Also added `make
+reset` for a one-command known-good demo state. A CHECKPOINT `/pre-pr`
+review caught and fixed a stale audit figure, a self-contradicted test
+count in `testing-strategy.md`, a wrong cross-doc reference, and two
+commit-message rule violations (rewritten via `git filter-branch` before
+anything was pushed); see `docs/build-log.md` for the full list.
 
