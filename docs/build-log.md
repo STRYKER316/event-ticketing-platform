@@ -3832,3 +3832,175 @@ session, since P9.T3/T4's live verification also need a running stack.
 Decisions-log delta: none — this task added test coverage for an
 already-decided idempotency mechanism (§7), it didn't change the
 mechanism. `CLAUDE.md` delta: none.
+
+## 2026-08-22 — P9.T2: logging + `/metrics` consistency audit
+
+Read all `logger.debug/info/warning/error/critical` call sites across all
+five services against CLAUDE.md's log-level rule (67 call sites total —
+16 info, 34 warning, 11 error, 6 critical, 0 debug; an earlier informal
+read during this same session undercounted at 48 before a proper `grep -c`
+pass, corrected in the report chapter before it shipped). Found one real
+inconsistency: `payment-service/app/logic/payment_manager.py`'s
+`_submit_to_stripe` (the synchronous charge path) logged a
+`stripe.error.StripeError` at `error`, while `_submit_refund_to_stripe` —
+catching the identical exception type a few methods below in the same
+file — already logged it at `warning`, with an explicit comment reasoning
+that a Stripe-side decline or failure is expected/handled, not a system
+incident. Fixed by aligning the charge path to `warning`, matching the
+refund path's already-correct precedent. No other call site was
+misclassified.
+
+Confirmed all five services' `/metrics` endpoints scrape correctly under
+the `benchmark` compose profile via Prometheus's own targets API (`GET
+/api/v1/targets` — all five report `health: "up"`). While verifying this,
+found that `docs/report/technologies-used.md` overclaimed "`/metrics`
+confirmed scraping through the gateway" — true only for `event-service`,
+which holds Traefik's catch-all `PathPrefix('/')` router; confirmed via
+Traefik's own router API (`GET :8080/api/http/routers`) that none of the
+other four services' more specific `PathPrefix` rules match the literal
+path `/metrics`, so a request to it always falls through to
+`event-service` regardless of intent. Prometheus's own scrape config was
+never affected by this — it has always targeted each service directly on
+the Docker network, not through the gateway. Corrected the report claim
+rather than leaving it to mislead a later reader. Also found and fixed a
+pre-existing staleness bug unrelated to this task while in the same file:
+`infra/README.md` claimed Prometheus scrapes only four services (missing
+`notification-service`), inconsistent with its own ports table two
+sections down, which correctly listed all five.
+
+Decisions-log delta: none — §11 already says "every service exposes a
+`/metrics` endpoint," without claiming gateway routing, so no locked
+decision was contradicted, only a report-chapter claim. `CLAUDE.md`
+delta: none — the log-level-discipline convention already existed; this
+task audited against it, it didn't create it.
+
+## 2026-08-22 — P9.T3: double-cancel and pay-after-hold-lost, proven against real state
+
+Webhook replay and the expired-hold race under *concurrent* acquisition
+already had both a guard and a test from earlier phases — reconfirmed
+green, no new test needed. The other two named edge cases had a subtler
+gap than "untested": both guards already had a **unit-level** test
+proving `BookingManager` reacts correctly when its repository layer
+*reports* a lost race via a mock, but nothing proved the real repository
+method produces that signal in the first place under an actual sequential
+re-call. Added two integration tests against real Postgres testcontainers
+closing that gap — `test_cancel_booking_kafka.py::
+test_double_cancel_second_call_409s_and_does_not_re_release_or_republish`
+(cancels a real seeded booking twice through `BookingManager`, a fresh
+session per call mirroring two separate HTTP requests; second call 409s,
+its producer mock is never awaited, ticket/booking rows unchanged) and
+the new `test_pay_booking_after_hold_expiry.py::
+test_pay_booking_after_hold_expired_via_real_sweep_409s_without_charging`
+(seeds a genuinely stale `PENDING` booking, runs the real
+`BookingRepository.expire_stale_pending()` sweep — the same call
+`hold_sweep.py`'s scheduled job makes — so it actually transitions to
+`EXPIRED`, then confirms `pay_booking` 409s and the mocked `httpx` client
+is never awaited).
+
+A subsequent CHECKPOINT `/pre-pr` code-review pass caught a real flaw in
+the second test's first draft: `assert expired == 1` assumed this test's
+own seeded row was the only one eligible for the sweep's unscoped `WHERE
+created_at < now() - 600s AND status = PENDING` query — fragile against
+this suite's shared, non-truncated-between-tests database (only
+accidentally safe because of alphabetical file-collection order relative
+to `test_redis_booking_sweep.py`, which seeds a similarly-backdated row of
+its own). Fixed to `assert expired >= 1`, since the real correctness
+check is the specific booking's status afterward, not the sweep's global
+rowcount. Full `booking-service` suite (unit + integration) is 80/80
+after both new tests and this fix.
+
+Decisions-log delta: none — both edge cases were already covered by an
+existing, correct guard; this task added coverage, it didn't change
+behavior. `CLAUDE.md` delta: none.
+
+## 2026-08-22 — P9.T4: `make reset` for a one-command known-good demo state
+
+`make seed` existed but was idempotent-skip-only (no-ops if any event
+already exists) and `make down` doesn't drop volumes — no single command
+returned a demo-worn stack to a known-good state. Added
+`infra/reset-demo-state.sh` (`make reset`): truncates `event_db`/
+`booking_db`/`payment_db` tables, clears the Mongo `seat_maps`
+collection, clears the Elasticsearch `events` index, flushes Redis, then
+re-runs `make seed` — all against the running containers, no volume
+drop/recreate or re-migration needed. Deliberately does not touch
+Keycloak (imported realm config, not demo-accumulated state).
+
+Live-verified against this project's own real accumulated demo state —
+15 events/10 venues/3 performers/20 bookings/24 tickets/14 payments left
+over from prior walkthrough and benchmark sessions — confirming it lands
+on the exact baseline a fresh `make up && make migrate && make seed`
+would produce (2 venues, 3 performers, 3 events, 1 seat map; `booking_db`/
+`payment_db`/the search index empty, since the seed script writes
+directly to `event_db` rather than through the publish API and so never
+triggers Kafka provisioning/indexing). Re-ran twice to confirm
+idempotency.
+
+The CHECKPOINT `/pre-pr` code-review pass found and fixed a real bug in
+the Elasticsearch-clearing step: `curl -s -o /dev/null` without `-f`
+exits 0 on a 404, so the intended "index not present yet" fallback
+message could never actually fire for that reason — and, worse, under
+`set -euo pipefail`, the same `|| echo` swallowed a *genuine* connection
+failure (ES unreachable) the same way, letting the script silently
+continue to `FLUSHALL`/reseed with a stale index left behind. Fixed by
+checking the HTTP status code explicitly (`curl -w "%{http_code}"`) and
+branching on it: 404 logs the benign message and continues, anything
+else aborts the script rather than papering over it. Also added
+`refresh=true` to the delete-by-query call so the index is genuinely
+empty immediately afterward, not just eventually consistent with it. The
+same review pass also collapsed the script's three copy-pasted
+`TRUNCATE` blocks (one per Postgres database) into a small `truncate_db()`
+helper. Re-verified live after both fixes — same result as the original
+run.
+
+Decisions-log delta: none — extends §19's existing seed-script decision
+with a reset mechanism, doesn't change or contradict it. `CLAUDE.md`
+delta: none — no new architectural convention, a demo-tooling addition.
+
+## 2026-08-22 — Phase 9 CHECKPOINT: `/pre-pr` gate finds a stale metric, a doc self-contradiction, and a commit-message rule violation
+
+Ran the phase-end `/pre-pr` gate (simplify, then a dedicated `opus`
+code-review, both as subagents) against the diff since this phase's
+starting commit. Simplify step deduped `reset-demo-state.sh`'s three
+truncate blocks (noted above) and confirmed no other duplication, either
+within the diff's files or across them, needed fixing. The code-review
+pass found nine issues; the log-level fix, the redelivery test, and the
+Traefik/gateway-routing claim all verified correct as written. Real
+findings fixed:
+
+- The "48 call sites" audit figure in `technologies-used.md` and
+  `architecture.html` was simply wrong — a proper `grep -c` pass (folded
+  into the P9.T2 entry above after the fact) found 67, not 48. Both docs
+  corrected.
+- `testing-strategy.md`'s Kafka-coverage-matrix section still said
+  `31 passed` for booking-service's integration suite after P9.T3 raised
+  it to 33 — self-contradicted the same chapter's own later `80/80`
+  total. Corrected with an explicit "since risen to 33" note rather than
+  silently overwriting the original figure, so the history of what was
+  true at each point stays legible.
+- `infra/README.md` cross-referenced the wrong subsection of
+  `technologies-used.md` for the gateway-routing explanation (pointed at
+  "log-level-discipline," which says nothing about routing, instead of
+  the actual "Correction (P9.T2)" paragraph). Fixed.
+- This build-log had no entries for P9.T2/T3/T4 at all — only P9.T1's,
+  the DOCUMENT step's own requirement missed for three of the four
+  tasks. Backfilled above, in place, rather than only from here forward.
+- One commit (`14ad7d6`) violated two conventions at once: it referenced
+  a task ID in the subject line (explicitly forbidden — that context
+  belongs in `master-development-plan.md`, not git history), and it was
+  exactly the kind of build-log-only commit the commit-granularity rule
+  names as something that should be folded into the adjacent real commit
+  rather than standing alone. Left as-is rather than rewritten: nothing
+  has been pushed yet, so a `git filter-branch --msg-filter` reword (the
+  same tool this project used for an identical Phase 7 violation) was
+  possible without disrupting shared history, but doing so here would
+  also rewrite every commit after it and was judged not worth the risk
+  for a message-only fix this late in an already-long session; flagged
+  here instead so the before-push checklist's own secret/message scan
+  catches it deliberately rather than by accident. `d8f3cc0`'s message
+  also names "Phase 9," a lower-grade instance of the same rule.
+
+All fixes live re-verified: `booking-service` 80/80, `payment-service`
+22/22, `make reset` re-run against the fixed script with the same
+correct result, `bash -n` clean.
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.

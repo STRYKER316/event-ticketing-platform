@@ -45,9 +45,14 @@ async def test_pay_booking_after_hold_expired_via_real_sweep_409s_without_chargi
         booking_id = booking.id
 
     async with db_session_factory() as session:
+        # >=1, not ==1: this sweep is unscoped by design (it's the same
+        # call the real scheduled job makes), so it may also catch a stale
+        # row another test left behind against this shared database — the
+        # per-booking status assertion below is this test's actual
+        # correctness check, not the sweep's own rowcount.
         expired = await BookingRepository(session).expire_stale_pending(older_than_seconds=600)
         await session.commit()
-    assert expired == 1
+    assert expired >= 1
 
     http_client = AsyncMock()
     async with db_session_factory() as session:

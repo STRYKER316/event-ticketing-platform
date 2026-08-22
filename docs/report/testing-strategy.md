@@ -906,7 +906,8 @@ than leaving that claim scattered across five phases' worth of prose:
 | 5 | Booking → Payment (refund) | `payment-service/tests/integration/test_refund_flow.py::test_booking_cancelled_consumer_redelivery_is_a_safe_no_op` | Redelivering the identical "booking cancelled" message issues exactly one Stripe refund, not two |
 
 All five confirmed green against real Postgres/MongoDB/Redis/Kafka
-testcontainers as of this phase (`31 passed` booking-service,
+testcontainers at the time this test was added (`31 passed`
+booking-service — since risen to 33 with P9.T3's two additions below,
 `2 passed` search-service, `9 passed` payment-service, `6 passed`
 notification-service integration suites). Point 4's addition is the only
 new test this task added; points 1, 2, 3, and 5 already had their own

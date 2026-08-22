@@ -126,8 +126,10 @@ literal path `/metrics`, so a request to it always falls through to
 `event-service`'s router regardless of which service's metrics were
 intended). The other four services' `/metrics` endpoints are not reachable
 through the gateway at all; Prometheus's own scrape config
-(`infra/prometheus/prometheus.yml`, unchanged since P8.T1) already reflects
-this correctly — it targets each service directly on the Docker network
+(`infra/prometheus/prometheus.yml` — its five-target shape was already
+correct as of this phase, though the file itself gained a target each time
+a new service shipped: `payment-service` in Phase 4, `notification-service`
+in Phase 5) already reflects this correctly — it targets each service directly on the Docker network
 (`booking-service:8003`, etc.), not through Traefik. Confirmed live this
 phase via Prometheus's targets API (`GET /api/v1/targets`): all five
 services report `health: "up"` from that direct-network scrape path.
@@ -138,7 +140,9 @@ other four), so the underlying instrumentation was never the gap — only
 this section's overbroad claim about how the gateway routes it was.
 
 **Log-level discipline audit (P9.T2):** every `logger.debug/info/warning/
-error/critical` call site across all five services (48 call sites total)
+error/critical` call site across all five services (67 call sites total —
+16 info, 34 warning, 11 error, 6 critical, 0 debug, per
+`grep -rE "logger\.(debug|info|warning|error|critical)\(" */app`)
 was read against CLAUDE.md's log-level rule — debug for normal flow,
 info for notable events, warning for expected/handled failures (validation
 rejections, business-rule raises), error/critical reserved for genuine

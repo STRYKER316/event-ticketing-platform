@@ -32,8 +32,8 @@ Prometheus (`infra/prometheus/prometheus.yml`) scrapes all five services'
 (`prometheus-fastapi-instrumentator`, wired since P0.T5 — no new
 instrumentation) every 5s, directly on the Docker network rather than
 through Traefik — confirmed live via Prometheus's own targets API
-(P9.T2; see `docs/report/technologies-used.md`'s log-level-discipline
-section for why the gateway path specifically doesn't apply here). Grafana auto-provisions the Prometheus datasource
+(P9.T2; see `docs/report/technologies-used.md`'s "Correction (P9.T2)"
+paragraph for why the gateway path specifically doesn't apply here). Grafana auto-provisions the Prometheus datasource
 and a `booking-service` dashboard
 (`infra/grafana/provisioning/dashboards/json/booking-service.json`)
 from `infra/grafana/provisioning/` on startup — no manual setup needed.
