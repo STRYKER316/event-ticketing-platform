@@ -1,4 +1,6 @@
+import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import structlog
@@ -10,6 +12,14 @@ from app.kafka.schemas import EventDeletedMessage, EventUpsertedMessage, KafkaAc
 
 logger = structlog.get_logger()
 
+# A transient Elasticsearch failure (connection blip, brief unavailability) is
+# retried in place a few times before this consumer gives up on a message —
+# without this, run()'s per-record offset commit (see enable_auto_commit
+# below) would advance straight past a message whose write never actually
+# succeeded, silently losing that event's index update on the first hiccup.
+ES_WRITE_MAX_ATTEMPTS = 3
+ES_WRITE_RETRY_BACKOFF_SECONDS = 1.0
+
 
 def build_kafka_consumer() -> AIOKafkaConsumer:
     settings = get_settings()
@@ -18,7 +28,36 @@ def build_kafka_consumer() -> AIOKafkaConsumer:
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=settings.kafka_consumer_group_id,
         auto_offset_reset="earliest",
+        # Manual commit (default auto-commit would advance past a crash mid-write) —
+        # offset only commits in run() after _handle() fully finishes.
+        enable_auto_commit=False,
     )
+
+
+async def _run_with_retry(
+    operation: Callable[[], Awaitable[None]],
+    *,
+    retrying_event: str,
+    failed_event: str,
+    **log_context: object,
+) -> bool:
+    """Bounded-retry shape mirroring booking-service's consumers._run_with_retry:
+    retries a transient failure in place a few times with backoff before
+    giving up, logging critical (not silently) on the last attempt rather
+    than raising. Returns True once `operation` succeeds, False once every
+    attempt has failed — the caller commits the Kafka offset regardless
+    either way (see build_kafka_consumer's enable_auto_commit note)."""
+    for attempt in range(1, ES_WRITE_MAX_ATTEMPTS + 1):
+        try:
+            await operation()
+            return True
+        except Exception:
+            if attempt == ES_WRITE_MAX_ATTEMPTS:
+                logger.critical(failed_event, attempts=attempt, exc_info=True, **log_context)
+                return False
+            logger.warning(retrying_event, attempt=attempt, exc_info=True, **log_context)
+            await asyncio.sleep(ES_WRITE_RETRY_BACKOFF_SECONDS)
+    return False
 
 
 def _to_document(message: EventUpsertedMessage) -> dict[str, Any]:
@@ -42,6 +81,10 @@ class EventConsumer:
     async def run(self) -> None:
         async for record in self._consumer:
             await self._handle(record.value)
+            # Manual, per-record offset commit only after _handle() has
+            # fully finished — see build_kafka_consumer's enable_auto_commit
+            # note.
+            await self._consumer.commit()
 
     async def _handle(self, raw: bytes) -> None:
         try:
@@ -51,17 +94,51 @@ class EventConsumer:
             # which must not escape and kill the background consumer task.
             action = KafkaAction(payload.get("action"))
         except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as exc:
-            logger.error("search_consumer_message_unparseable", error=str(exc), raw=raw[:500])
+            logger.warning("search_consumer_message_unparseable", error=str(exc), raw=raw[:500])
             return
 
-        try:
-            if action is KafkaAction.DELETED:
-                message = EventDeletedMessage.model_validate(payload)
-                await self._repository.delete(str(message.event_id))
-                logger.info("search_index_deleted", event_id=str(message.event_id))
-            else:
+        if action is KafkaAction.DELETED:
+            try:
+                message: EventDeletedMessage | EventUpsertedMessage = EventDeletedMessage.model_validate(payload)
+            except Exception:
+                logger.warning("search_consumer_message_failed", action=action.value, raw=raw[:500], exc_info=True)
+                return
+            await self._delete_with_retry(message)
+        else:
+            try:
                 message = EventUpsertedMessage.model_validate(payload)
-                await self._repository.upsert(str(message.event_id), _to_document(message))
-                logger.info("search_index_upserted", event_id=str(message.event_id))
-        except Exception:
-            logger.error("search_consumer_message_failed", action=action.value, raw=raw[:500], exc_info=True)
+            except Exception:
+                logger.warning("search_consumer_message_failed", action=action.value, raw=raw[:500], exc_info=True)
+                return
+            await self._upsert_with_retry(message)
+
+    async def _upsert_with_retry(self, message: EventUpsertedMessage) -> None:
+        event_id = str(message.event_id)
+        document = _to_document(message)
+
+        async def _write() -> None:
+            await self._repository.upsert(event_id, document)
+
+        succeeded = await _run_with_retry(
+            _write,
+            retrying_event="search_consumer_es_write_failed_retrying",
+            failed_event="search_consumer_es_write_failed_permanently",
+            event_id=event_id,
+        )
+        if succeeded:
+            logger.info("search_index_upserted", event_id=event_id)
+
+    async def _delete_with_retry(self, message: EventDeletedMessage) -> None:
+        event_id = str(message.event_id)
+
+        async def _write() -> None:
+            await self._repository.delete(event_id)
+
+        succeeded = await _run_with_retry(
+            _write,
+            retrying_event="search_consumer_es_delete_failed_retrying",
+            failed_event="search_consumer_es_delete_failed_permanently",
+            event_id=event_id,
+        )
+        if succeeded:
+            logger.info("search_index_deleted", event_id=event_id)

@@ -2,6 +2,7 @@ import json
 import uuid
 from unittest.mock import AsyncMock
 
+from app.kafka import consumers
 from app.kafka.consumers import EventConsumer
 
 EVENT_ID = uuid.uuid4()
@@ -15,7 +16,7 @@ UPSERT_PAYLOAD = {
     "end_time": "2026-09-01T12:00:00Z",
     "venue_name": "Test Venue",
     "performer_names": ["Test Performer"],
-    "seats": [{"section": "A", "row": "1", "label": "A1"}],
+    "seats": [{"section": "A", "row": "1", "label": "A1", "price_cents": 2500}],
 }
 
 DELETE_PAYLOAD = {"action": "deleted", "event_id": str(EVENT_ID)}
@@ -36,7 +37,7 @@ async def test_upsert_message_calls_repository_upsert():
     event_id_arg, document_arg = repository.upsert.await_args.args
     assert event_id_arg == str(EVENT_ID)
     assert document_arg["title"] == "Test Event"
-    assert document_arg["seats"] == [{"section": "A", "row": "1", "label": "A1"}]
+    assert document_arg["seats"] == [{"section": "A", "row": "1", "label": "A1", "price_cents": 2500}]
     repository.delete.assert_not_awaited()
 
 
@@ -67,11 +68,52 @@ async def test_unknown_action_does_not_raise():
     repository.delete.assert_not_awaited()
 
 
-async def test_repository_failure_is_caught_not_raised():
+async def test_repository_failure_is_caught_not_raised_after_exhausting_retries(monkeypatch):
+    # Zero backoff keeps this test fast; call-count proves every attempt
+    # actually happened rather than giving up after the first — same pattern
+    # as booking-service's equivalent DB-write-failure test.
+    monkeypatch.setattr(consumers, "ES_WRITE_RETRY_BACKOFF_SECONDS", 0)
     consumer, repository = make_consumer()
     repository.upsert.side_effect = RuntimeError("elasticsearch down")
 
     await consumer._handle(json.dumps(UPSERT_PAYLOAD).encode())  # must not raise
+
+    assert repository.upsert.await_count == consumers.ES_WRITE_MAX_ATTEMPTS
+
+
+async def test_transient_repository_failure_is_retried_then_succeeds(monkeypatch):
+    # Regression test for the "no bounded retry around the ES write" finding:
+    # a transient failure on the first attempt(s) must not be treated as a
+    # permanent loss — the write is retried in place and the document still
+    # ends up indexed once the transient condition clears.
+    monkeypatch.setattr(consumers, "ES_WRITE_RETRY_BACKOFF_SECONDS", 0)
+    consumer, repository = make_consumer()
+    repository.upsert.side_effect = [RuntimeError("transient ES blip"), None]
+
+    await consumer._handle(json.dumps(UPSERT_PAYLOAD).encode())
+
+    assert repository.upsert.await_count == 2
+
+
+async def test_offset_only_committed_after_handle_finishes():
+    # run()'s per-record offset commit must happen strictly after _handle()
+    # returns, not on aiokafka's background auto-commit timer.
+    calls: list[str] = []
+    repository = AsyncMock()
+    repository.upsert.side_effect = lambda *_a, **_kw: calls.append("write")
+
+    class _Record:
+        value = json.dumps(UPSERT_PAYLOAD).encode()
+
+    kafka_consumer = AsyncMock()
+    kafka_consumer.__aiter__.return_value = [_Record()]
+    kafka_consumer.commit.side_effect = lambda: calls.append("commit")
+
+    consumer = EventConsumer(consumer=kafka_consumer, repository=repository)
+
+    await consumer.run()
+
+    assert calls == ["write", "commit"]
 
 
 async def test_valid_json_non_object_does_not_raise():

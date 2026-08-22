@@ -1,8 +1,13 @@
 from typing import Any
 
-from elasticsearch import AsyncElasticsearch, NotFoundError
+from elasticsearch import AsyncElasticsearch, BadRequestError, NotFoundError
 
 EVENTS_INDEX = "events"
+
+# elasticsearch-py raises BadRequestError (HTTP 400) for a concurrent create
+# that lost the race against another instance's — its body carries this error
+# type rather than a dedicated exception class.
+_RESOURCE_ALREADY_EXISTS_ERROR_TYPE = "resource_already_exists_exception"
 
 # Mirrors the event-carried Kafka payload (event-service's EventUpsertedMessage,
 # §7.2) — this index is populated exclusively from that message, never queried
@@ -36,15 +41,33 @@ class EventIndexRepository:
             # (§12, §24) — a replica could never be assigned to a second node,
             # so it would sit unassigned forever and keep cluster health at
             # "yellow" for no reason.
-            await self._client.indices.create(
-                index=EVENTS_INDEX,
-                mappings={"properties": EVENTS_INDEX_MAPPING},
-                settings={"number_of_replicas": 0},
-            )
+            try:
+                await self._client.indices.create(
+                    index=EVENTS_INDEX,
+                    mappings={"properties": EVENTS_INDEX_MAPPING},
+                    settings={"number_of_replicas": 0},
+                )
+            except BadRequestError as exc:
+                # Check-then-act race: another instance's create won between
+                # our exists() check and this call (relevant if this service
+                # is ever scaled beyond one instance) — the index existing is
+                # a successful outcome here, not a startup crash. Any other
+                # 400 (a real mapping conflict, etc.) still propagates.
+                body = exc.body if isinstance(exc.body, dict) else {}
+                error_type = body.get("error", {}).get("type") if isinstance(body.get("error"), dict) else None
+                if error_type != _RESOURCE_ALREADY_EXISTS_ERROR_TYPE:
+                    raise
         # Block until the index's shards are actually assigned, so a caller
         # (service startup, a test) never observes a healthy-looking index
-        # that isn't queryable/writable yet.
-        await self._client.cluster.health(index=EVENTS_INDEX, wait_for_status="yellow", timeout="30s")
+        # that isn't queryable/writable yet. cluster.health() returns
+        # normally (does not raise) with timed_out=True if the wait expires,
+        # so that has to be checked explicitly rather than trusted to raise.
+        health = await self._client.cluster.health(index=EVENTS_INDEX, wait_for_status="yellow", timeout="30s")
+        if health.get("timed_out"):
+            raise RuntimeError(
+                f"Elasticsearch index '{EVENTS_INDEX}' did not reach 'yellow' status "
+                f"within the wait timeout (status={health.get('status')})"
+            )
 
     async def upsert(self, event_id: str, document: dict[str, Any]) -> None:
         # Indexing by the event ID (§7 idempotency) means a redelivered upsert

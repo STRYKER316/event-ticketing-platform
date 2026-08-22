@@ -58,7 +58,7 @@ async def test_publish_makes_event_searchable_and_redelivery_is_a_noop(
         "end_time": "2026-09-01T12:00:00Z",
         "venue_name": "Integration Venue",
         "performer_names": [],
-        "seats": [{"section": "A", "row": "1", "label": "A1"}],
+        "seats": [{"section": "A", "row": "1", "label": "A1", "price_cents": 2500}],
     }
 
     # Eventual consistency (§7): nothing has indexed this fresh event_id yet

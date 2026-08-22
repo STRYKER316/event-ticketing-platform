@@ -1,8 +1,9 @@
 import enum
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class KafkaAction(enum.Enum):
@@ -14,6 +15,10 @@ class EventSeat(BaseModel):
     section: str
     row: str
     label: str
+    # Mirrors event-service's producer-side field (added later there) — kept
+    # in sync so this schema round-trips it instead of pydantic's default
+    # extra="ignore" silently dropping data the producer actually sends.
+    price_cents: Annotated[int, Field(gt=0)]
 
 
 class EventUpsertedMessage(BaseModel):
