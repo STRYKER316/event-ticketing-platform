@@ -35,9 +35,9 @@ async def test_concurrent_first_time_charges_for_one_booking_only_one_creates(
     db_session_factory: async_sessionmaker[AsyncSession], monkeypatch
 ):
     # The correctness contract _resolve_payment_row's IntegrityError handling
-    # exists to satisfy (found missing in code review): two genuinely
-    # concurrent first-charge attempts for the same booking must resolve to
-    # one Payment row, not a 500 from an unhandled unique-constraint violation.
+    # exists to satisfy: two genuinely concurrent first-charge attempts for
+    # the same booking must resolve to one Payment row, not a 500 from an
+    # unhandled unique-constraint violation.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     create_mock = AsyncMock(return_value=MagicMock(id="pi_race"))
     monkeypatch.setattr(stripe.PaymentIntent, "create_async", create_mock)
@@ -81,12 +81,11 @@ async def test_replayed_charge_against_real_db_does_not_double_charge(db_session
 async def test_concurrent_overlapping_webhook_deliveries_only_one_wins(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
-    # The correctness contract the rowcount-gated transition_if_pending
-    # exists to satisfy (found missing in code review — the previous
-    # read-then-write version could let two overlapping deliveries both
-    # pass the PENDING check before either committed): two genuinely
-    # concurrent webhook deliveries for the same charge must not both
-    # transition the row or both publish.
+    # The correctness contract the rowcount-gated transition_if_pending exists
+    # to satisfy: two genuinely concurrent webhook deliveries for the same
+    # charge must not both transition the row or both publish — a prior
+    # read-then-write version could let both pass the PENDING check before
+    # either committed.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     async with db_session_factory() as seed_session:
         await PaymentRepository(seed_session).create(

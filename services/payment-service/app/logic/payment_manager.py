@@ -58,11 +58,10 @@ class PaymentManager:
             return payment
         except IntegrityError:
             # Lost a race to a concurrent first-time charge attempt for the
-            # same booking — the unique index on booking_id caught it
-            # (found in code review: this was previously unhandled, a 500
-            # instead of a clean idempotent resolution). Use the winner's
-            # row instead of erroring out; create_charge's caller-side check
-            # on stripe_charge_id decides whether it still needs submitting.
+            # same booking — the unique index on booking_id caught it. Use
+            # the winner's row instead of erroring out; create_charge's
+            # caller-side check on stripe_charge_id decides whether it
+            # still needs submitting.
             await self._session.rollback()
             winner = await self._payments.get_by_booking_id(payload.booking_id)
             if winner is None:
@@ -91,8 +90,7 @@ class PaymentManager:
             # Warning, not error — same log-level-discipline reasoning as
             # _submit_refund_to_stripe's identical exception type below: a
             # decline or Stripe-side failure is expected/handled, not a
-            # system incident (found in P9.T2's cross-service audit — this
-            # call site previously logged the same exception class at error).
+            # system incident.
             logger.warning("stripe_charge_submission_failed", booking_id=str(payment.booking_id), error=str(exc))
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "payment provider unreachable") from exc
         payment.stripe_charge_id = intent.id
@@ -111,9 +109,9 @@ class PaymentManager:
         that's still PENDING, so a redelivered webhook — or two overlapping
         deliveries racing each other — can't both win it.
 
-        Publishes *before* committing (found in code review): the reverse
-        order let a Kafka-publish failure strand a Payment in its new
-        terminal status with no way to retry the publish — Stripe's own
+        Publishes *before* committing — the reverse order would let a
+        Kafka-publish failure strand a Payment in its new terminal status
+        with no way to retry the publish — Stripe's own
         webhook retry would hit the PENDING guard and silently no-op,
         losing the outcome for good. Publishing first means a failure here
         propagates uncommitted (the request handler's session rolls back on
@@ -167,8 +165,8 @@ class PaymentManager:
         sequentially), so only crash-then-restart redelivery is possible,
         not two overlapping deliveries — the same resubmission-gate
         reasoning already proven correct for charges applies unchanged.
-        Two residual gaps, same risk tolerance this pattern already accepts
-        for create_charge, not fixed here (found in code review): a
+        Two residual gaps remain, same risk tolerance this pattern already
+        accepts for create_charge, not fixed here: a
         consumer-group rebalance or a second running replica could still
         put two calls for one booking in flight, resting correctness
         entirely on Stripe's own `{booking_id}-refund` idempotency key as
@@ -219,8 +217,8 @@ class PaymentManager:
     ) -> None:
         # A failure here (broker down, etc.) must not escape and be
         # misattributed by the consumer's retry wrapper as a DB-write
-        # failure (found in code review) — it would trigger a pointless
-        # re-submission to Stripe on retry (safe, same idempotency key, but
+        # failure — it would trigger a pointless re-submission to Stripe on
+        # retry (safe, same idempotency key, but
         # wasteful) and, after the retry budget is exhausted, silently lose
         # the notification with a misleading log event name. Logged and
         # swallowed instead: the refund failure itself is already recorded

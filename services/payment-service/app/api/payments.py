@@ -34,9 +34,8 @@ async def create_charge(
     deliberately narrower than every other service's), so it's reachable
     only over the internal Docker network, by booking-service, which is
     the thing that actually enforces ownership and looks up the
-    authoritative price (found missing in code review — a valid JWT alone
-    would otherwise let any user submit an arbitrary amount for any
-    booking)."""
+    authoritative price — a valid JWT alone would otherwise let any user
+    submit an arbitrary amount for any booking."""
     manager = PaymentManager(session=session, payments=PaymentRepository(session))
     return await manager.create_charge(payload)
 

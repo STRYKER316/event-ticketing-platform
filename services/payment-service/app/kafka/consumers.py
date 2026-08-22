@@ -65,10 +65,10 @@ async def _run_with_retry(
     # (_refund) routes through PaymentManager, which already owns its own
     # commit per this project's "Manager methods that mutate always end
     # with commit()" convention, making this a harmless no-op today.
-    # Removing it was tried and reverted (found in code review): it would
-    # silently strand any *future* handler wired through this same helper
-    # that doesn't route through a self-committing Manager, with no signal
-    # that anything was wrong — a safety net worth the redundant call.
+    # Removing it would silently strand any *future* handler wired through
+    # this same helper that doesn't route through a self-committing Manager,
+    # with no signal that anything was wrong — a safety net worth the
+    # redundant call.
     async def _in_session() -> _T:
         async with session_factory() as session:
             result = await operation(session)
