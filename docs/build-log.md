@@ -3783,3 +3783,52 @@ original walkthrough entry above reported (correct as of when it was
 written, before this pass's own additions).
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-22 — Phase 9 kickoff generated from an audit, not assumed blank; P9.T1: Kafka idempotency coverage matrix
+
+`docs/phases/phase-9-kickoff.md` didn't exist yet, so per `CLAUDE.md`'s
+"only fall back to actual planning if no kickoff doc exists" rule, this
+session did real (bounded-path) planning rather than reading an existing
+plan. Before drafting task prompts, checked each of Phase 9's four
+master-plan tasks (P9.T1-T4) against the actual repo rather than assuming
+a from-scratch scope: found 4 of 5 Kafka integration points already had a
+redelivery test from the phase that built them, all 5 services already
+share identical `structlog` scaffolding, 2 of 3 named edge cases (webhook
+replay, expired-hold race) already had both a guard and a test, and
+`make seed` exists but is idempotent-skip-only with no reset path. This
+reframed the kickoff doc's tasks as "verify + fill the specific gap found"
+rather than "build from scratch," consistent with the Integrity rule —
+claiming a task rebuilds something that already exists would misstate
+what actually happened.
+
+P9.T1: added the one missing test — `test_payment_outcome_consumer.py`'s
+existing redelivery coverage was a *stale cross-message* test (a late
+"failed" arriving after the booking already went CONFIRMED via a
+different message), not a literal identical-message-delivered-twice test
+the way every other integration point's own redelivery test already is.
+Added `test_redelivered_succeeded_message_confirms_and_notifies_exactly_once`,
+mirroring the shape `test_provisioning_consumer.py` and
+`test_refund_flow.py` already use: call `_handle()` twice with the
+identical raw bytes, assert the booking is CONFIRMED once, the ticket is
+BOOKED once, and the notification producer fires exactly once. Passed on
+first run against real Postgres/Redis/Kafka testcontainers. Re-ran all
+four services' full integration suites to confirm nothing regressed and
+to ground the coverage-matrix table in real, current pass counts rather
+than a stale claim: booking-service 31/31, search-service 2/2,
+payment-service 9/9, notification-service 6/6.
+
+Wrote the resulting five-point coverage matrix (integration point, test
+file/name, what it asserts) into `docs/report/testing-strategy.md`'s new
+"Phase 9 — Kafka idempotency coverage matrix" section, citing real test
+names rather than an unsupported "all five are idempotent" claim, and
+updated `docs/report/README.md`'s chapter-status table to match.
+
+One environment note: Docker Desktop wasn't running at session start
+(`docker.errors.DockerException`, no daemon socket) — testcontainers-based
+integration tests can't run without it. Started it and waited for the
+daemon before proceeding; worth checking first thing in any future P9
+session, since P9.T3/T4's live verification also need a running stack.
+
+Decisions-log delta: none — this task added test coverage for an
+already-decided idempotency mechanism (§7), it didn't change the
+mechanism. `CLAUDE.md` delta: none.
