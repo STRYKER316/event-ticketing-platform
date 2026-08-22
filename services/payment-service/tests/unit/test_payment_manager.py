@@ -117,7 +117,7 @@ async def test_webhook_success_transitions_pending_payment_and_publishes():
         created_at=datetime.now(timezone.utc),
     )
     payments = AsyncMock(
-        get_by_stripe_charge_id=AsyncMock(return_value=payment), transition_if_pending=AsyncMock(return_value=True)
+        get_by_stripe_charge_id=AsyncMock(return_value=payment), transition_to_succeeded=AsyncMock(return_value=True)
     )
     manager = PaymentManager(session=AsyncMock(), payments=payments)
     producer = AsyncMock()
@@ -128,7 +128,7 @@ async def test_webhook_success_transitions_pending_payment_and_publishes():
     )
 
     assert payment.status is PaymentStatus.SUCCEEDED
-    payments.transition_if_pending.assert_awaited_once_with("pi_123", PaymentStatus.SUCCEEDED)
+    payments.transition_to_succeeded.assert_awaited_once_with("pi_123")
     producer.publish_outcome.assert_awaited_once_with(payment)
     # Integration point #3 (§7 point 3, Phase 5).
     notification_producer.publish_payment_confirmed.assert_awaited_once_with(payment.booking_id)
@@ -151,7 +151,7 @@ async def test_replayed_webhook_on_already_terminal_payment_is_a_safe_no_op():
         created_at=datetime.now(timezone.utc),
     )
     payments = AsyncMock(
-        get_by_stripe_charge_id=AsyncMock(return_value=payment), transition_if_pending=AsyncMock(return_value=False)
+        get_by_stripe_charge_id=AsyncMock(return_value=payment), transition_to_succeeded=AsyncMock(return_value=False)
     )
     manager = PaymentManager(session=AsyncMock(), payments=payments)
     producer = AsyncMock()
@@ -164,6 +164,38 @@ async def test_replayed_webhook_on_already_terminal_payment_is_a_safe_no_op():
     assert payment.status is PaymentStatus.SUCCEEDED
     producer.publish_outcome.assert_not_awaited()
     notification_producer.publish_payment_confirmed.assert_not_awaited()
+
+
+async def test_late_success_webhook_after_earlier_failure_still_transitions_and_confirms():
+    # A FAILED payment must still accept a genuine later success and drive
+    # the same confirm-booking publish as the PENDING->SUCCEEDED path, not
+    # be silently dropped as a no-op.
+    payment = Payment(
+        id=uuid.uuid4(),
+        booking_id=uuid.uuid4(),
+        ticket_id=uuid.uuid4(),
+        amount_cents=2500,
+        currency="usd",
+        status=PaymentStatus.FAILED,
+        stripe_charge_id="pi_123",
+        idempotency_key="k",
+        created_at=datetime.now(timezone.utc),
+    )
+    payments = AsyncMock(
+        get_by_stripe_charge_id=AsyncMock(return_value=payment), transition_to_succeeded=AsyncMock(return_value=True)
+    )
+    manager = PaymentManager(session=AsyncMock(), payments=payments)
+    producer = AsyncMock()
+    notification_producer = AsyncMock()
+
+    await manager.handle_webhook_event(
+        _webhook_event("payment_intent.succeeded", "pi_123"), producer, notification_producer
+    )
+
+    assert payment.status is PaymentStatus.SUCCEEDED
+    payments.transition_to_succeeded.assert_awaited_once_with("pi_123")
+    producer.publish_outcome.assert_awaited_once_with(payment)
+    notification_producer.publish_payment_confirmed.assert_awaited_once_with(payment.booking_id)
 
 
 async def test_webhook_for_unknown_charge_is_a_safe_no_op():

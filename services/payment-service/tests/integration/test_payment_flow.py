@@ -147,3 +147,36 @@ async def test_webhook_transitions_payment_and_replay_is_a_safe_no_op(db_session
     notification_producer.publish_payment_confirmed.assert_awaited_once()
     persisted = await PaymentRepository(db_session).get_by_booking_id(booking_id)
     assert persisted.status is PaymentStatus.SUCCEEDED
+
+
+async def test_late_success_webhook_after_failure_confirms_booking_against_real_db(db_session: AsyncSession):
+    # A late genuine success must still confirm the booking even though an
+    # earlier webhook already moved the row to FAILED — transition_if_pending
+    # alone would silently drop this as a no-op.
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    payments = PaymentRepository(db_session)
+    await payments.create(
+        Payment(
+            booking_id=booking_id,
+            ticket_id=ticket_id,
+            amount_cents=5000,
+            currency="usd",
+            status=PaymentStatus.FAILED,
+            stripe_charge_id="pi_late_success",
+            idempotency_key=str(booking_id),
+        )
+    )
+    await db_session.commit()
+    manager = PaymentManager(session=db_session, payments=payments)
+
+    producer = AsyncMock()
+    notification_producer = AsyncMock()
+    event = {"type": "payment_intent.succeeded", "data": {"object": {"id": "pi_late_success"}}}
+
+    await manager.handle_webhook_event(event, producer, notification_producer)
+    await manager.handle_webhook_event(event, producer, notification_producer)  # redelivery
+
+    producer.publish_outcome.assert_awaited_once()
+    notification_producer.publish_payment_confirmed.assert_awaited_once()
+    persisted = await PaymentRepository(db_session).get_by_booking_id(booking_id)
+    assert persisted.status is PaymentStatus.SUCCEEDED

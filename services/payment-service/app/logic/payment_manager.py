@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 
 import stripe
@@ -64,7 +65,10 @@ class PaymentManager:
             # on stripe_charge_id decides whether it still needs submitting.
             await self._session.rollback()
             winner = await self._payments.get_by_booking_id(payload.booking_id)
-            assert winner is not None, "IntegrityError on booking_id implies a row now exists"
+            if winner is None:
+                # Genuinely unexpected: the IntegrityError implies a row now exists.
+                logger.error("payment_row_missing_after_integrity_error", booking_id=str(payload.booking_id))
+                raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "payment resolution failed") from None
             return winner
 
     async def _submit_to_stripe(self, payment: Payment, payload: ChargeRequest) -> None:
@@ -123,18 +127,27 @@ class PaymentManager:
         if payment is None:
             logger.warning("webhook_payment_not_found", stripe_charge_id=intent_id)
             return
-        transitioned = await self._payments.transition_if_pending(intent_id, new_status)
+        if new_status is PaymentStatus.SUCCEEDED:
+            # Also accepts FAILED->SUCCEEDED: a late genuine success must
+            # still confirm the booking, not be dropped as a no-op just
+            # because an earlier webhook already parked the row in FAILED.
+            transitioned = await self._payments.transition_to_succeeded(intent_id)
+        else:
+            transitioned = await self._payments.transition_if_pending(intent_id, new_status)
         if not transitioned:
             logger.info(
                 "webhook_replay_no_op", booking_id=str(payment.booking_id), current_status=payment.status.value
             )
             return
         payment.status = new_status
-        await producer.publish_outcome(payment)
         if new_status is PaymentStatus.SUCCEEDED:
-            # Integration point #3 (§7 point 3, Phase 5) — same
-            # publish-before-commit reasoning as publish_outcome above.
-            await notification_producer.publish_payment_confirmed(payment.booking_id)
+            # Integration point #3 (§7 point 3, Phase 5) — both must finish
+            # before commit; gathered instead of sequential awaits.
+            await asyncio.gather(
+                producer.publish_outcome(payment), notification_producer.publish_payment_confirmed(payment.booking_id)
+            )
+        else:
+            await producer.publish_outcome(payment)
         await self._session.commit()
 
     async def refund_payment(

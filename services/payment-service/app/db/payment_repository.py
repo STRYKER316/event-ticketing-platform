@@ -34,3 +34,19 @@ class PaymentRepository(BaseRepository[Payment]):
         )
         await self._session.flush()
         return result.rowcount > 0
+
+    async def transition_to_succeeded(self, stripe_charge_id: str) -> bool:
+        """Also accepts FAILED, not just PENDING — a genuine success can
+        arrive after an earlier failed webhook already parked the row in
+        FAILED. Still idempotent: a row already SUCCEEDED matches neither
+        branch."""
+        result = await self._session.execute(
+            sa_update(Payment)
+            .where(
+                Payment.stripe_charge_id == stripe_charge_id,
+                Payment.status.in_([PaymentStatus.PENDING, PaymentStatus.FAILED]),
+            )
+            .values(status=PaymentStatus.SUCCEEDED)
+        )
+        await self._session.flush()
+        return result.rowcount > 0

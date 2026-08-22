@@ -27,6 +27,31 @@ DB_WRITE_RETRY_BACKOFF_SECONDS = 1.0
 _T = TypeVar("_T")
 
 
+async def _retry_with_backoff(
+    operation: Callable[[], Awaitable[_T]],
+    *,
+    max_attempts: int,
+    backoff_seconds: float,
+    retrying_event: str,
+    failed_event: str,
+    **log_context: object,
+) -> _T | None:
+    """Generic bounded-retry shape, split out from the DB-specific wrapper
+    below (mirrors booking-service/app/kafka/consumers.py's own split) —
+    _refund's operation is a Kafka publish and a Stripe call too, not just
+    a DB write."""
+    for attempt in range(1, max_attempts + 1):
+        try:
+            return await operation()
+        except Exception:
+            if attempt == max_attempts:
+                logger.critical(failed_event, attempts=attempt, exc_info=True, **log_context)
+                return None
+            logger.warning(retrying_event, attempt=attempt, exc_info=True, **log_context)
+            await asyncio.sleep(backoff_seconds)
+    return None
+
+
 async def _run_with_retry(
     session_factory: async_sessionmaker[AsyncSession],
     operation: Callable[[AsyncSession], Awaitable[_T]],
@@ -44,19 +69,20 @@ async def _run_with_retry(
     # silently strand any *future* handler wired through this same helper
     # that doesn't route through a self-committing Manager, with no signal
     # that anything was wrong — a safety net worth the redundant call.
-    for attempt in range(1, DB_WRITE_MAX_ATTEMPTS + 1):
-        try:
-            async with session_factory() as session:
-                result = await operation(session)
-                await session.commit()
+    async def _in_session() -> _T:
+        async with session_factory() as session:
+            result = await operation(session)
+            await session.commit()
             return result
-        except Exception:
-            if attempt == DB_WRITE_MAX_ATTEMPTS:
-                logger.critical(failed_event, attempts=attempt, exc_info=True, **log_context)
-                return None
-            logger.warning(retrying_event, attempt=attempt, exc_info=True, **log_context)
-            await asyncio.sleep(DB_WRITE_RETRY_BACKOFF_SECONDS)
-    return None
+
+    return await _retry_with_backoff(
+        _in_session,
+        max_attempts=DB_WRITE_MAX_ATTEMPTS,
+        backoff_seconds=DB_WRITE_RETRY_BACKOFF_SECONDS,
+        retrying_event=retrying_event,
+        failed_event=failed_event,
+        **log_context,
+    )
 
 
 async def _consume_with_manual_commit(consumer: AIOKafkaConsumer, handle: Callable[[bytes], Awaitable[None]]) -> None:
@@ -103,18 +129,11 @@ class BookingCancelledConsumer:
         await self._refund_with_retry(message.booking_id)
 
     async def _refund_with_retry(self, booking_id: uuid.UUID) -> None:
-        """Retries a transient failure in place before giving up — see
-        _run_with_retry(). A Stripe-side failure is handled inside
-        refund_payment() itself and doesn't propagate here (including its
-        own notification-publish attempt, wrapped separately — see
-        PaymentManager._publish_refund_failed_notification), so this retry
-        loop only ever re-runs on a genuine DB error or a
-        get_notification_producer() failure — the log event names below are
-        deliberately not "db_write" specific, unlike booking-service's copy
-        of this helper, since the operation this wraps isn't DB-only (found
-        in code review). See PaymentManager.refund_payment's own docstring
-        for why a retried Stripe call (if commit failed after a successful
-        refund) is still safe: same idempotency_key, no double refund."""
+        """Retries a transient failure before giving up — see _run_with_retry().
+        A Stripe-side failure is already handled inside refund_payment() and
+        doesn't propagate here, so this only re-runs on a genuine DB or
+        producer-lookup error. A retried Stripe call is still safe: same
+        idempotency_key, no double refund (see refund_payment's docstring)."""
 
         async def _refund(session: AsyncSession) -> None:
             manager = PaymentManager(session=session, payments=PaymentRepository(session))

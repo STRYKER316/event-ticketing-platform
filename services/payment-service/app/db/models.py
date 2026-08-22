@@ -31,7 +31,7 @@ class Payment(Base):
     amount_cents: Mapped[int] = mapped_column(nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="usd")
     status: Mapped[PaymentStatus] = mapped_column(nullable=False, default=PaymentStatus.PENDING)
-    stripe_charge_id: Mapped[str | None] = mapped_column(String(255))
+    stripe_charge_id: Mapped[str | None] = mapped_column(String(255), index=True, unique=True)
     # Booking ID doubles as Stripe's idempotency key (§9) — stored explicitly
     # rather than re-derived, so a replayed charge attempt can be recognized
     # without assuming booking_id and idempotency_key will always be identical.

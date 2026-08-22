@@ -1,9 +1,13 @@
 import uuid
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from app.db.models import PaymentStatus
+
+# ISO 4217 code, e.g. "usd" — rejects blank/whitespace-only strings.
+Currency = Annotated[str, StringConstraints(strip_whitespace=True, min_length=3, max_length=3)]
 
 
 class HealthResponse(BaseModel):
@@ -19,7 +23,7 @@ class ChargeRequest(BaseModel):
     booking_id: uuid.UUID
     ticket_id: uuid.UUID
     amount_cents: int = Field(gt=0)
-    currency: str = Field(min_length=3, max_length=3)
+    currency: Currency
     # No card-collection UI exists in this project's scope (§10) — Booking
     # Service never sets this, so every real caller gets the default
     # always-succeeds Stripe test payment method. The test suite overrides it
