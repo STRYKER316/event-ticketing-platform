@@ -16,13 +16,9 @@ logger = structlog.get_logger()
 
 _M = TypeVar("_M", bound=BaseModel)
 
-# A transient broker error (leader election, brief unavailability) on a
-# republish is retried in place a few times before a consumer gives up on it
-# — mirrors booking-service's own DB_WRITE_MAX_ATTEMPTS/_run_with_retry
-# shape (app/kafka/consumers.py), just applied to a Kafka republish standing
-# in for the DB write this service doesn't have (decisions-log §17
-# amendment). Without this, a single transient send failure would escape
-# _handle and permanently kill the consumer task (found in code review).
+# Bounded retry for a transient republish failure, mirroring booking-service's
+# DB-write retry shape — this service has no DB, so a Kafka republish is its
+# equivalent "must finish before offset commit" side effect (§17 amendment).
 PUBLISH_MAX_ATTEMPTS = 3
 PUBLISH_RETRY_BACKOFF_SECONDS = 1.0
 

@@ -32,9 +32,9 @@ class RetryEnvelope(BaseModel):
     retry, since the initial delivery off `notifications` is attempt 1.
     Bounded well above any realistic retry_max_attempts config — this
     envelope round-trips through Kafka, so a malformed or tampered message
-    is untrusted input at the DTO boundary, not just an internal counter
-    (found in code review: an unbounded attempt could overflow
-    compute_backoff_seconds's exponentiation). RetryConsumer constructs the
+    is untrusted input at the DTO boundary, not just an internal counter —
+    an unbounded attempt could overflow compute_backoff_seconds's
+    exponentiation. RetryConsumer constructs the
     next envelope as `attempt + 1`, so the bound leaves headroom above any
     sane retry_max_attempts config rather than sitting flush against it."""
 
