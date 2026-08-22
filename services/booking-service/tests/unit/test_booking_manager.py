@@ -310,7 +310,7 @@ async def test_pay_booking_forwards_payment_service_status_when_it_answers_with_
     # Payment Service being reachable and rejecting the request (e.g. its
     # own 502 when Stripe is down) is a different failure than a connection
     # error — must not collapse into the same misleading "unreachable" 502
-    # regardless of what Payment Service actually said (found in code review).
+    # regardless of what Payment Service actually said.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     booking = _pending_booking(booking_id, ticket_id)
     ticket = Ticket(id=ticket_id, event_id=booking.event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.HELD)
@@ -370,10 +370,9 @@ async def test_cancel_booking_happy_path_releases_seat_and_cancels():
 
 
 async def test_cancel_booking_with_no_event_start_time_on_record_409s():
-    # Fail closed, not open (found in code review): a missing Event row
-    # (only reachable for a booking whose event predates this table) must
-    # not silently skip the cancellation-cutoff check §22 amendment #2
-    # exists to enforce.
+    # Fail closed, not open: a missing Event row (only reachable for a
+    # booking whose event predates this table) must not silently skip the
+    # cancellation-cutoff check §22 amendment #2 exists to enforce.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     booking = _confirmed_booking(booking_id, ticket_id)
     manager = BookingManager(

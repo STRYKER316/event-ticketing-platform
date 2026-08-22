@@ -37,10 +37,10 @@ class Settings(BaseSettings):
     # which already publishes REFUND_FAILED here since P6.T3.
     notifications_topic: str = "notifications"
     kafka_consumer_group_id: str = "booking-service"
-    # Separate from kafka_consumer_group_id (found in code review): sharing
-    # one group id across both consumers meant every payment.outcomes
-    # rebalance also rebalanced the (unrelated) provisioning consumer's
-    # event.events subscription, and vice versa.
+    # Separate from kafka_consumer_group_id: sharing one group id across
+    # both consumers meant every payment.outcomes rebalance also rebalanced
+    # the (unrelated) provisioning consumer's event.events subscription,
+    # and vice versa.
     payment_outcome_consumer_group_id: str = "booking-service-payment-outcomes"
 
     hold_strategy: Literal["cron", "redis"] = "cron"  # Phase 8 benchmark toggles this

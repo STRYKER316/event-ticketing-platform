@@ -162,12 +162,9 @@ class BookingManager:
             response = await http_client.post(url, json=payload, headers={"Authorization": f"Bearer {bearer_token}"})
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            # Payment Service was reachable and answered with a real error of
-            # its own (e.g. its own 502 when Stripe is unreachable) — not the
-            # same failure as a connection/timeout below (found in code
-            # review: both used to collapse into the same misleading
-            # "unreachable" message). Forward its status verbatim.
-            logger.error(
+            # Payment Service answered directly (distinct from connection/timeout below).
+            # Warning, not error — mirrors payment-service's own level for this rejection.
+            logger.warning(
                 "pay_booking_payment_service_rejected",
                 booking_id=str(booking.id),
                 status_code=exc.response.status_code,
@@ -233,7 +230,7 @@ class BookingManager:
             # a booking whose event predates this table, since
             # ProvisioningConsumer writes it in the same transaction as the
             # Ticket going forward) must not silently skip the cutoff check
-            # §22 amendment #2 exists to enforce — found in code review.
+            # §22 amendment #2 exists to enforce.
             logger.warning("cancel_booking_no_event_start_time", booking_id=str(booking.id))
             raise HTTPException(status.HTTP_409_CONFLICT, "cannot verify the event's start time")
         if start_time <= datetime.now(timezone.utc):

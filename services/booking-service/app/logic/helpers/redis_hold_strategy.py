@@ -49,9 +49,9 @@ class RedisHoldStrategy(TicketHoldStrategy):
         # this cancellation flips Booking.status to CANCELLED — not this
         # method. Same asymmetry as confirm_hold/acquire_hold (§6).
         #
-        # Known boundary, not fixed here (found in code review): this
-        # reasoning holds only within one strategy's whole lifetime for a
-        # given booking. HOLD_STRATEGY is a single config value fixed per
+        # Known boundary, not fixed here: this reasoning holds only within
+        # one strategy's whole lifetime for a given booking. HOLD_STRATEGY
+        # is a single config value fixed per
         # deployment (§6) — a booking confirmed under `cron` (leaving
         # tickets.status=BOOKED) that's later cancelled after a live switch
         # to `redis` would no-op here and leave the ticket stuck at BOOKED,

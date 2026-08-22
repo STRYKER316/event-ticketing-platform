@@ -36,9 +36,9 @@ class EventUpsertedMessage(BaseModel):
     event_id: uuid.UUID
     title: NonBlankStr
     description: str | None
-    # AwareDatetime, not bare datetime (found in code review): start_time is
-    # now load-bearing for the cancellation cutoff (§22 amendment #2),
-    # compared against datetime.now(timezone.utc) — a naive value would
+    # AwareDatetime, not bare datetime: start_time is now load-bearing for
+    # the cancellation cutoff (§22 amendment #2), compared against
+    # datetime.now(timezone.utc) — a naive value would
     # crash that comparison rather than silently misbehave, but rejecting
     # it at the DTO boundary is still the right place per the DTO-layer
     # convention, not a downstream check several calls deep.

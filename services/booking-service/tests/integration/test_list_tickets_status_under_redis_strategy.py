@@ -17,10 +17,10 @@ pytestmark = pytest.mark.asyncio
 async def test_list_tickets_for_event_reports_real_status_under_redis_strategy(
     db_session_factory: async_sessionmaker[AsyncSession], redis_client: Redis
 ):
-    # Regression for the seat-map bug (found in code review): under
-    # HOLD_STRATEGY=redis, RedisHoldStrategy never writes tickets.status
-    # (§6), so reading that raw column for this endpoint reported every
-    # held/booked seat as AVAILABLE. list_tickets_for_event must instead
+    # Regression for the seat-map bug: under HOLD_STRATEGY=redis,
+    # RedisHoldStrategy never writes tickets.status (§6), so reading that
+    # raw column for this endpoint reported every held/booked seat as
+    # AVAILABLE. list_tickets_for_event must instead
     # source BOOKED from Booking.status=CONFIRMED and HELD from the
     # injected hold strategy's own is_held() — both accurate regardless of
     # which strategy is active.
