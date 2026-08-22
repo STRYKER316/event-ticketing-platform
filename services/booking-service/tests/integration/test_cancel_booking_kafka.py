@@ -2,9 +2,11 @@ import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+from fastapi import HTTPException
 from shared_auth import Principal
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from testcontainers.community.kafka import KafkaContainer
@@ -79,3 +81,48 @@ async def test_cancel_booking_publishes_a_real_message_on_the_real_topic(
     finally:
         await producer.stop()
         await consumer.stop()
+
+
+async def test_double_cancel_second_call_409s_and_does_not_re_release_or_republish(
+    db_session_factory: async_sessionmaker[AsyncSession],
+):
+    # Sequential double-cancel against real persisted state (not a mocked
+    # transition_if_confirmed return value, which test_booking_manager.py's
+    # own test_cancel_booking_race_lost_409s already covers) — each call
+    # opens its own session, the same way two separate real HTTP requests
+    # would. The first call's own status check (`_fetch_owned_confirmed_booking`
+    # requiring CONFIRMED) is what catches this on a sequential redo, not the
+    # concurrent-race path.
+    booking_id, ticket_id = await _seed_confirmed_booking(db_session_factory)
+    first_producer = AsyncMock()
+    async with db_session_factory() as session:
+        manager = BookingManager(
+            session=session,
+            tickets=TicketRepository(session),
+            bookings=BookingRepository(session),
+            hold_strategy=CronHoldStrategy(session),
+            events=EventRepository(session),
+        )
+        result = await manager.cancel_booking(USER, booking_id, first_producer)
+    assert result.status is BookingStatus.CANCELLED
+    first_producer.publish_cancelled.assert_awaited_once_with(booking_id)
+
+    second_producer = AsyncMock()
+    async with db_session_factory() as session:
+        manager = BookingManager(
+            session=session,
+            tickets=TicketRepository(session),
+            bookings=BookingRepository(session),
+            hold_strategy=CronHoldStrategy(session),
+            events=EventRepository(session),
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await manager.cancel_booking(USER, booking_id, second_producer)
+    assert exc_info.value.status_code == 409
+    second_producer.publish_cancelled.assert_not_awaited()
+
+    async with db_session_factory() as session:
+        ticket = await session.get(Ticket, ticket_id)
+        assert ticket.status is TicketStatus.AVAILABLE
+        booking = await session.get(Booking, booking_id)
+        assert booking.status is BookingStatus.CANCELLED

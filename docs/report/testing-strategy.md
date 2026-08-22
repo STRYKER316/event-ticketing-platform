@@ -912,3 +912,47 @@ notification-service integration suites). Point 4's addition is the only
 new test this task added; points 1, 2, 3, and 5 already had their own
 redelivery coverage from the phase that built them and needed no new
 test, only citing.
+
+## Phase 9 — Edge cases: double-cancel and pay-after-hold-lost
+
+Two of the three edge cases the master plan names for this phase already
+had both a correctness guard and a test before this phase started: webhook
+replay (`payment-service/tests/integration/test_payment_flow.py::
+test_webhook_transitions_payment_and_replay_is_a_safe_no_op`) and the
+expired-hold race under *concurrent* acquisition
+(`booking-service/tests/integration/test_cron_hold_race.py`,
+`test_concurrency_suite.py`) — reconfirmed green, no new test needed.
+
+The other two — double-cancel and pay-after-hold-lost — had a subtler gap
+than "no test exists." Both guards already had a **unit-level** test
+proving the `BookingManager` reacts correctly when its repository layer
+*reports* a lost race (`test_booking_manager.py::
+test_cancel_booking_race_lost_409s` mocks `transition_if_confirmed` to
+return `False`; `test_pay_booking_on_non_pending_booking_409s` mocks
+`bookings.get_by_id` to return an already-CONFIRMED booking). Neither
+proved the real repository method — a genuine rowcount-gated Postgres
+`UPDATE`, or a real booking actually swept to `EXPIRED` — produces that
+signal in the first place under a real sequential re-call. Added two
+integration tests closing that gap:
+
+- `booking-service/tests/integration/test_cancel_booking_kafka.py::
+  test_double_cancel_second_call_409s_and_does_not_re_release_or_republish`
+  — cancels a real seeded CONFIRMED booking through `BookingManager`
+  (real `BookingRepository`/`TicketRepository`/`CronHoldStrategy`, a fresh
+  `AsyncSession` per call, mirroring two separate real HTTP requests),
+  then calls `cancel_booking` again on the same booking ID. Asserts the
+  second call 409s, its `BookingCancelledProducer` mock is never awaited
+  (no second `booking.cancelled` message), and the ticket/booking rows are
+  left exactly as the first call set them.
+- `booking-service/tests/integration/test_pay_booking_after_hold_expiry.py::
+  test_pay_booking_after_hold_expired_via_real_sweep_409s_without_charging`
+  — seeds a genuinely stale `PENDING` booking, runs the real sweep
+  (`BookingRepository.expire_stale_pending()`, the same call
+  `hold_sweep.py`'s scheduled job makes) so it actually transitions to
+  `EXPIRED`, then calls `pay_booking`. Asserts a 409 and that the mocked
+  `httpx` client's `post()` is never awaited — a charge is never even
+  attempted against a booking nobody can legitimately complete.
+
+Both pass against real Postgres testcontainers; full `booking-service`
+suite (unit + integration) is 80/80 after these additions (77 prior +
+1 P9.T1 redelivery test + these 2).
