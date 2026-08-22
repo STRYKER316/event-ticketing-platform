@@ -28,4 +28,5 @@ class NotificationManager:
             action=message.action.value,
             booking_id=str(message.booking_id),
             attempt=attempt,
+            reason=message.reason,
         )

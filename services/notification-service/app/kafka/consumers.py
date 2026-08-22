@@ -52,14 +52,14 @@ async def _publish_with_retry(
 
 
 def _error_text(exc: Exception) -> str:
-    """RetryEnvelope.last_error is a NonBlankStr (DTO validation-boundary
-    rule) — some exception types stringify to '' (e.g. bare KeyError()), and
-    constructing the envelope with that would raise ValidationError outside
-    every _publish_with_retry guard, escaping _handle and permanently
-    killing the consumer task (found in code review: this is exactly the
-    failure mode _publish_with_retry exists to prevent). repr() always
-    yields at least the exception's class name."""
-    return str(exc) or repr(exc)
+    """RetryEnvelope.last_error is a NonBlankStr; some exceptions stringify
+    to '' (e.g. bare KeyError()), which would raise ValidationError outside
+    every _publish_with_retry guard and kill the consumer task. Checked
+    against the stripped string, not the raw one — a whitespace-only
+    message is truthy here but still collapses to "" past the envelope's
+    own strip."""
+    text = str(exc)
+    return text if text.strip() else repr(exc)
 
 
 def _parse_or_log(model_cls: type[_M], raw: bytes, invalid_event: str) -> _M | None:
@@ -131,6 +131,7 @@ class NotificationConsumer:
                 booking_id=str(message.booking_id),
                 attempt=1,
                 error=str(exc),
+                reason=message.reason,
             )
             # attempt=2 — the next attempt about to be made (§17 amendment
             # #2). Published before this record's offset commits (see
@@ -202,6 +203,7 @@ class RetryConsumer:
             action=envelope.original.action.value,
             booking_id=str(envelope.original.booking_id),
             attempt=envelope.attempt,
+            reason=envelope.original.reason,
         )
 
 
@@ -232,4 +234,5 @@ class DlqConsumer:
             booking_id=str(envelope.original.booking_id),
             attempt=envelope.attempt,
             last_error=envelope.last_error,
+            reason=envelope.original.reason,
         )

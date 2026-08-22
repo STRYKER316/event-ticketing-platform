@@ -2,9 +2,11 @@ import asyncio
 import logging
 import sys
 from functools import lru_cache
+from typing import Annotated
 
 import structlog
 from aiokafka import AIOKafkaProducer
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -31,7 +33,11 @@ class Settings(BaseSettings):
     # attempt > retry_max_attempts routes to notification-dlq instead of
     # retrying again. Backoff per attempt: min(retry_base_backoff_seconds
     # ** attempt, retry_backoff_cap_seconds).
-    retry_max_attempts: int = 3
+    # Bounded to match RetryEnvelope.attempt's own le=1000 (app/kafka/schemas.py)
+    # — a misconfigured value above that would otherwise only fail at
+    # runtime, the first time RetryConsumer tries to construct the next
+    # envelope, instead of at startup.
+    retry_max_attempts: Annotated[int, Field(gt=0, le=1000)] = 3
     retry_base_backoff_seconds: float = 2.0
     retry_backoff_cap_seconds: float = 30.0
 
