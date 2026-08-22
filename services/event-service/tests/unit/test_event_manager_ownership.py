@@ -61,7 +61,22 @@ async def test_owning_organizer_can_update():
 
 
 async def test_non_owning_organizer_cannot_update():
+    # DRAFT event: hidden from non-owners (404), not merely forbidden (403).
     event = make_event()
+    manager = make_manager(event)
+    user = Principal(subject=OTHER_ORGANIZER_SUBJECT, roles=["organizer"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.update_event(user, event.id, EventUpdate(title="Hijacked"))
+
+    assert exc_info.value.status_code == 404
+
+
+async def test_non_owning_organizer_gets_403_updating_a_published_event():
+    # PUBLISHED event: existence is already public, so mutation is merely
+    # forbidden (403), not hidden (404) — unlike the DRAFT case above.
+    event = make_event()
+    event.status = EventStatus.PUBLISHED
     manager = make_manager(event)
     user = Principal(subject=OTHER_ORGANIZER_SUBJECT, roles=["organizer"])
 
@@ -83,6 +98,7 @@ async def test_owning_organizer_can_delete():
 
 
 async def test_non_owning_organizer_cannot_delete():
+    # DRAFT event: hidden from non-owners (404), not merely forbidden (403).
     event = make_event()
     manager = make_manager(event)
     user = Principal(subject=OTHER_ORGANIZER_SUBJECT, roles=["organizer"])
@@ -90,7 +106,7 @@ async def test_non_owning_organizer_cannot_delete():
     with pytest.raises(HTTPException) as exc_info:
         await manager.delete_event(user, event.id)
 
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
     manager._events.delete.assert_not_awaited()
 
 
@@ -107,6 +123,7 @@ async def test_owning_organizer_can_upsert_seat_map():
 
 
 async def test_non_owning_organizer_cannot_upsert_seat_map():
+    # DRAFT event: hidden from non-owners (404), not merely forbidden (403).
     event = make_event()
     manager = make_manager(event)
     user = Principal(subject=OTHER_ORGANIZER_SUBJECT, roles=["organizer"])
@@ -114,7 +131,7 @@ async def test_non_owning_organizer_cannot_upsert_seat_map():
     with pytest.raises(HTTPException) as exc_info:
         await manager.upsert_seat_map(user, event.id, SEAT_MAP_PAYLOAD)
 
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
     manager._seat_maps.upsert.assert_not_awaited()
 
 

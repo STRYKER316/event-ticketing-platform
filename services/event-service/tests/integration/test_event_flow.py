@@ -96,7 +96,7 @@ async def test_cross_organizer_cannot_upsert_seat_map(db_session: AsyncSession, 
     )
     with pytest.raises(HTTPException) as exc_info:
         await manager.upsert_seat_map(OTHER_ORGANIZER, created.id, payload)
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404  # DRAFT event: hidden from non-owners
 
 
 async def test_seat_map_upsert_is_rejected_once_event_is_published(
@@ -283,11 +283,11 @@ async def test_cross_organizer_update_is_rejected(db_session: AsyncSession, mong
 
     with pytest.raises(HTTPException) as exc_info:
         await manager.update_event(OTHER_ORGANIZER, created.id, EventUpdate(title="Hijacked"))
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404  # DRAFT event: hidden from non-owners
 
     with pytest.raises(HTTPException) as exc_info:
         await manager.delete_event(OTHER_ORGANIZER, created.id)
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404  # DRAFT event: hidden from non-owners
 
     still_there = await manager.get_event(created.id, ORGANIZER)
     assert still_there.title == "Owned Concert"

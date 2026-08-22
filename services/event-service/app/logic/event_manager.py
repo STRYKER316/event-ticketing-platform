@@ -162,6 +162,10 @@ class EventManager:
             logger.warning("event_not_found", event_id=str(event_id))
             raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
         if event.organizer_id != user.subject:
+            if event.status is EventStatus.DRAFT:
+                # DRAFT existence must stay hidden from non-owners on every route, not just GET.
+                logger.warning("event_visibility_denied", event_id=str(event_id))
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
             logger.warning("event_ownership_check_failed", event_id=str(event_id), subject=user.subject)
             raise HTTPException(status.HTTP_403_FORBIDDEN, "not the owning organizer")
         return event
