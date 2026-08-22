@@ -46,14 +46,23 @@ make reset    # from repo root — stack must already be `make up`'d and `make m
 
 Truncates everything a demo run accumulates — `event_db`/`booking_db`/
 `payment_db` tables, the Mongo `seat_maps` collection, the Elasticsearch
-`events` index, every Redis hold key — then re-runs `make seed`, all
-against the running containers (no volume drop/recreate, no re-running
-migrations). Live-verified idempotent: re-running it against an
-already-reset stack, or one with real accumulated bookings/tickets/
-payments from a prior demo/walkthrough session, both land on the same
-baseline the seed script itself defines (2 venues, 3 performers, 3
-events, 1 seat map; `booking_db`'s tickets and the search index are
-repopulated too, since the seed script goes through the real
+`events` index, every Redis hold key, and every Kafka topic's message
+data — then re-runs `make seed`, all against the running containers (no
+volume drop/recreate, no re-running migrations). The Kafka topics are
+deleted and left to auto-recreate rather than just skipped: without this,
+a message from before the reset (a stale offset, a redelivery) could
+still be consumed afterward and resurrect rows referencing entities this
+script just truncated. Deleting a topic a consumer group is actively
+subscribed to leaves it assigned zero partitions until its next
+rebalance, so every Kafka-consuming service (`booking-service`,
+`search-service`, `payment-service`, `notification-service`) is
+restarted immediately after, and the script waits for each to report
+healthy before re-seeding. Live-verified idempotent: re-running it
+against an already-reset stack, or one with real accumulated
+bookings/tickets/payments from a prior demo/walkthrough session, both
+land on the same baseline the seed script itself defines (2 venues, 3
+performers, 3 events, 1 seat map; `booking_db`'s tickets and the search
+index are repopulated too, since the seed script goes through the real
 `EventManager.create_event`/`publish_event` path and so does trigger
 the Kafka provisioning/indexing points — only `payment_db` legitimately
 starts empty). Deliberately does not touch

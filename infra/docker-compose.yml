@@ -83,6 +83,10 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      # Without this, the image's KRaft-mode default log dir doesn't match
+      # the kafka_data volume mount below, so the volume silently persists
+      # nothing and a container recreate wipes every topic and committed offset.
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports:
       - "${KAFKA_PORT}:9094"
     volumes:

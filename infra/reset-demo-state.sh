@@ -53,6 +53,42 @@ fi
 echo "Clearing hold state (Redis)..."
 docker compose exec -T redis redis-cli FLUSHALL
 
+# Without this, a stale message from before this reset can still be
+# consumed afterward and resurrect rows referencing entities this script
+# just truncated — auto-create (KAFKA_AUTO_CREATE_TOPICS_ENABLE) recreates
+# each topic empty on next use. A running consumer group that's already
+# synced against a just-deleted topic stays assigned zero partitions and
+# won't notice the topic came back until its next rebalance, so every
+# consumer-bearing service is restarted afterward to force a fresh join.
+echo "Clearing Kafka topic data..."
+for topic in event.events booking.cancelled payment.outcomes notifications notification-retry notification-dlq; do
+  docker compose exec -T kafka /opt/kafka/bin/kafka-topics.sh \
+    --bootstrap-server localhost:9092 --delete --topic "$topic" --if-exists
+done
+echo "Restarting Kafka consumers to rejoin cleanly..."
+docker compose restart booking-service search-service payment-service notification-service
+# Bash 3.2 (macOS default) has no associative arrays, hence the case statement.
+for svc in search-service booking-service payment-service notification-service; do
+  case "$svc" in
+    search-service) port=8002 ;;
+    booking-service) port=8003 ;;
+    payment-service) port=8004 ;;
+    notification-service) port=8005 ;;
+  esac
+  # No curl in these slim Python images — stdlib urllib is always present.
+  attempt=0
+  until docker compose exec -T "$svc" python -c \
+    "import urllib.request; urllib.request.urlopen('http://localhost:${port}/healthz', timeout=2)" \
+    >/dev/null 2>&1; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 30 ]; then
+      echo "  ERROR: $svc did not report healthy within 30s of restart" >&2
+      exit 1
+    fi
+    sleep 1
+  done
+done
+
 echo "Re-seeding baseline demo data..."
 cd ../services/event-service && uv run --package event-service python -m app.seed
 

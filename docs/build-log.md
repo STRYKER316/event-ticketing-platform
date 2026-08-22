@@ -4191,3 +4191,114 @@ payment-service 24/24, notification-service 15/15 — all green.
 Decisions-log delta: none — both real findings are bug fixes to
 already-locked invariants (ownership scoping, log-level discipline), not
 new architecture. `CLAUDE.md` delta: none.
+
+## 2026-08-22 — Third testing round: security/injection fuzzing (clean), a blocked frontend round, and a real Kafka-persistence bug found by failure-injection
+
+User asked for another round ("run mor test rounds... make the system
+foolproof"). Three rounds planned: security/injection fuzzing (live
+stack, non-destructive), frontend E2E via the browser, and a
+failure-injection round (real Kafka redelivery, DLQ path, dependency-down
+behavior) — the last deliberately sequenced after the first two so it
+wouldn't collide with their live-stack usage, since it needed permission
+to stop/restart containers.
+
+**Frontend round blocked, not run.** The Claude-in-Chrome browser
+extension wasn't connected in this environment — no browser session
+available to drive. User confirmed: skip it for now rather than debug
+the extension connection mid-session. Recorded here so it's not
+mistaken for "tested, found nothing" — it simply never ran.
+
+**Security/injection fuzzing round: clean, no findings.** JWT tampering
+(bad signature, `alg=none` even with a valid `kid`, expired token,
+malformed/empty bearer) all correctly rejected with 401 — PyJWT's
+algorithm allowlist and `require: ["exp","iat","sub"]` hold. ES/Lucene
+injection attempts via `/search` and SQLi-shaped strings in event
+titles both neutralized (static grep for raw SQL string interpolation
+across all `services/*/app/db/` also came back empty). Unicode/emoji/RTL
+titles round-tripped correctly through Postgres to Elasticsearch. A
+100KB title correctly 422'd against the existing `max_length`
+constraint. Wrong content-type, empty body, and extra/injected JSON
+fields all handled correctly (Pydantic silently drops unknown fields;
+`organizer_id` is never bindable from the request body, so no field-
+injection is possible). A real 5,000-seat seat-map upload exercised
+`chunked()`'s batching at genuine scale, not just unit-tested — all
+5,000 `Ticket` rows provisioned correctly. No CORS middleware configured
+at all (safe default, not a wide-open misconfiguration). `/metrics`
+scanned for leaked secrets/PII across all five services — none found.
+
+**Failure-injection round surfaced a real, previously-undocumented
+infrastructure bug: Kafka has never actually persisted data in this
+compose setup.** `infra/docker-compose.yml`'s `kafka_data` volume was
+mounted at `/var/lib/kafka/data`, but `apache/kafka:3.8.0`'s KRaft-mode
+default log directory doesn't use that path (no `KAFKA_LOG_DIRS`
+override was ever set) — confirmed the container was actually writing
+under `/tmp`, meaning the volume mount was a silent no-op since day one.
+`KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"` masked this: any container
+recreate silently wiped every topic and every consumer group's committed
+offset, and topics just reappeared empty on next use rather than
+erroring, so the loss was invisible. Found when a redelivery test
+(rolling back booking-service's `event.events` consumer offset to
+earliest, to genuinely verify idempotency under real crash-redelivery
+rather than just via existing tests) replayed 5 stale messages for
+event_ids a prior `make reset` had already truncated from `event_db` —
+creating 397 real, permanently orphaned `Ticket` rows referencing events
+that exist nowhere else in the system. All business data in Postgres/
+Mongo/Elasticsearch was unaffected (this architecture's database-per-
+service design means Kafka was never a source of truth for committed
+entities, per §8) — but any genuinely in-flight message at the moment of
+a real container recreate would have been silently and permanently
+lost, undetectable, and `make reset` never clearing Kafka meant stale
+messages could resurrect ghost data across a reset boundary, as this
+test just proved.
+
+Two fixes:
+
+- `infra/docker-compose.yml`: added `KAFKA_LOG_DIRS: /var/lib/kafka/data`
+  so the existing volume mount actually persists data. Live-verified: a
+  `--force-recreate` of the kafka container now writes real segment/
+  offset files into the named Docker volume (`docker run --rm -v
+  event-ticketing-platform_kafka_data:/data alpine ls /data` shows real
+  topic/offset files), and every consumer rejoined cleanly afterward
+  with no crash.
+- `infra/reset-demo-state.sh`: added a step deleting all six Kafka
+  topics (`event.events`, `booking.cancelled`, `payment.outcomes`,
+  `notifications`, `notification-retry`, `notification-dlq`) via
+  `kafka-topics.sh --delete --if-exists`, auto-recreated empty on next
+  use. First attempt was incomplete: a consumer group already synced
+  against a just-deleted topic stays assigned zero partitions and
+  doesn't notice the topic came back until its next rebalance — verified
+  live (booking-service and search-service both silently stopped
+  consuming after the topic delete, 0 tickets/0 search results on the
+  next reseed). Fixed by restarting every Kafka-consuming service
+  (`booking-service`, `search-service`, `payment-service`,
+  `notification-service`) immediately after the topic deletion, gated on
+  each reporting healthy again (polled via Python's stdlib `urllib`
+  inside the container — these slim images have no `curl`) before
+  re-seeding. Also hit, mid-fix: `declare -A` (associative arrays)
+  silently breaks on macOS's default `/bin/bash` (3.2.57, no
+  associative-array support) — this script's shebang runs on the
+  developer's actual default bash, not a modern one, so this matters
+  here in a way it might not in a more controlled CI environment. Fixed
+  with a portable `case` statement instead. Live-verified end-to-end
+  twice in a row: `make reset` now reliably lands on the same clean
+  baseline (392 tickets, 3 search hits, zero ghost data) with no manual
+  intervention, both from a stack the redelivery test had just polluted
+  and immediately again afterward (idempotency of the reset itself,
+  re-confirmed).
+
+`infra/README.md`'s `make reset` section updated to describe the new
+Kafka-clearing and consumer-restart behavior.
+
+Not completed this round: notification-service's DLQ path live exercise
+and a dependency-down (Kafka-stopped) graceful-degradation check — both
+still genuinely untested, deferred after the persistence bug was found
+mid-round and further destructive testing was deliberately halted per
+this round's own instruction to stop rather than push further once
+something looked wrong. Worth a dedicated follow-up round now that Kafka
+actually persists, since that changes what "stop Kafka and restart it"
+actually tests (previously indistinguishable from "wipe and recreate").
+
+Decisions-log delta: none — both fixes correct a config/script bug
+against an already-locked design (Kafka is not a source of truth, §8;
+`make reset` already existed as a P9.T4 deliverable), not a new
+architectural decision. `CLAUDE.md` delta: none.
