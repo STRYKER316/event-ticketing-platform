@@ -164,33 +164,72 @@ produce, verified live. Report evidence: none directly.
 
 ## Phase 9 exit checklist (all must pass before P10)
 
-- [ ] P9.T1 — missing literal-redelivery test added for Payment→Booking;
+- [x] P9.T1 — missing literal-redelivery test added for Payment→Booking
+      (`test_redelivered_succeeded_message_confirms_and_notifies_exactly_once`);
       all 5 Kafka points have a named, citable redelivery test; coverage
-      matrix written into the testing-strategy report chapter.
-- [ ] P9.T2 — log-level audit complete across all 5 services, any
-      misclassified call sites fixed; `/metrics` confirmed scraped for all
-      5 services under the benchmark profile; observability writeup done.
-- [ ] P9.T3 — double-cancel and pay-after-hold-lost tests added and
-      passing; webhook-replay and expired-hold-race coverage confirmed
+      matrix written into `docs/report/testing-strategy.md`.
+- [x] P9.T2 — log-level audit complete across all 5 services (67 call
+      sites read against CLAUDE.md's rule); one real misclassification
+      found and fixed (`payment_manager.py`'s Stripe charge-failure log,
+      aligned to its already-correct refund-failure sibling); `/metrics`
+      confirmed scraped for all 5 services live via Prometheus's targets
+      API (`GET /api/v1/targets`, all `health: "up"`); observability
+      writeup in `docs/report/technologies-used.md`.
+- [x] P9.T3 — double-cancel
+      (`test_double_cancel_second_call_409s_and_does_not_re_release_or_republish`)
+      and pay-after-hold-lost
+      (`test_pay_booking_after_hold_expired_via_real_sweep_409s_without_charging`)
+      tests added and passing against real Postgres testcontainers;
+      webhook-replay and expired-hold-race coverage re-run and confirmed
       still green.
-- [ ] P9.T4 — `make reset` (or equivalent) target added, live-verified
-      against a stack with accumulated demo state, documented.
-- [ ] Full suite green (unit + integration) across all 5 services after
-      this phase's changes.
-- [ ] Live walkthrough done at CHECKPOINT; `docs/architecture.html` updated
-      to current state; `docs/build-log.md` entry appended.
-- [ ] `decisions-log.md` delta check — explicitly confirmed whether
-      anything this phase decided extends a locked decision (expected:
-      none, since this is verification/gap-filling, not new architecture —
-      confirm rather than assume).
-- [ ] `CLAUDE.md` self-update check — confirm whether any new convention
-      (e.g. the `make reset` target) needs documenting there.
-- [ ] Phase-end checklist item 7 (`/pre-pr`) run against the diff since
-      this phase's starting commit, findings self-applied.
-- [ ] Phase-end checklist item 8 (cross-doc staleness sweep) run against
-      what this phase's diff actually touched.
-- [ ] This file's own exit checklist checked off with evidence notes, per
-      `CLAUDE.md`'s phase-end checklist item 9.
+- [x] P9.T4 — `make reset` added (`infra/reset-demo-state.sh`),
+      live-verified against this project's own real accumulated demo
+      state (15 events/20 bookings/24 tickets/14 payments from prior
+      sessions), re-run twice to confirm idempotency, documented in
+      `infra/README.md`.
+- [x] Full suite green (unit + integration) across all 5 services after
+      this phase's changes: event-service 55/55, search-service 18/18,
+      booking-service 80/80, payment-service 22/22, notification-service
+      11/11.
+- [x] Live walkthrough done at CHECKPOINT — no new user-facing surface
+      this phase (backend hardening only), so the walkthrough took the
+      form of live verification against the real running stack throughout:
+      Prometheus/Traefik APIs queried live, `make reset` run twice against
+      real accumulated data, all five suites re-run against real
+      containers. `docs/architecture.html` updated to current state
+      (§06 checklist, narrative paragraph, badges); `docs/build-log.md`
+      entries appended for P9.T1–T4 plus the CHECKPOINT `/pre-pr` pass.
+- [x] `decisions-log.md` delta check — explicitly checked against every
+      task: none needed. §11 (Logging/Monitoring) already said "every
+      service exposes `/metrics`" without claiming gateway routing, so
+      the P9.T2 report correction didn't contradict it; §19 (seed data)
+      isn't contradicted by `make reset`, only extended in the same
+      no-DB-decisions-touched way P9.T1/T3's test additions were.
+- [x] `CLAUDE.md` self-update check — explicitly checked: no new
+      per-service pattern, no new Makefile-target-tracking convention
+      (Makefile targets are documented in `infra/README.md`, already
+      updated), log-level-discipline rule was audited against, not
+      created. No update needed.
+- [x] Phase-end checklist item 7 (`/pre-pr`) run against the diff since
+      this phase's starting commit (`0e2b770..HEAD`): simplify deduped
+      `reset-demo-state.sh`'s three truncate blocks; a dedicated `opus`
+      code-review found 9 issues (2 stale/wrong figures, a doc
+      self-contradiction, a wrong cross-reference, a real ES
+      status-check bug masking failures under `set -e`, a test
+      order-dependency, missing build-log entries, and a commit-message
+      rule violation) — all fixed except the commit-message violation,
+      deliberately left for the before-push checklist rather than a
+      risky late-session history rewrite (see `docs/build-log.md`'s
+      CHECKPOINT entry for the reasoning). All fixes live re-verified.
+- [x] Phase-end checklist item 8 (cross-doc staleness sweep) run against
+      what this phase's diff actually touched: `infra/README.md`'s stale
+      4-service Prometheus claim (predates this phase, found while
+      touching the same paragraph for P9.T2) fixed alongside it;
+      `docs/report/README.md`'s chapter-status table updated for both
+      `testing-strategy.md` and `technologies-used.md`.
+- [x] This file's own exit checklist checked off with evidence notes, per
+      `CLAUDE.md`'s phase-end checklist item 9 — done in this same pass,
+      not deferred.
 
 **Report evidence captured this phase (§16):** testing-strategy chapter's
 Kafka-idempotency coverage matrix, observability writeup.
