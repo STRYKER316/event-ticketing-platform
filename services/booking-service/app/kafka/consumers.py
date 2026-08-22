@@ -15,7 +15,7 @@ from app.db.booking_repository import BookingRepository
 from app.db.event_repository import EventRepository
 from app.db.models import BookingStatus
 from app.db.ticket_repository import TicketRepository
-from app.kafka.producers import NotificationProducer
+from app.kafka.producers import BookingCancelledProducer, NotificationProducer
 from app.kafka.schemas import EventUpsertedMessage, KafkaAction, PaymentOutcomeAction, PaymentOutcomeMessage
 from app.logic.helpers.hold_strategy_factory import get_hold_strategy
 
@@ -48,13 +48,11 @@ async def _retry_with_backoff(
     failed_event: str,
     **log_context: object,
 ) -> _T | None:
-    """Shared bounded-retry shape (found duplicated in code review, deduped
-    here — same shape the simplify pass already applied elsewhere in this
-    diff): retries a transient failure in place a few times with backoff
-    before giving up, logging critical (not silently) on the last attempt
-    rather than raising. `_run_with_retry` below wraps a DB write in a
-    session/commit; PaymentOutcomeConsumer's notification publish uses this
-    directly with no session at all."""
+    """Retries a transient failure in place with backoff, logging critical
+    (not silently) on the last attempt rather than raising.
+    `_run_with_retry` below wraps a DB write in a session/commit;
+    PaymentOutcomeConsumer's notification publish uses this directly with
+    no session at all."""
     for attempt in range(1, max_attempts + 1):
         try:
             return await operation()
@@ -241,11 +239,13 @@ class PaymentOutcomeConsumer:
         session_factory: async_sessionmaker[AsyncSession],
         redis: Redis,
         notification_producer: NotificationProducer,
+        cancelled_producer: BookingCancelledProducer,
     ):
         self._consumer = consumer
         self._session_factory = session_factory
         self._redis = redis
         self._notification_producer = notification_producer
+        self._cancelled_producer = cancelled_producer
 
     async def run(self) -> None:
         await _consume_with_manual_commit(self._consumer, self._handle)
@@ -270,20 +270,12 @@ class PaymentOutcomeConsumer:
         """Retries a transient DB failure in place before giving up — same
         shape as ProvisioningConsumer._write_tickets(), see _run_with_retry().
 
-        The booking-confirmed notification publish is deliberately *not*
-        inside this retried unit (found in code review): _run_with_retry
-        swallows a permanent failure and returns None rather than raising,
-        so the usual publish-before-commit reasoning ("a publish failure
-        propagates uncommitted, and the caller genuinely retries") doesn't
-        apply here the way it does for payment-service's webhook route —
-        there is no redelivery mechanism above this method, so a publish
-        failure inside _transition() would silently roll back an already-
-        successful DB transition (and hold-strategy confirm) instead of
-        just failing to notify. The DB transition is committed and treated
-        as the source of truth first; the notification is a separate,
-        best-effort step afterward that can't undo it."""
+        The notification publish stays outside this retried unit: this
+        consumer has no redelivery mechanism above it, so a publish failure
+        inside the transaction would roll back an already-committed DB
+        transition instead of just failing to notify."""
 
-        async def _transition(session: AsyncSession) -> bool:
+        async def _transition(session: AsyncSession) -> tuple[bool, BookingStatus | None]:
             bookings = BookingRepository(session)
             transitioned = await bookings.transition_if_pending(message.booking_id, new_status)
             if transitioned:
@@ -296,15 +288,27 @@ class PaymentOutcomeConsumer:
                     await strategy.confirm_hold(message.ticket_id)
                 else:
                     await strategy.release_hold(message.ticket_id)
-            return transitioned
+                return transitioned, None
+            if message.action is PaymentOutcomeAction.SUCCEEDED:
+                # Lost the transition on a SUCCEEDED outcome: a hold-expiry
+                # sweep likely already flipped this booking to EXPIRED, so
+                # the customer was charged but the seat is gone. Look up
+                # the current status so the caller can trigger a refund
+                # instead of silently dropping it.
+                current = await bookings.get_by_id(message.booking_id)
+                return transitioned, current.status if current is not None else None
+            return transitioned, None
 
-        transitioned = await _run_with_retry(
+        result = await _run_with_retry(
             self._session_factory,
             _transition,
             retrying_event="payment_outcome_consumer_db_write_failed_retrying",
             failed_event="payment_outcome_consumer_db_write_failed_permanently",
             booking_id=str(message.booking_id),
         )
+        if result is None:
+            return None
+        transitioned, current_status = result
 
         if transitioned and message.action is PaymentOutcomeAction.SUCCEEDED:
             # Integration point #3 (§7 point 3, Phase 5) — best-effort here
@@ -312,6 +316,18 @@ class PaymentOutcomeConsumer:
             # status has already committed regardless of whether this
             # succeeds.
             await self._publish_confirmation_with_retry(message.booking_id)
+        elif not transitioned and current_status is BookingStatus.EXPIRED:
+            # Charged with nothing to show for it: reuse the same
+            # booking.cancelled path (integration point #5, §22) to trigger
+            # a refund rather than inventing a second compensation
+            # mechanism (§8 forbids distributed transactions). Known
+            # residual gap: no DLQ exists for this consumer, so a refund
+            # trigger that exhausts its own retry budget stays unrefunded.
+            logger.warning(
+                "payment_outcome_succeeded_on_expired_booking_triggering_refund",
+                booking_id=str(message.booking_id),
+            )
+            await self._trigger_refund_with_retry(message.booking_id)
 
         return transitioned
 
@@ -325,5 +341,18 @@ class PaymentOutcomeConsumer:
             backoff_seconds=NOTIFICATION_PUBLISH_RETRY_BACKOFF_SECONDS,
             retrying_event="payment_outcome_consumer_notification_publish_failed_retrying",
             failed_event="payment_outcome_consumer_notification_publish_failed_permanently",
+            booking_id=str(booking_id),
+        )
+
+    async def _trigger_refund_with_retry(self, booking_id: uuid.UUID) -> None:
+        async def _publish() -> None:
+            await self._cancelled_producer.publish_cancelled(booking_id)
+
+        await _retry_with_backoff(
+            _publish,
+            max_attempts=NOTIFICATION_PUBLISH_MAX_ATTEMPTS,
+            backoff_seconds=NOTIFICATION_PUBLISH_RETRY_BACKOFF_SECONDS,
+            retrying_event="payment_outcome_consumer_refund_trigger_publish_failed_retrying",
+            failed_event="payment_outcome_consumer_refund_trigger_publish_failed_permanently",
             booking_id=str(booking_id),
         )

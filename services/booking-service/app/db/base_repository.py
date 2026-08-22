@@ -5,6 +5,8 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.chunking import chunked
+
 ModelT = TypeVar("ModelT")
 
 
@@ -25,8 +27,12 @@ class BaseRepository(Generic[ModelT]):
         return await self._session.get(self._model, instance_id)
 
     async def get_many_by_id(self, instance_ids: list[uuid.UUID]) -> list[ModelT]:
-        result = await self._session.execute(select(self._model).where(self._model.id.in_(instance_ids)))
-        return list(result.scalars().all())
+        # Batched: Postgres/asyncpg caps a single statement at ~32,767 bind params.
+        instances: list[ModelT] = []
+        for batch in chunked(instance_ids):
+            result = await self._session.execute(select(self._model).where(self._model.id.in_(batch)))
+            instances.extend(result.scalars().all())
+        return instances
 
     async def delete(self, instance_id: uuid.UUID) -> bool:
         # Core-level DELETE so rowcount is available: a concurrent duplicate delete

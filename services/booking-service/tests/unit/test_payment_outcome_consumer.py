@@ -13,12 +13,13 @@ def _message(action: str, booking_id: uuid.UUID, ticket_id: uuid.UUID) -> bytes:
     return f'{{"action": "{action}", "booking_id": "{booking_id}", "ticket_id": "{ticket_id}"}}'.encode()
 
 
-def _consumer(session_factory, notification_producer=None) -> PaymentOutcomeConsumer:
+def _consumer(session_factory, notification_producer=None, cancelled_producer=None) -> PaymentOutcomeConsumer:
     return PaymentOutcomeConsumer(
         consumer=None,
         session_factory=session_factory,
         redis=AsyncMock(),
         notification_producer=notification_producer or AsyncMock(),
+        cancelled_producer=cancelled_producer or AsyncMock(),
     )
 
 
@@ -62,6 +63,61 @@ async def test_failed_message_releases_hold_when_transition_wins():
     strategy.release_hold.assert_awaited_once_with(ticket_id)
     strategy.confirm_hold.assert_not_awaited()
     notification_producer.publish_booking_confirmed.assert_not_awaited()
+
+
+async def test_succeeded_message_on_expired_booking_triggers_refund():
+    # A hold-expiry sweep beat the SUCCEEDED outcome to the booking, so
+    # transition_if_pending correctly no-ops — but the customer was
+    # genuinely charged, so this must reuse the booking.cancelled path to
+    # trigger a refund rather than silently dropping the outcome.
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    session = AsyncMock()
+    expired_booking = MagicMock(status=BookingStatus.EXPIRED)
+    bookings_repo = AsyncMock(
+        transition_if_pending=AsyncMock(return_value=False),
+        get_by_id=AsyncMock(return_value=expired_booking),
+    )
+    session_factory = MagicMock(return_value=MagicMock(__aenter__=AsyncMock(return_value=session), __aexit__=AsyncMock(return_value=False)))
+    strategy = AsyncMock()
+    cancelled_producer = AsyncMock()
+
+    with (
+        patch("app.kafka.consumers.BookingRepository", return_value=bookings_repo),
+        patch("app.kafka.consumers.get_hold_strategy", return_value=strategy),
+    ):
+        await _consumer(session_factory, cancelled_producer=cancelled_producer)._handle(
+            _message("succeeded", booking_id, ticket_id)
+        )
+
+    cancelled_producer.publish_cancelled.assert_awaited_once_with(booking_id)
+    strategy.confirm_hold.assert_not_awaited()
+    strategy.release_hold.assert_not_awaited()
+
+
+async def test_succeeded_message_on_confirmed_booking_does_not_trigger_a_duplicate_refund():
+    # The ordinary idempotent-replay case (already CONFIRMED, e.g. a
+    # redelivered message after a successful first run) must not be
+    # mistaken for the EXPIRED case above and must not re-trigger a refund.
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    session = AsyncMock()
+    confirmed_booking = MagicMock(status=BookingStatus.CONFIRMED)
+    bookings_repo = AsyncMock(
+        transition_if_pending=AsyncMock(return_value=False),
+        get_by_id=AsyncMock(return_value=confirmed_booking),
+    )
+    session_factory = MagicMock(return_value=MagicMock(__aenter__=AsyncMock(return_value=session), __aexit__=AsyncMock(return_value=False)))
+    strategy = AsyncMock()
+    cancelled_producer = AsyncMock()
+
+    with (
+        patch("app.kafka.consumers.BookingRepository", return_value=bookings_repo),
+        patch("app.kafka.consumers.get_hold_strategy", return_value=strategy),
+    ):
+        await _consumer(session_factory, cancelled_producer=cancelled_producer)._handle(
+            _message("succeeded", booking_id, ticket_id)
+        )
+
+    cancelled_producer.publish_cancelled.assert_not_awaited()
 
 
 async def test_redelivered_message_on_already_terminal_booking_is_a_safe_no_op():

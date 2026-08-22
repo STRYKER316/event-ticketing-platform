@@ -38,19 +38,37 @@ class BookingManager:
     async def list_tickets_for_event(self, event_id: uuid.UUID) -> list[TicketStatusResponse]:
         """Public, read-only composition source for the frontend's seat map
         (§23): layout comes from Event Service, live per-seat status and
-        ticket_id come from here."""
+        ticket_id come from here.
+
+        Status is never read off the raw tickets.status column, since
+        RedisHoldStrategy never writes it (§6) — BOOKED is sourced from
+        Booking.status=CONFIRMED instead, and HELD from the injected hold
+        strategy's own is_held(), the same abstraction create_booking's own
+        hold acquisition goes through."""
         tickets = await self._tickets.list_by_event(event_id)
-        return [
-            TicketStatusResponse(
-                ticket_id=ticket.id,
-                section=ticket.section,
-                row_name=ticket.row_name,
-                seat_label=ticket.seat_label,
-                status=ticket.status,
-                price_cents=ticket.price_cents,
+        if not tickets:
+            return []
+        booked_ticket_ids = await self._bookings.list_confirmed_ticket_ids(event_id)
+        responses = []
+        for ticket in tickets:
+            responses.append(
+                TicketStatusResponse(
+                    ticket_id=ticket.id,
+                    section=ticket.section,
+                    row_name=ticket.row_name,
+                    seat_label=ticket.seat_label,
+                    status=await self._resolve_ticket_status(ticket, booked_ticket_ids),
+                    price_cents=ticket.price_cents,
+                )
             )
-            for ticket in tickets
-        ]
+        return responses
+
+    async def _resolve_ticket_status(self, ticket: Ticket, booked_ticket_ids: set[uuid.UUID]) -> TicketStatus:
+        if ticket.id in booked_ticket_ids:
+            return TicketStatus.BOOKED
+        if await self._hold_strategy.is_held(ticket.id):
+            return TicketStatus.HELD
+        return TicketStatus.AVAILABLE
 
     async def create_booking(self, user: Principal, ticket_id: uuid.UUID) -> BookingResponse:
         ticket = await self._fetch_bookable_ticket(ticket_id)
@@ -114,6 +132,9 @@ class BookingManager:
         no access to this database (§8) to check ownership itself."""
         booking = await self._fetch_owned_pending_booking(user, booking_id)
         ticket = await self._tickets.get_by_id(booking.ticket_id)
+        if ticket is None:
+            logger.warning("pay_booking_ticket_not_found", booking_id=str(booking_id), ticket_id=str(booking.ticket_id))
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "ticket not found")
         return await self._charge_via_payment_service(booking, ticket, bearer_token, http_client)
 
     async def _fetch_owned_pending_booking(self, user: Principal, booking_id: uuid.UUID) -> Booking:
@@ -231,14 +252,14 @@ class BookingManager:
             raise HTTPException(status.HTTP_409_CONFLICT, "booking is not confirmed")
         booking.status = BookingStatus.CANCELLED
         await self._hold_strategy.release_booking(booking.ticket_id)
-        # Publish before commit (§22, integration point #5) — same ordering
-        # the Phase 4 CHECKPOINT fix applied to handle_webhook_event, though
-        # the recovery path is narrower here: a publish failure propagates
-        # uncommitted, so the booking stays CONFIRMED and the request
-        # 5xx's, but retrying is the caller's own choice, not a guaranteed
-        # redelivery the way Stripe's webhook retry is. A commit failure
-        # *after* a successful publish is the still-open, symmetric gap —
-        # no distributed transaction spans the Kafka publish and this
-        # commit (§8: no distributed transactions anywhere in this system).
-        await cancelled_producer.publish_cancelled(booking.id)
+        booking_id = booking.id
+        # Commit before publish, unlike payment_manager's publish-before-commit
+        # webhook ordering — that's safe only because Stripe's own redelivery
+        # guarantees a retry on an uncommitted failure; a plain HTTP cancel has
+        # no such external redelivery, so publishing first risked a refund
+        # firing against a booking that then rolled back to CONFIRMED.
         await self._session.commit()
+        try:
+            await cancelled_producer.publish_cancelled(booking_id)
+        except Exception:
+            logger.critical("cancel_booking_publish_failed", booking_id=str(booking_id), exc_info=True)

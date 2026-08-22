@@ -24,22 +24,29 @@ router = APIRouter()
 _bearer_scheme = HTTPBearer(auto_error=True)
 
 
-@router.get("/bookings/events/{event_id}/tickets", response_model=list[TicketStatusResponse])
-async def list_tickets_for_event(
-    event_id: uuid.UUID,
+def get_booking_manager(
     session: AsyncSession = Depends(get_session),
     redis: Redis = Depends(get_redis),
-) -> list[TicketStatusResponse]:
-    """Public — no auth required. Read-only composition source for the
-    frontend's seat map (§23): layout comes from Event Service, live
-    per-seat status and ticket_id come from here."""
-    manager = BookingManager(
+) -> BookingManager:
+    """Shared construction point — every route builds its BookingManager
+    here instead of inline, so one edit reaches all of them."""
+    return BookingManager(
         session=session,
         tickets=TicketRepository(session),
         bookings=BookingRepository(session),
         hold_strategy=get_hold_strategy(session, redis),
         events=EventRepository(session),
     )
+
+
+@router.get("/bookings/events/{event_id}/tickets", response_model=list[TicketStatusResponse])
+async def list_tickets_for_event(
+    event_id: uuid.UUID,
+    manager: BookingManager = Depends(get_booking_manager),
+) -> list[TicketStatusResponse]:
+    """Public — no auth required. Read-only composition source for the
+    frontend's seat map (§23): layout comes from Event Service, live
+    per-seat status and ticket_id come from here."""
     return await manager.list_tickets_for_event(event_id)
 
 
@@ -47,19 +54,11 @@ async def list_tickets_for_event(
 async def create_booking(
     payload: BookingCreate,
     user: Principal = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-    redis: Redis = Depends(get_redis),
+    manager: BookingManager = Depends(get_booking_manager),
 ) -> BookingResponse:
     """Authenticated-only — any logged-in user may book a ticket, no
     organizer role required (§15 delta: booking is not an organizer
     action)."""
-    manager = BookingManager(
-        session=session,
-        tickets=TicketRepository(session),
-        bookings=BookingRepository(session),
-        hold_strategy=get_hold_strategy(session, redis),
-        events=EventRepository(session),
-    )
     return await manager.create_booking(user, payload.ticket_id)
 
 
@@ -68,8 +67,7 @@ async def pay_booking(
     booking_id: uuid.UUID,
     user: Principal = Depends(get_current_user),
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
-    session: AsyncSession = Depends(get_session),
-    redis: Redis = Depends(get_redis),
+    manager: BookingManager = Depends(get_booking_manager),
     http_client: httpx.AsyncClient = Depends(get_http_client),
 ) -> BookingPayResponse:
     """Authenticated, ownership-scoped: only the booking's own user may pay
@@ -77,13 +75,6 @@ async def pay_booking(
     otherwise). Fronts payment for Payment Service, which has no access to
     booking_db to check either of those itself (decisions-log §9
     amendment)."""
-    manager = BookingManager(
-        session=session,
-        tickets=TicketRepository(session),
-        bookings=BookingRepository(session),
-        hold_strategy=get_hold_strategy(session, redis),
-        events=EventRepository(session),
-    )
     return await manager.pay_booking(user, booking_id, credentials.credentials, http_client)
 
 
@@ -91,18 +82,10 @@ async def pay_booking(
 async def cancel_booking(
     booking_id: uuid.UUID,
     user: Principal = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-    redis: Redis = Depends(get_redis),
+    manager: BookingManager = Depends(get_booking_manager),
     cancelled_producer: BookingCancelledProducer = Depends(get_booking_cancelled_producer),
 ) -> BookingResponse:
     """Authenticated, ownership-scoped: only the booking's own user may
     cancel it (403 otherwise), and only while it's still CONFIRMED (409
     otherwise) and before the event's start time (409 otherwise, §22)."""
-    manager = BookingManager(
-        session=session,
-        tickets=TicketRepository(session),
-        bookings=BookingRepository(session),
-        hold_strategy=get_hold_strategy(session, redis),
-        events=EventRepository(session),
-    )
     return await manager.cancel_booking(user, booking_id, cancelled_producer)

@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +37,17 @@ class BookingRepository(BaseRepository[Booking]):
         )
         await self._session.flush()
         return result.rowcount > 0
+
+    async def list_confirmed_ticket_ids(self, event_id: uuid.UUID) -> set[uuid.UUID]:
+        """Booking.status is the ground truth for BOOKED regardless of which
+        TicketHoldStrategy is active — unlike tickets.status, which
+        RedisHoldStrategy never writes at all (§6). Bulk query, not a
+        per-ticket loop; used by BookingManager.list_tickets_for_event to
+        determine BOOKED status strategy-independently."""
+        result = await self._session.execute(
+            select(Booking.ticket_id).where(Booking.event_id == event_id, Booking.status == BookingStatus.CONFIRMED)
+        )
+        return set(result.scalars().all())
 
     async def expire_stale_pending(self, older_than_seconds: int) -> int:
         """Age-based fallback for the RedisHoldStrategy (§6): Redis expires

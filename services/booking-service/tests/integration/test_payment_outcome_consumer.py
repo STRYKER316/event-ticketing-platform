@@ -37,7 +37,11 @@ async def test_succeeded_message_confirms_booking_and_books_ticket_under_cron_st
     booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
     notification_producer = AsyncMock()
     consumer = PaymentOutcomeConsumer(
-        consumer=None, session_factory=db_session_factory, redis=redis_client, notification_producer=notification_producer
+        consumer=None,
+        session_factory=db_session_factory,
+        redis=redis_client,
+        notification_producer=notification_producer,
+        cancelled_producer=AsyncMock(),
     )
 
     await consumer._handle(_message("succeeded", booking_id, ticket_id))
@@ -62,7 +66,11 @@ async def test_failed_message_releases_hold_immediately_under_cron_strategy(
     booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
     notification_producer = AsyncMock()
     consumer = PaymentOutcomeConsumer(
-        consumer=None, session_factory=db_session_factory, redis=redis_client, notification_producer=notification_producer
+        consumer=None,
+        session_factory=db_session_factory,
+        redis=redis_client,
+        notification_producer=notification_producer,
+        cancelled_producer=AsyncMock(),
     )
 
     await consumer._handle(_message("failed", booking_id, ticket_id))
@@ -89,7 +97,11 @@ async def test_redelivered_succeeded_message_confirms_and_notifies_exactly_once(
     booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
     notification_producer = AsyncMock()
     consumer = PaymentOutcomeConsumer(
-        consumer=None, session_factory=db_session_factory, redis=redis_client, notification_producer=notification_producer
+        consumer=None,
+        session_factory=db_session_factory,
+        redis=redis_client,
+        notification_producer=notification_producer,
+        cancelled_producer=AsyncMock(),
     )
     raw = _message("succeeded", booking_id, ticket_id)
 
@@ -104,6 +116,42 @@ async def test_redelivered_succeeded_message_confirms_and_notifies_exactly_once(
     notification_producer.publish_booking_confirmed.assert_awaited_once_with(booking_id)
 
 
+async def test_succeeded_message_on_already_expired_booking_triggers_refund(
+    db_session_factory: async_sessionmaker[AsyncSession], redis_client: Redis
+):
+    # A hold-expiry sweep can flip a booking to EXPIRED before a late-arriving
+    # SUCCEEDED outcome is processed; the customer was genuinely charged, so
+    # this must trigger a refund via the same booking.cancelled path
+    # cancel_booking already uses, not silently drop the outcome.
+    ticket_id = await seed_ticket(db_session_factory)
+    booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
+    async with db_session_factory() as session:
+        booking = await session.get(Booking, booking_id)
+        booking.status = BookingStatus.EXPIRED
+        await session.commit()
+    notification_producer = AsyncMock()
+    cancelled_producer = AsyncMock()
+    consumer = PaymentOutcomeConsumer(
+        consumer=None,
+        session_factory=db_session_factory,
+        redis=redis_client,
+        notification_producer=notification_producer,
+        cancelled_producer=cancelled_producer,
+    )
+
+    await consumer._handle(_message("succeeded", booking_id, ticket_id))
+
+    cancelled_producer.publish_cancelled.assert_awaited_once_with(booking_id)
+    notification_producer.publish_booking_confirmed.assert_not_awaited()
+    async with db_session_factory() as session:
+        booking = await session.get(Booking, booking_id)
+        ticket = await session.get(Ticket, ticket_id)
+        # Left as EXPIRED, not silently re-confirmed — the seat may already
+        # be legitimately held or booked by someone else by now.
+        assert booking.status is BookingStatus.EXPIRED
+        assert ticket.status is TicketStatus.AVAILABLE
+
+
 async def test_redelivered_message_on_already_confirmed_booking_does_not_touch_a_new_holder(
     db_session_factory: async_sessionmaker[AsyncSession], redis_client: Redis
 ):
@@ -114,7 +162,11 @@ async def test_redelivered_message_on_already_confirmed_booking_does_not_touch_a
     ticket_id = await seed_ticket(db_session_factory)
     booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
     consumer = PaymentOutcomeConsumer(
-        consumer=None, session_factory=db_session_factory, redis=redis_client, notification_producer=AsyncMock()
+        consumer=None,
+        session_factory=db_session_factory,
+        redis=redis_client,
+        notification_producer=AsyncMock(),
+        cancelled_producer=AsyncMock(),
     )
     await consumer._handle(_message("succeeded", booking_id, ticket_id))
 

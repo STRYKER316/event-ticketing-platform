@@ -75,6 +75,51 @@ async def test_list_tickets_for_event_maps_ticket_id_from_model_id():
     assert result[0].price_cents == 2500
 
 
+async def test_list_tickets_for_event_sources_booked_from_bookings_not_raw_ticket_column():
+    # The raw tickets.status column is never accurate under RedisHoldStrategy
+    # (§6), so BOOKED must come from a CONFIRMED Booking row instead — proven
+    # here by a ticket whose own (stale/irrelevant) status column says
+    # AVAILABLE but which the bookings repository reports as CONFIRMED.
+    event_id = uuid.uuid4()
+    ticket = Ticket(
+        id=uuid.uuid4(), event_id=event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.AVAILABLE
+    )
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(list_by_event=AsyncMock(return_value=[ticket])),
+        bookings=AsyncMock(list_confirmed_ticket_ids=AsyncMock(return_value={ticket.id})),
+        hold_strategy=FakeHoldStrategy(),
+        events=AsyncMock(),
+    )
+
+    result = await manager.list_tickets_for_event(event_id)
+
+    assert result[0].status is TicketStatus.BOOKED
+
+
+async def test_list_tickets_for_event_sources_held_from_hold_strategy_not_raw_ticket_column():
+    # Same reasoning for HELD: the raw column is left at AVAILABLE under
+    # RedisHoldStrategy, so this must come from the injected strategy's own
+    # is_held(), not ticket.status.
+    event_id = uuid.uuid4()
+    ticket = Ticket(
+        id=uuid.uuid4(), event_id=event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.AVAILABLE
+    )
+    strategy = FakeHoldStrategy()
+    await strategy.acquire_hold(ticket.id, ttl_seconds=60)
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(list_by_event=AsyncMock(return_value=[ticket])),
+        bookings=AsyncMock(list_confirmed_ticket_ids=AsyncMock(return_value=set())),
+        hold_strategy=strategy,
+        events=AsyncMock(),
+    )
+
+    result = await manager.list_tickets_for_event(event_id)
+
+    assert result[0].status is TicketStatus.HELD
+
+
 async def test_list_tickets_for_event_empty_for_no_tickets():
     manager = BookingManager(
         session=AsyncMock(),
@@ -176,6 +221,24 @@ async def test_pay_booking_happy_path_calls_payment_service_with_ticket_price():
     assert call.args[0].endswith("/payments/charge")
     assert call.kwargs["json"]["amount_cents"] == 2500
     assert call.kwargs["headers"]["Authorization"] == "Bearer token-abc"
+
+
+async def test_pay_booking_on_booking_with_missing_ticket_404s():
+    # A missing Ticket row must 404 cleanly, matching every other fetch in
+    # this file, instead of crashing with an AttributeError.
+    booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
+    booking = _pending_booking(booking_id, ticket_id)
+    manager = BookingManager(
+        session=AsyncMock(),
+        tickets=AsyncMock(get_by_id=AsyncMock(return_value=None)),
+        bookings=AsyncMock(get_by_id=AsyncMock(return_value=booking)),
+        hold_strategy=FakeHoldStrategy(),
+        events=AsyncMock(),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.pay_booking(USER, booking_id, "token", AsyncMock())
+    assert exc_info.value.status_code == 404
 
 
 async def test_pay_booking_on_unknown_booking_404s():
