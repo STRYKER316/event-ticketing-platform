@@ -245,7 +245,7 @@ services:
       # Traefik — a PathPrefix(`/payments`) rule here would let any
       # authenticated end user call it directly with an arbitrary
       # booking_id/amount_cents, bypassing booking-service's ownership check
-      # and authoritative price lookup entirely (found in code review).
+      # and authoritative price lookup entirely.
       traefik.http.routers.payment-service.rule: PathPrefix(`/payments/webhook`)
       traefik.http.services.payment-service.loadbalancer.server.port: "8004"
 

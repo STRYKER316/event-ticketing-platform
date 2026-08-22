@@ -226,6 +226,7 @@ classDiagram
         +expire_stale_pending(older_than_seconds) int
         +transition_if_pending(booking_id, new_status) bool
         +transition_if_confirmed(booking_id, new_status) bool
+        +list_confirmed_ticket_ids(event_id) set~UUID~
     }
 
     class EventRepository {
@@ -527,6 +528,7 @@ classDiagram
         +get_by_booking_id(booking_id) Payment
         +get_by_stripe_charge_id(stripe_charge_id) Payment
         +transition_if_pending(stripe_charge_id, new_status) bool
+        +transition_to_succeeded(stripe_charge_id) bool
     }
 
     class PaymentOutcomeProducer {

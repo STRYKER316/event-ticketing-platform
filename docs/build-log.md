@@ -4045,3 +4045,149 @@ rule (and the general one), a push always gets an explicit confirmation
 regardless of how clean this checklist comes back.
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-22 — Pre-Phase-10 hardening pass: adversarial/sanity testing round, ~36 findings fixed
+
+Not a numbered phase task — a dedicated pre-deployment audit requested
+ahead of Phase 10, following CLAUDE.md's own "recommended, not blocking"
+and "expected, not gaps" review categories plus a full docs/md staleness
+sweep. Two parallel live-testing rounds (adversarial + sanity) were run
+against all five services, on top of a five-service adversarial code
+review, turning up roughly 36 findings across correctness, idempotency,
+validation, and doc-staleness. User's triage instruction: fix everything
+found rather than partial-defer.
+
+Fixes landed, one commit per service plus one docs commit:
+
+- `booking-service` (`784bc6e`): `list_tickets_for_event` was sourcing
+  BOOKED/HELD status from the raw `tickets.status` column, which
+  `RedisHoldStrategy` never writes (§6) — every held/booked seat under
+  `HOLD_STRATEGY=redis` reported as AVAILABLE. Fixed to source BOOKED
+  from `Booking.status=CONFIRMED` and HELD from the injected strategy's
+  own `is_held()`. Also: a SUCCEEDED payment outcome racing an
+  already-EXPIRED booking silently dropped a real charge with no refund
+  path — now republishes to `booking.cancelled` to trigger one. `cancel_booking`
+  reordered to commit-before-publish. `get_many_by_id` batched through `chunked()`.
+- `event-service` (`f21aa33`): DRAFT events had no visibility scoping at
+  all — any authenticated (or anonymous) caller could `GET` another
+  organizer's unpublished event or seat map. Added `_check_visible`
+  (404, not 403, so existence can't be enumerated) and
+  `get_current_user_optional`. Also: `seed.py` wrote raw DB rows
+  directly, so `make reset`'s demo data never reached Kafka —
+  `booking_db` and the search index stayed empty after every reset.
+  Rewritten to route through the real `EventManager.create_event`/
+  `upsert_seat_map`/`publish_event` path.
+- `payment-service` (`735e1ad`): a webhook reporting SUCCEEDED after an
+  earlier FAILED webhook for the same charge was silently dropped —
+  `transition_if_pending` only matched PENDING. Added
+  `transition_to_succeeded`, accepting either PENDING or FAILED as source state.
+- `notification-service` (`260d770`): a whitespace-only exception message
+  crashed `_error_text()`'s fallback-to-`repr()` truthiness check.
+  Fixed; also bounded `retry_max_attempts` to match `RetryEnvelope.attempt`'s cap.
+- `search-service` (`19519ac`): `EventConsumer` used `aiokafka`'s default
+  auto-commit, meaning a crash mid-ES-write could silently lose an
+  index update — the one consumer in the codebase not yet on the
+  manual-commit-plus-bounded-retry convention. Brought in line.
+- Docs (`47433b5`): stale build-order wording in two files, a
+  README status line still describing Phase 9 as in-progress after
+  Phase 9 closed, and `infra/README.md`/`architecture.html` both
+  describing payment-service's Traefik rule as the generic per-service
+  pattern instead of its actual, deliberately-narrower `/payments/webhook` prefix.
+
+A code-review pass on the fix diffs itself then found ~15 instances of
+"(found in code review)"-style phrasing littered across the new comments
+— a direct violation of this project's "don't reference the current
+task/fix in comments" rule. Cleaned up across all five services before
+committing; re-ran affected suites to confirm the comment-only edits
+changed nothing behaviorally.
+
+Decisions-log delta (`09c90f8`): three new §26 limitations logged —
+booking-service's DLQ-less message drop on retry exhaustion, the
+client-side-await notification-skip race, and notification-service's
+serial `RetryConsumer` throughput ceiling. None judged to disrupt the
+core user-facing flow (browse→book→pay→confirm→cancel→refund→notify);
+all are edge-case resilience/scale gaps, not new architecture — no
+`CLAUDE.md` delta.
+
+This build-log had no entry at all for the above, across all seven
+commits — the DOCUMENT step's own requirement missed since this wasn't
+a numbered phase task with its own kickoff-doc checklist forcing it.
+Backfilled here, from a follow-up testing round's own findings (see
+below) rather than at the time.
+
+## 2026-08-22 — Second testing round ahead of Phase 10: two more real findings, plus pre-existing comment-rule debt
+
+User asked for another round of adversarial/sanity testing beyond the
+first pass above ("run a bunch of testing rounds... make the system
+foolproof"), the Stripe key deliberately still deferred. Two parallel
+forks: one pytest-regression-plus-doc-staleness pass (no live stack, to
+avoid colliding with the other fork's `docker compose` usage), one
+live-stack pass (fresh `make reset`, golden-path walkthrough, ownership-
+scoping adversarial probing, boundary/malformed-input fuzzing, a 5-way
+and a 15-way concurrent double-booking race, Traefik routing check).
+
+Regression suite: all green, no regressions (74/25/87/24/15 across the
+five services). Findings:
+
+- **Real bug — DRAFT-event mutation-route existence oracle.**
+  `event_manager.py`'s `_check_visible` (added in the first pass above)
+  correctly hides a DRAFT event from `GET` by a non-owner (404). But
+  `_fetch_owned_event` — the method every mutation route
+  (`PATCH`/`DELETE`/`/publish`/seat-map `PUT`) calls for its
+  ownership check — returned 403 for the same non-owner, not 404,
+  reopening exactly the enumeration oracle the GET-side fix closed, just
+  via a different verb: `PATCH` on a real DRAFT event a non-owner
+  doesn't own answered differently than `PATCH` on a nonexistent one.
+  Fixed: `_fetch_owned_event` now returns 404 for a non-owner when the
+  event is still DRAFT (matching `_check_visible`'s behavior), 403 only
+  once the event is PUBLISHED and its existence is already public
+  knowledge. Three existing ownership tests updated (they were
+  asserting 403 against the fixture's default DRAFT event, which was
+  actually the bug's blind spot), one new test added confirming the
+  PUBLISHED case still gets 403.
+- **Log-level inconsistency.** `payment-service`'s Stripe-rejection
+  handler logs at `warning` (a deliberate first-pass fix — expected/
+  handled, not a system incident). One hop upstream, `booking-service`'s
+  `pay_booking` forwarded the exact same event at `error`, contradicting
+  the log-level-discipline convention for any 4xx-class rejection this
+  path might one day forward. Changed to `warning` to match.
+- **Doc staleness from the first pass's own seed.py rewrite.**
+  `infra/README.md`'s `make reset` section still claimed the seed
+  script "writes directly to `event_db`... never triggers the Kafka
+  provisioning/indexing points" and that `booking_db`/the search index
+  "start empty" after reset — both now false since the first pass's
+  `seed.py` rewrite routes through the real publish path. Corrected.
+- **`docs/report/class-diagrams.md` stale** on two new repository
+  methods from the first pass (`list_confirmed_ticket_ids`,
+  `transition_to_succeeded`). Added.
+- **Pre-existing "(found in code review)"/"(found in P9.T2...)" comment-
+  rule violations — 23 instances across 17 files, predating this
+  session entirely** (introduced in earlier phases' own code-review-fix
+  commits, per `git log -S`). The first pass's cleanup was correctly
+  scoped to only the diff it introduced, so it never touched these. Same
+  rule, same fix pattern as the first pass: reworded to drop the
+  process-reference phrasing while keeping the underlying technical
+  content, trimmed toward this project's one-crisp-line comment
+  convention where the original ran long. Spans
+  `booking-service`/`payment-service`/`notification-service` app and
+  test code, plus `infra/docker-compose.yml`, `infra/reset-demo-state.sh`,
+  and `docs/report/testing-strategy.md`.
+
+Live-stack round otherwise clean: golden path worked end-to-end
+(including a clean 502, not a crash, on the Stripe-key-not-configured
+charge attempt); ownership scoping held everywhere except the bug above;
+boundary/malformed-input fuzzing all produced correct 422s/404s/409s;
+both concurrency races produced exactly one winner and zero corruption
+or 500s; Traefik routing matched docs. Kafka redelivery-idempotency
+verified via code + existing tests rather than a live replay (disrupting
+the running stack to force a genuine mid-processing crash was judged not
+worth it for a report-only round) — no gap found, just noted as a
+proof-by-code rather than proof-by-replay distinction.
+
+Full service test suites re-run after every fix: event-service 75/75
+(74 plus the one new ownership test), booking-service 87/87,
+payment-service 24/24, notification-service 15/15 — all green.
+
+Decisions-log delta: none — both real findings are bug fixes to
+already-locked invariants (ownership scoping, log-level discipline), not
+new architecture. `CLAUDE.md` delta: none.

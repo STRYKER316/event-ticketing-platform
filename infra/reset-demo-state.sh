@@ -39,7 +39,7 @@ echo "Clearing the search index (Elasticsearch)..."
 # curl exits 0 on a 404 (so the intended "index missing" case would never
 # actually be distinguishable from success), and -f alone would collapse
 # a genuine ES failure into the same swallowed-and-continue path under
-# set -e, silently leaving a stale index behind (found in code review).
+# set -e, silently leaving a stale index behind.
 es_status=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
   "http://localhost:${ELASTICSEARCH_PORT}/events/_delete_by_query?conflicts=proceed&refresh=true" \
   -H "Content-Type: application/json" -d '{"query": {"match_all": {}}}')

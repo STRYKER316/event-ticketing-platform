@@ -872,7 +872,7 @@ matching ticket yet, from asynchronous post-publish provisioning, renders
 (the hold→pay state machine — a failed hold has no booking to retry
 payment against; a failed payment keeps the existing `PENDING` booking so
 retry is possible) — both unit-tested (8 tests, including a regression
-test for a seat-key collision found in code review), plus a small
+test for a seat-key collision), plus a small
 `formatSeatLabel` display-formatting helper (1 test) extracted during a
 later `/pre-pr` pass. Presentational components are otherwise not
 unit-tested, matching this project's "minimal functional UI" scope (§10)

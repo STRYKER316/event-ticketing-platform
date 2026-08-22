@@ -52,11 +52,11 @@ migrations). Live-verified idempotent: re-running it against an
 already-reset stack, or one with real accumulated bookings/tickets/
 payments from a prior demo/walkthrough session, both land on the same
 baseline the seed script itself defines (2 venues, 3 performers, 3
-events, 1 seat map; `booking_db`/`payment_db`/the search index start
-empty, same as they would after a genuinely fresh `make up && make
-migrate && make seed`, since the seed script writes directly to
-`event_db` rather than through the publish API and so never triggers the
-Kafka provisioning/indexing points). Deliberately does not touch
+events, 1 seat map; `booking_db`'s tickets and the search index are
+repopulated too, since the seed script goes through the real
+`EventManager.create_event`/`publish_event` path and so does trigger
+the Kafka provisioning/indexing points — only `payment_db` legitimately
+starts empty). Deliberately does not touch
 Keycloak — its realm/user data is imported configuration
 (`keycloak/realm-export.json`), not demo-accumulated state. See
 `reset-demo-state.sh` for the exact commands.
@@ -77,7 +77,7 @@ Keycloak — its realm/user data is imported configuration
 | payment-service | `payment-service` | routed via Traefik only (no direct host port) | Stripe test-mode charge (`POST /payments/charge`, called by booking-service only — §9 amendment) + webhook (`POST /payments/webhook`) + `booking.cancelled` consumer (Kafka #5, its first-ever consumer — issues Stripe refunds, §22) over `payment_db`; publishes Kafka #4 (`payment.outcomes`) and Kafka #3 (`notifications` — `payment_confirmed` on webhook success, `refund_failed` on refund failure, §22 amendment #3); `/healthz`, `/metrics` |
 | notification-service | `notification-service` | routed via Traefik only (no direct host port) | no database of its own (§17 amendment); consumes Kafka #3 (`notifications` — booking-confirmed/payment-confirmed/refund-failed) and, on a simulated delivery failure, walks a hand-rolled retry/backoff/DLQ ladder through `notification-retry` then `notification-dlq`, retry state carried on the message itself via `RetryEnvelope`; `/healthz`, `/metrics` |
 | frontend | `frontend` | routed via Traefik only (no direct host port) | five-screen React UI (§10), built as static assets and served by `nginx:1.27-alpine`; talks to every backend service exclusively through Traefik (`VITE_*_SERVICE_URL` baked in at build time as `http://localhost`, since no service publishes its own host port), Keycloak Authorization Code + PKCE for auth |
-| Traefik | `traefik` | 80 (entrypoint), `TRAEFIK_DASHBOARD_PORT` (8080, dashboard) | Docker-labels provider; `event-service` on `PathPrefix('/')`, `search-service` on `PathPrefix('/search')`, `booking-service` on `PathPrefix('/bookings')`, `payment-service` on `PathPrefix('/payments/webhook')` — deliberately narrower than the generic per-service pattern: a bare `/payments` prefix would let any authenticated user call `/payments/charge` directly with an arbitrary `booking_id`/`amount_cents`, bypassing booking-service's ownership check and authoritative price lookup (found in code review); `/payments/charge` is reachable only internally, called by booking-service over the Docker network — `notification-service` on `PathPrefix('/notifications')` (matches nothing the service actually serves — it exposes only `/healthz`/`/metrics`, unreachable through this prefix the same way every other service's own bare `/healthz` already is), `frontend` on `PathPrefix('/app')` |
+| Traefik | `traefik` | 80 (entrypoint), `TRAEFIK_DASHBOARD_PORT` (8080, dashboard) | Docker-labels provider; `event-service` on `PathPrefix('/')`, `search-service` on `PathPrefix('/search')`, `booking-service` on `PathPrefix('/bookings')`, `payment-service` on `PathPrefix('/payments/webhook')` — deliberately narrower than the generic per-service pattern: a bare `/payments` prefix would let any authenticated user call `/payments/charge` directly with an arbitrary `booking_id`/`amount_cents`, bypassing booking-service's ownership check and authoritative price lookup; `/payments/charge` is reachable only internally, called by booking-service over the Docker network — `notification-service` on `PathPrefix('/notifications')` (matches nothing the service actually serves — it exposes only `/healthz`/`/metrics`, unreachable through this prefix the same way every other service's own bare `/healthz` already is), `frontend` on `PathPrefix('/app')` |
 | docker-socket-proxy | `docker-socket-proxy` | internal only | nginx proxy in front of the Docker socket — see note below |
 | Prometheus | `prometheus` | `PROMETHEUS_PORT` (9090) | `benchmark` profile only (`make bench-up`) — scrapes `event-service`/`search-service`/`booking-service`/`payment-service`/`notification-service` `/metrics` every 5s (§11, §24) |
 | Grafana | `grafana` | `GRAFANA_PORT` (3000) | `benchmark` profile only (`make bench-up`) — Prometheus datasource and a `booking-service` dashboard (request rate, latency p50/p95/p99, error rate) auto-provisioned on startup; login `GRAFANA_ADMIN_USER`/`GRAFANA_ADMIN_PASSWORD` |
