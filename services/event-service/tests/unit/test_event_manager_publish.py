@@ -78,3 +78,32 @@ async def test_publish_already_published_is_rejected():
 
     assert exc_info.value.status_code == 409
     manager._producer.publish_upserted.assert_not_awaited()
+
+
+async def test_publish_rejects_an_event_whose_start_time_has_passed():
+    # EventCreate/EventUpdate only check start_time is future at submission
+    # time; a DRAFT event left sitting past its start_time must still be
+    # rejected at publish time, not silently published.
+    event = make_draft_event()
+    event.start_time = datetime.now(timezone.utc) - timedelta(minutes=1)
+    manager = make_manager(event, seat_map=SEAT_MAP)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.publish_event(OWNER, event.id)
+
+    assert exc_info.value.status_code == 422
+    manager._producer.publish_upserted.assert_not_awaited()
+    manager._session.commit.assert_not_awaited()
+
+
+async def test_publish_commits_only_after_the_producer_send_succeeds():
+    # Matches payment-service's webhook handler: publish before commit, so a
+    # Kafka failure leaves the DB status uncommitted and the client can retry.
+    event = make_draft_event()
+    manager = make_manager(event, seat_map=SEAT_MAP)
+    manager._producer.publish_upserted = AsyncMock(side_effect=RuntimeError("kafka unreachable"))
+
+    with pytest.raises(RuntimeError):
+        await manager.publish_event(OWNER, event.id)
+
+    manager._session.commit.assert_not_awaited()

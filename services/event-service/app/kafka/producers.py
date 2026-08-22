@@ -2,6 +2,7 @@ import uuid
 
 import structlog
 from aiokafka import AIOKafkaProducer
+from fastapi import HTTPException, status
 
 from app.api.schemas import SeatMap
 from app.core import get_kafka_producer, get_settings
@@ -9,6 +10,13 @@ from app.db.models import Event
 from app.kafka.schemas import EventSeat, EventUpsertedMessage
 
 logger = structlog.get_logger()
+
+# Conservative headroom below aiokafka's default 1MB (1,048,576 byte)
+# max_request_size — MAX_SEAT_MAP_SEATS (schemas.py) only bounds seat *count*,
+# not the combined serialized byte size, and section/row/seat names allow up
+# to 100 chars each, so a large venue can still overflow the wire limit.
+# Caught here with a clean 422 rather than deep inside aiokafka's send.
+MAX_EVENT_MESSAGE_BYTES = 900_000
 
 
 class EventProducer:
@@ -36,13 +44,15 @@ class EventProducer:
         await self._send(event.id, message)
 
     async def _send(self, event_id: uuid.UUID, message: EventUpsertedMessage) -> None:
+        payload = message.model_dump_json().encode()
+        if len(payload) > MAX_EVENT_MESSAGE_BYTES:
+            logger.warning(
+                "event_kafka_message_too_large", event_id=str(event_id), size_bytes=len(payload)
+            )
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "seat map too large to publish")
         # Keyed by event ID (§7 idempotency) so all messages for one event land on the
         # same partition and stay strictly ordered for a downstream consumer.
-        await self._producer.send_and_wait(
-            self._topic,
-            key=str(event_id).encode(),
-            value=message.model_dump_json().encode(),
-        )
+        await self._producer.send_and_wait(self._topic, key=str(event_id).encode(), value=payload)
         logger.info("event_kafka_message_published", event_id=str(event_id), action=message.action.value)
 
 

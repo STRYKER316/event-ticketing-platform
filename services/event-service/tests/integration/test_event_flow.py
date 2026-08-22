@@ -10,12 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.api.schemas import (
     EventCreate,
+    EventSortField,
     EventUpdate,
     Seat,
     SeatMap,
     SeatMapRow,
     SeatMapSection,
     SeatMapUpsert,
+    SortOrder,
     VenueCreate,
 )
 from app.db.models import Venue
@@ -75,7 +77,7 @@ async def test_owning_organizer_can_upsert_seat_map_via_api_path(
     result = await manager.upsert_seat_map(ORGANIZER, created.id, payload)
     assert result.sections[0].name == "A"
 
-    fetched = await manager.get_seat_map(created.id)
+    fetched = await manager.get_seat_map(created.id, ORGANIZER)
     assert fetched.sections[0].rows[0].seats[0].label == "A1"
 
 
@@ -97,9 +99,12 @@ async def test_cross_organizer_cannot_upsert_seat_map(db_session: AsyncSession, 
     assert exc_info.value.status_code == 403
 
 
-async def test_seat_map_upsert_republishes_when_event_is_published(
+async def test_seat_map_upsert_is_rejected_once_event_is_published(
     db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
 ):
+    # Booking Service may already have provisioned Ticket rows from the current
+    # seat map once PUBLISHED — mutating it in place is refused the same way
+    # delete is, rather than silently republished.
     venue = await _seed_venue(db_session)
     producer = AsyncMock()
     manager = EventManager(db_session, mongo_db, producer=producer)
@@ -107,7 +112,7 @@ async def test_seat_map_upsert_republishes_when_event_is_published(
 
     created = await manager.create_event(
         ORGANIZER,
-        EventCreate(title="Republish on Seat Change", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+        EventCreate(title="Immutable After Publish", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
     )
     initial_payload = SeatMapUpsert(
         sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
@@ -119,11 +124,14 @@ async def test_seat_map_upsert_republishes_when_event_is_published(
     updated_payload = SeatMapUpsert(
         sections=[SeatMapSection(price_cents=2500, name="B", rows=[SeatMapRow(name="1", seats=[Seat(label="B1", x=0, y=0)])])]
     )
-    await manager.upsert_seat_map(ORGANIZER, created.id, updated_payload)
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.upsert_seat_map(ORGANIZER, created.id, updated_payload)
+    assert exc_info.value.status_code == 409
 
-    assert producer.publish_upserted.await_count == 2
-    republished_seat_map = producer.publish_upserted.await_args.args[1]
-    assert republished_seat_map.sections[0].name == "B"
+    # Rejected before publishing again, and the original seat map is untouched.
+    producer.publish_upserted.assert_awaited_once()
+    unchanged = await manager.get_seat_map(created.id, ORGANIZER)
+    assert unchanged.sections[0].name == "A"
 
 
 async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
@@ -136,7 +144,7 @@ async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_d
         EventCreate(title="Integration Concert", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
     )
 
-    fetched = await manager.get_event(created.id)
+    fetched = await manager.get_event(created.id, ORGANIZER)
     assert fetched.title == "Integration Concert"
     assert fetched.organizer_id == ORGANIZER.subject
     assert fetched.venue.id == venue.id
@@ -147,7 +155,7 @@ async def test_create_fetch_event_and_seat_map(db_session: AsyncSession, mongo_d
             sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
         )
     )
-    seat_map = await manager.get_seat_map(created.id)
+    seat_map = await manager.get_seat_map(created.id, ORGANIZER)
     assert seat_map.event_id == created.id
     assert seat_map.sections[0].name == "A"
 
@@ -281,5 +289,72 @@ async def test_cross_organizer_update_is_rejected(db_session: AsyncSession, mong
         await manager.delete_event(OTHER_ORGANIZER, created.id)
     assert exc_info.value.status_code == 403
 
-    still_there = await manager.get_event(created.id)
+    still_there = await manager.get_event(created.id, ORGANIZER)
     assert still_there.title == "Owned Concert"
+
+
+async def test_draft_event_and_seat_map_hidden_from_non_owner_and_anonymous(
+    db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
+):
+    # A DRAFT event's existence and full seat map (pricing, layout) must not
+    # be readable by anyone who guesses/enumerates the event ID.
+    venue = await _seed_venue(db_session)
+    manager = EventManager(db_session, mongo_db, producer=AsyncMock())
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+
+    created = await manager.create_event(
+        ORGANIZER,
+        EventCreate(title="Private Draft", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+    )
+    await SeatMapRepository(mongo_db).upsert(
+        SeatMap(
+            event_id=created.id,
+            sections=[SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])],
+        )
+    )
+
+    for caller in (OTHER_ORGANIZER, None):
+        with pytest.raises(HTTPException) as exc_info:
+            await manager.get_event(created.id, caller)
+        assert exc_info.value.status_code == 404
+
+        with pytest.raises(HTTPException) as exc_info:
+            await manager.get_seat_map(created.id, caller)
+        assert exc_info.value.status_code == 404
+
+    # The owning organizer can still see both.
+    visible_event = await manager.get_event(created.id, ORGANIZER)
+    assert visible_event.title == "Private Draft"
+    visible_seat_map = await manager.get_seat_map(created.id, ORGANIZER)
+    assert visible_seat_map.sections[0].name == "A"
+
+
+async def test_public_listing_excludes_draft_events(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
+    # Regression test: EventRepository.list built no WHERE clause on status, so
+    # DRAFT events leaked into the public GET /events listing.
+    venue = await _seed_venue(db_session)
+    manager = EventManager(db_session, mongo_db, producer=AsyncMock())
+    start = datetime.now(timezone.utc) + timedelta(days=1)
+    seat_map_sections = [SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])]
+
+    draft = await manager.create_event(
+        ORGANIZER,
+        EventCreate(title="Still Draft", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+    )
+
+    published = await manager.create_event(
+        ORGANIZER,
+        EventCreate(title="Published Event", start_time=start, end_time=start + timedelta(hours=2), venue_id=venue.id),
+    )
+    await SeatMapRepository(mongo_db).upsert(SeatMap(event_id=published.id, sections=seat_map_sections))
+    await manager.publish_event(ORGANIZER, published.id)
+
+    listing = await manager.list_events(
+        limit=20, offset=0, sort_field=EventSortField.START_TIME, sort_order=SortOrder.ASC
+    )
+
+    titles = {item.title for item in listing.items}
+    assert "Published Event" in titles
+    assert "Still Draft" not in titles
+    assert listing.total == 1
+    assert draft.status.value == "draft"

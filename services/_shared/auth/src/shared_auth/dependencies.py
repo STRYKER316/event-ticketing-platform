@@ -12,6 +12,7 @@ from .models import Principal
 logger = structlog.get_logger()
 
 _bearer_scheme = HTTPBearer(auto_error=True)
+_bearer_scheme_optional = HTTPBearer(auto_error=False)
 
 _settings: AuthSettings | None = None
 _jwks_cache: JWKSCache | None = None
@@ -96,6 +97,20 @@ def _principal_from_claims(claims: dict) -> Principal:
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
 ) -> Principal:
+    claims = await _decode_token(credentials.credentials)
+    return _principal_from_claims(claims)
+
+
+async def get_current_user_optional(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme_optional),
+) -> Principal | None:
+    """For routes that are public but adjust visibility for an authenticated
+    caller (e.g. an owning organizer seeing their own unpublished resource).
+    No credentials at all -> anonymous (None). Credentials present but
+    invalid still raise 401 via _decode_token — a bad token is a genuine
+    auth error, not silently downgraded to anonymous access."""
+    if credentials is None:
+        return None
     claims = await _decode_token(credentials.credentials)
     return _principal_from_claims(claims)
 

@@ -92,6 +92,23 @@ def test_seat_map_section_rejects_non_positive_price():
         SeatMapSection(price_cents=0, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])
 
 
+def test_seat_map_section_rejects_price_beyond_postgres_int4_range():
+    # An out-of-range price flows through Kafka into booking-service's
+    # Ticket.price_cents (a plain Postgres int4 column) and would otherwise
+    # cause a permanent insert failure on every redelivery.
+    with pytest.raises(ValidationError):
+        SeatMapSection(
+            price_cents=POSTGRES_INT4_MAX + 1, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])]
+        )
+
+
+def test_seat_map_section_accepts_price_at_postgres_int4_max():
+    section = SeatMapSection(
+        price_cents=POSTGRES_INT4_MAX, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])]
+    )
+    assert section.price_cents == POSTGRES_INT4_MAX
+
+
 def test_venue_create_rejects_name_over_the_db_column_limit():
     # events.name is varchar(255)
     with pytest.raises(ValidationError):

@@ -3,9 +3,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
+import pytest
+from fastapi import HTTPException
+
 from app.api.schemas import Seat, SeatMap, SeatMapRow, SeatMapSection
 from app.db.models import Event, EventStatus, Performer, Venue
-from app.kafka.producers import EventProducer
+from app.kafka.producers import EventProducer, MAX_EVENT_MESSAGE_BYTES
 
 TOPIC = "event.events"
 
@@ -62,3 +65,35 @@ async def test_publish_upserted_sends_correct_topic_key_and_payload():
         {"section": "A", "row": "1", "label": "A1", "price_cents": 2500},
         {"section": "A", "row": "1", "label": "A2", "price_cents": 2500},
     ]
+
+
+async def test_publish_upserted_rejects_a_message_that_exceeds_the_size_limit():
+    # MAX_SEAT_MAP_SEATS (schemas.py) only bounds seat count, not the combined
+    # serialized byte size -- section/row/seat names allow up to 100 chars each,
+    # so a large venue can still overflow aiokafka's wire limit. This must be
+    # caught here with a clean 422, not deep inside the Kafka client's send.
+    producer = AsyncMock()
+    event = make_event()
+    event_producer = EventProducer(producer, TOPIC)
+
+    huge_seat_map = SeatMap(
+        event_id=event.id,
+        sections=[
+            SeatMapSection(
+                name="S" * 100,
+                price_cents=2500,
+                rows=[SeatMapRow(name="R" * 100, seats=[Seat(label="L" * 100, x=0, y=0) for _ in range(5000)])],
+            )
+        ],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await event_producer.publish_upserted(event, huge_seat_map)
+
+    assert exc_info.value.status_code == 422
+    producer.send_and_wait.assert_not_awaited()
+
+
+def test_max_event_message_bytes_stays_comfortably_under_aiokafkas_default_limit():
+    aiokafka_default_max_request_size = 1_048_576
+    assert MAX_EVENT_MESSAGE_BYTES < aiokafka_default_max_request_size

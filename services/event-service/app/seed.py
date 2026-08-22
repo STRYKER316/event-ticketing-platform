@@ -1,25 +1,39 @@
 import asyncio
-import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import structlog
+from shared_auth import Principal
 
-from app.api.schemas import Seat, SeatMap, SeatMapRow, SeatMapSection
-from app.core import configure_logging, get_mongo_db, get_session_factory
+from app.api.schemas import EventCreate, Seat, SeatMapRow, SeatMapSection, SeatMapUpsert
+from app.core import close_kafka_producer, configure_logging, get_mongo_db, get_session_factory
 from app.db.event_repository import EventRepository
-from app.db.models import Event, EventStatus, Performer, Venue
-from app.db.seat_map_repository import SeatMapRepository
+from app.db.models import Performer, Venue
+from app.kafka.producers import get_event_producer
+from app.logic.event_manager import EventManager
 
 logger = structlog.get_logger()
 
-SEED_ORGANIZER_ID = "seed-organizer"
+SEED_ORGANIZER = Principal(subject="seed-organizer", roles=["organizer"])
 
 
-def _rectangular_seat_map(event_id: uuid.UUID, rows: int, seats_per_row: int) -> SeatMap:
-    sections = [
+@dataclass
+class _SeedEvent:
+    title: str
+    description: str
+    start_time: datetime
+    venue_index: int
+    performer_indices: list[int]
+    seat_rows: int
+    seats_per_row: int
+    price_cents: int = 2500
+
+
+def _seat_map_sections(rows: int, seats_per_row: int, price_cents: int) -> list[SeatMapSection]:
+    return [
         SeatMapSection(
             name="General",
-            price_cents=2500,
+            price_cents=price_cents,
             rows=[
                 SeatMapRow(
                     name=str(row),
@@ -29,7 +43,6 @@ def _rectangular_seat_map(event_id: uuid.UUID, rows: int, seats_per_row: int) ->
             ],
         )
     ]
-    return SeatMap(event_id=event_id, sections=sections)
 
 
 async def seed(session_factory, mongo_db) -> None:
@@ -52,57 +65,81 @@ async def seed(session_factory, mongo_db) -> None:
         await session.flush()
 
         now = datetime.now(timezone.utc)
-        events = [
-            Event(
+        # All start times are in the future: EventManager.publish_event now rejects
+        # publishing an event whose start_time has already passed (mirrors the
+        # EventCreate/EventUpdate submission-time check), so a seeded "already
+        # happened" demo event is no longer publishable through the real path.
+        seed_events = [
+            _SeedEvent(
                 title="Wandering Notes: Reunion Tour",
                 description="First show in five years.",
-                start_time=now - timedelta(days=10),
-                end_time=now - timedelta(days=10) + timedelta(hours=3),
-                status=EventStatus.PUBLISHED,
-                organizer_id=SEED_ORGANIZER_ID,
-                venue_id=venues[0].id,
+                start_time=now + timedelta(days=7),
+                venue_index=0,
+                performer_indices=[0],
+                seat_rows=10,
+                seats_per_row=20,
             ),
-            Event(
+            _SeedEvent(
                 title="Philharmonic: Spring Concert",
                 description="An evening of classical favorites.",
                 start_time=now + timedelta(days=14),
-                end_time=now + timedelta(days=14) + timedelta(hours=2),
-                status=EventStatus.PUBLISHED,
-                organizer_id=SEED_ORGANIZER_ID,
-                venue_id=venues[1].id,
+                venue_index=1,
+                performer_indices=[1],
+                seat_rows=8,
+                seats_per_row=15,
             ),
-            Event(
+            _SeedEvent(
                 title="Comedy Night Live: Spring Showcase",
                 description="Five comedians, one stage.",
                 start_time=now + timedelta(days=30),
-                end_time=now + timedelta(days=30) + timedelta(hours=2),
-                status=EventStatus.PUBLISHED,
-                organizer_id=SEED_ORGANIZER_ID,
-                venue_id=venues[1].id,
+                venue_index=1,
+                performer_indices=[2],
+                seat_rows=6,
+                seats_per_row=12,
             ),
         ]
-        events[0].performers = [performers[0]]
-        events[1].performers = [performers[1]]
-        events[2].performers = [performers[2]]
-        session.add_all(events)
-        await session.commit()
 
-        seat_map_repo = SeatMapRepository(mongo_db)
-        seat_map = _rectangular_seat_map(events[0].id, rows=10, seats_per_row=20)
-        await seat_map_repo.upsert(seat_map)
+        # Routed through the real EventManager create/upsert-seat-map/publish path
+        # (not direct DB rows) so a fresh seed actually reaches Search (via Kafka)
+        # and Booking Service (Ticket provisioning) — matching what a real organizer
+        # publishing an event through the API produces, not just rows that claim
+        # status="published" with nothing downstream ever notified.
+        producer = await get_event_producer()
+        manager = EventManager(session, mongo_db, producer)
+        for spec in seed_events:
+            created = await manager.create_event(
+                SEED_ORGANIZER,
+                EventCreate(
+                    title=spec.title,
+                    description=spec.description,
+                    start_time=spec.start_time,
+                    end_time=spec.start_time + timedelta(hours=2),
+                    venue_id=venues[spec.venue_index].id,
+                    performer_ids=[performers[i].id for i in spec.performer_indices],
+                ),
+            )
+            await manager.upsert_seat_map(
+                SEED_ORGANIZER,
+                created.id,
+                SeatMapUpsert(sections=_seat_map_sections(spec.seat_rows, spec.seats_per_row, spec.price_cents)),
+            )
+            await manager.publish_event(SEED_ORGANIZER, created.id)
 
         logger.info(
             "seed_completed",
             venues=len(venues),
             performers=len(performers),
-            events=len(events),
-            seat_maps=1,
+            events=len(seed_events),
+            seat_maps=len(seed_events),
         )
 
 
 async def main() -> None:
     configure_logging()
-    await seed(get_session_factory(), get_mongo_db())
+    try:
+        await seed(get_session_factory(), get_mongo_db())
+    finally:
+        await close_kafka_producer()
 
 
 if __name__ == "__main__":

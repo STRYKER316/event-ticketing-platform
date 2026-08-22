@@ -6,7 +6,7 @@ from cryptography.hazmat.primitives import serialization
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
-from shared_auth import JWKSFetchError, configure, get_current_user, require_role
+from shared_auth import JWKSFetchError, configure, get_current_user, get_current_user_optional, require_role
 from shared_auth.jwks import JWKSCache
 from tests.unit.conftest import AUDIENCE, ISSUER, KID, make_raw_token, make_token
 
@@ -216,3 +216,30 @@ async def test_jwks_unreachable_returns_503(settings, rsa_keypair):
         deps._jwks_cache = None
 
     assert exc_info.value.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_optional_current_user_returns_none_with_no_credentials():
+    assert await get_current_user_optional(None) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_auth")
+async def test_optional_current_user_returns_principal_with_valid_credentials(rsa_keypair):
+    token = make_token(rsa_keypair, roles=["organizer"])
+
+    principal = await get_current_user_optional(_creds(token))
+
+    assert principal is not None
+    assert principal.subject == "user-123"
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_auth")
+async def test_optional_current_user_rejects_invalid_credentials(rsa_keypair):
+    token = make_token(rsa_keypair, exp_delta=-60)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user_optional(_creds(token))
+
+    assert exc_info.value.status_code == 401

@@ -118,21 +118,21 @@ async def test_non_owning_organizer_cannot_upsert_seat_map():
     manager._seat_maps.upsert.assert_not_awaited()
 
 
-async def test_seat_map_upsert_republishes_a_published_event():
+async def test_seat_map_upsert_rejected_once_event_is_published():
+    # Booking Service may already have provisioned Ticket rows from the current
+    # seat map once PUBLISHED (§7.2) — mutating it in place is refused the same
+    # way delete is, rather than silently republished.
     event = make_event()
     event.status = EventStatus.PUBLISHED
     manager = make_manager(event)
-    # No manager._seat_maps.get_by_event_id override needed: upsert_seat_map
-    # hands _republish the seat map it just upserted directly, so the
-    # republish path never re-fetches from Mongo.
     user = Principal(subject=OWNER_SUBJECT, roles=["organizer"])
 
-    await manager.upsert_seat_map(user, event.id, SEAT_MAP_PAYLOAD)
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.upsert_seat_map(user, event.id, SEAT_MAP_PAYLOAD)
 
-    manager._producer.publish_upserted.assert_awaited_once()
-    published_event, published_seat_map = manager._producer.publish_upserted.await_args.args
-    assert published_event is event
-    assert published_seat_map.sections[0].name == "A"
+    assert exc_info.value.status_code == 409
+    manager._seat_maps.upsert.assert_not_awaited()
+    manager._producer.publish_upserted.assert_not_awaited()
 
 
 async def test_delete_reports_not_found_when_a_concurrent_delete_won_the_race():
@@ -175,3 +175,94 @@ async def test_update_rejects_end_time_before_existing_start_time():
         await manager.update_event(user, event.id, EventUpdate(end_time=event.start_time - timedelta(hours=1)))
 
     assert exc_info.value.status_code == 422
+
+
+# --- DRAFT visibility scoping (§15) ---
+# A DRAFT event's existence and full seat map must not be readable by
+# anyone but its owning organizer, even by guessing the event ID.
+
+
+async def test_draft_event_is_hidden_from_non_owning_organizer():
+    event = make_event()
+    manager = make_manager(event)
+    user = Principal(subject=OTHER_ORGANIZER_SUBJECT, roles=["organizer"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.get_event(event.id, user)
+
+    assert exc_info.value.status_code == 404
+
+
+async def test_draft_event_is_hidden_from_an_anonymous_caller():
+    event = make_event()
+    manager = make_manager(event)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.get_event(event.id, None)
+
+    assert exc_info.value.status_code == 404
+
+
+async def test_draft_event_is_visible_to_its_owning_organizer():
+    event = make_event()
+    manager = make_manager(event)
+    user = Principal(subject=OWNER_SUBJECT, roles=["organizer"])
+
+    result = await manager.get_event(event.id, user)
+
+    assert result.id == event.id
+
+
+async def test_draft_seat_map_is_hidden_from_non_owning_organizer_without_ever_querying_mongo():
+    event = make_event()
+    manager = make_manager(event)
+    user = Principal(subject=OTHER_ORGANIZER_SUBJECT, roles=["organizer"])
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.get_seat_map(event.id, user)
+
+    assert exc_info.value.status_code == 404
+    manager._seat_maps.get_by_event_id.assert_not_awaited()
+
+
+async def test_draft_seat_map_is_hidden_from_an_anonymous_caller():
+    event = make_event()
+    manager = make_manager(event)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await manager.get_seat_map(event.id, None)
+
+    assert exc_info.value.status_code == 404
+    manager._seat_maps.get_by_event_id.assert_not_awaited()
+
+
+async def test_update_omitting_description_leaves_it_unchanged():
+    event = make_event()
+    event.description = "Original description"
+    manager = make_manager(event)
+    user = Principal(subject=OWNER_SUBJECT, roles=["organizer"])
+
+    result = await manager.update_event(user, event.id, EventUpdate(title="Retitled"))
+
+    assert result.description == "Original description"
+
+
+async def test_update_with_explicit_null_description_clears_it():
+    event = make_event()
+    event.description = "Original description"
+    manager = make_manager(event)
+    user = Principal(subject=OWNER_SUBJECT, roles=["organizer"])
+
+    result = await manager.update_event(user, event.id, EventUpdate(description=None))
+
+    assert result.description is None
+
+
+async def test_published_event_is_visible_to_anyone():
+    event = make_event()
+    event.status = EventStatus.PUBLISHED
+    manager = make_manager(event)
+
+    result = await manager.get_event(event.id, None)
+
+    assert result.id == event.id

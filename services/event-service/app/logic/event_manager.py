@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime, timezone
 
 import structlog
 from fastapi import HTTPException, status
@@ -50,8 +51,12 @@ class EventManager:
         sort_field: EventSortField,
         sort_order: SortOrder,
     ) -> EventListResponse:
-        events = await self._events.list(limit, offset, sort_field.value, sort_order is SortOrder.DESC)
-        total = await self._events.count()
+        # Public listing (§15): DRAFT events are never visible here, only to
+        # their owning organizer via a direct GET /events/{id} — see get_event.
+        events = await self._events.list(
+            limit, offset, sort_field.value, sort_order is SortOrder.DESC, status=EventStatus.PUBLISHED
+        )
+        total = await self._events.count(status=EventStatus.PUBLISHED)
         return EventListResponse(
             items=[EventResponse.model_validate(event) for event in events],
             total=total,
@@ -59,16 +64,18 @@ class EventManager:
             offset=offset,
         )
 
-    async def get_event(self, event_id: uuid.UUID) -> EventResponse:
+    async def get_event(self, event_id: uuid.UUID, user: Principal | None = None) -> EventResponse:
         event = await self._events.get_by_id(event_id)
         if event is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
+        self._check_visible(event, user)
         return EventResponse.model_validate(event)
 
-    async def get_seat_map(self, event_id: uuid.UUID) -> SeatMap:
+    async def get_seat_map(self, event_id: uuid.UUID, user: Principal | None = None) -> SeatMap:
         event = await self._events.get_by_id(event_id)
         if event is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
+        self._check_visible(event, user)
         seat_map = await self._seat_maps.get_by_event_id(event_id)
         if seat_map is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "seat map not found")
@@ -76,10 +83,9 @@ class EventManager:
 
     async def upsert_seat_map(self, user: Principal, event_id: uuid.UUID, payload: SeatMapUpsert) -> SeatMap:
         event = await self._fetch_owned_event(user, event_id)
+        self._check_seat_map_immutable_once_published(event)
         seat_map = SeatMap(event_id=event_id, sections=payload.sections)
         await self._seat_maps.upsert(seat_map)
-        if event.status is EventStatus.PUBLISHED:
-            await self._republish(event, seat_map)
         return seat_map
 
     async def create_event(self, user: Principal, payload: EventCreate) -> EventResponse:
@@ -97,7 +103,7 @@ class EventManager:
         event.performers = performers
         await self._events.create(event)
         await self._session.commit()
-        return await self.get_event(event.id)
+        return await self.get_event(event.id, user)
 
     async def update_event(self, user: Principal, event_id: uuid.UUID, payload: EventUpdate) -> EventResponse:
         event = await self._fetch_owned_event(user, event_id)
@@ -105,21 +111,27 @@ class EventManager:
         await self._session.commit()
         if event.status is EventStatus.PUBLISHED:
             await self._republish(event)
-        return await self.get_event(event.id)
+        return await self.get_event(event.id, user)
 
     async def publish_event(self, user: Principal, event_id: uuid.UUID) -> EventResponse:
         event = await self._fetch_owned_event(user, event_id)
         if event.status is EventStatus.PUBLISHED:
             logger.warning("event_already_published", event_id=str(event_id))
             raise HTTPException(status.HTTP_409_CONFLICT, "event already published")
+        if event.start_time <= datetime.now(timezone.utc):
+            logger.warning("event_publish_start_time_in_past", event_id=str(event_id))
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "event start_time is no longer in the future")
         seat_map = await self._seat_maps.get_by_event_id(event_id)
         if seat_map is None:
             logger.warning("event_publish_missing_seat_map", event_id=str(event_id))
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "cannot publish an event without a seat map")
+        # Publish before commit (matches payment_manager's webhook handler): a
+        # Kafka failure leaves the status mutation uncommitted, so the client
+        # can retry instead of getting stuck behind the already-published 409.
         event.status = EventStatus.PUBLISHED
-        await self._session.commit()
         await self._producer.publish_upserted(event, seat_map)
-        return await self.get_event(event.id)
+        await self._session.commit()
+        return await self.get_event(event.id, user)
 
     async def delete_event(self, user: Principal, event_id: uuid.UUID) -> None:
         event = await self._fetch_owned_event(user, event_id)
@@ -171,7 +183,11 @@ class EventManager:
     async def _apply_update(self, event: Event, payload: EventUpdate) -> None:
         if payload.title is not None:
             event.title = payload.title
-        if payload.description is not None:
+        # description is nullable/clearable, unlike the other fields here (which
+        # are non-nullable on Event, so an explicit null on them is meaningless) —
+        # `is not None` can't tell "omitted" from "explicit null", so this field
+        # alone needs the model_fields_set sentinel to actually support clearing it.
+        if "description" in payload.model_fields_set:
             event.description = payload.description
         if payload.start_time is not None:
             event.start_time = payload.start_time
@@ -197,3 +213,23 @@ class EventManager:
         if event.status is EventStatus.PUBLISHED:
             logger.warning("event_delete_rejected_published", event_id=str(event.id))
             raise HTTPException(status.HTTP_409_CONFLICT, "cannot delete a published event")
+
+    def _check_visible(self, event: Event, user: Principal | None) -> None:
+        # Ownership scoping applied to visibility, not just mutation (§15): a
+        # DRAFT event (pricing, layout, existence) is readable only by its
+        # owning organizer. Return 404 rather than 403 to a non-owner so a
+        # DRAFT event's existence can't be distinguished from a nonexistent
+        # one by enumerating IDs.
+        if event.status is EventStatus.DRAFT and (user is None or event.organizer_id != user.subject):
+            logger.warning("event_visibility_denied", event_id=str(event.id))
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
+
+    def _check_seat_map_immutable_once_published(self, event: Event) -> None:
+        # Once PUBLISHED, Booking Service may already have provisioned Ticket
+        # rows from the current seat map (§7.2) — mutating it in place could
+        # silently orphan or mis-price those tickets. Same refuse-outright
+        # posture as _check_cannot_delete_published, for the same reason
+        # (no channel to check booking_db, §8).
+        if event.status is EventStatus.PUBLISHED:
+            logger.warning("event_seat_map_mutation_rejected_published", event_id=str(event.id))
+            raise HTTPException(status.HTTP_409_CONFLICT, "cannot modify the seat map of a published event")

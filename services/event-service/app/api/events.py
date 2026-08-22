@@ -2,7 +2,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, Query, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from shared_auth import Principal, require_role
+from shared_auth import Principal, get_current_user_optional, require_role
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.schemas import (
@@ -41,21 +41,24 @@ async def list_events(
 @router.get("/events/{event_id}", response_model=EventResponse)
 async def get_event(
     event_id: uuid.UUID,
+    user: Principal | None = Depends(get_current_user_optional),
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
 ) -> EventResponse:
-    """Public — no auth required."""
-    return await EventManager(session, mongo_db).get_event(event_id)
+    """Public — no auth required. A DRAFT event is only visible to its owning
+    organizer (§15); everyone else, including anonymous callers, gets 404."""
+    return await EventManager(session, mongo_db).get_event(event_id, user)
 
 
 @router.get("/events/{event_id}/seat-map", response_model=SeatMap)
 async def get_seat_map(
     event_id: uuid.UUID,
+    user: Principal | None = Depends(get_current_user_optional),
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
 ) -> SeatMap:
-    """Public — no auth required."""
-    return await EventManager(session, mongo_db).get_seat_map(event_id)
+    """Public — no auth required. Same DRAFT visibility scoping as GET /events/{id}."""
+    return await EventManager(session, mongo_db).get_seat_map(event_id, user)
 
 
 @router.put("/events/{event_id}/seat-map", response_model=SeatMap)
@@ -65,12 +68,13 @@ async def upsert_seat_map(
     user: Principal = Depends(require_role("organizer")),
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
-    producer: EventProducer = Depends(get_event_producer),
 ) -> SeatMap:
     """Organizer-only, ownership-scoped: must own the event the seat map belongs to.
-    Upsert semantics (§15 delta). If the event is already PUBLISHED, re-publishes so
-    Kafka/Search stay in sync with the new seat list."""
-    return await EventManager(session, mongo_db, producer).upsert_seat_map(user, event_id, payload)
+    Upsert semantics (§15 delta). Rejected with 409 once the event is PUBLISHED —
+    Booking Service may already have provisioned Ticket rows from the current seat
+    list, so mutating it in place is refused the same way delete is (organizers
+    must unpublish first; not yet supported)."""
+    return await EventManager(session, mongo_db).upsert_seat_map(user, event_id, payload)
 
 
 @router.get("/venues/{venue_id}", response_model=VenueResponse)
@@ -135,10 +139,11 @@ async def delete_event(
     user: Principal = Depends(require_role("organizer")),
     session: AsyncSession = Depends(get_session),
     mongo_db: AsyncIOMotorDatabase = Depends(get_mongo_db),
-    producer: EventProducer = Depends(get_event_producer),
 ) -> None:
     """Organizer-only, ownership-scoped: must own the event being deleted.
     409 if the event is PUBLISHED — Booking Service may hold Ticket/Booking
     rows against it and Event Service has no channel to check (§8), so
-    deletion is refused outright rather than conditionally."""
-    await EventManager(session, mongo_db, producer).delete_event(user, event_id)
+    deletion is refused outright rather than conditionally. Deletion only
+    ever touches a DRAFT event's own rows — no Kafka producer dependency
+    here, so an unreachable broker can't block deleting a DRAFT event."""
+    await EventManager(session, mongo_db).delete_event(user, event_id)

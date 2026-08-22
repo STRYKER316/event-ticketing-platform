@@ -3,12 +3,16 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from functools import lru_cache
+from typing import Literal
 
 import structlog
 from aiokafka import AIOKafkaProducer
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
 class Settings(BaseSettings):
@@ -26,10 +30,18 @@ class Settings(BaseSettings):
     mongo_user: str = "root"
     mongo_password: str = "changeme"
     mongo_event_db_name: str = "event_service"
-    log_level: str = "INFO"
+    log_level: LogLevel = "INFO"
 
     kafka_bootstrap_servers: str = "localhost:9094"
     events_topic: str = "event.events"
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def _uppercase_log_level(cls, value: object) -> object:
+        # Preserves the pre-existing case-insensitive env var behavior
+        # (configure_logging used to .upper() at lookup time) while still
+        # rejecting a genuinely unrecognized value at startup via the Literal.
+        return value.upper() if isinstance(value, str) else value
 
     @property
     def database_url(self) -> str:
@@ -80,7 +92,7 @@ def configure_logging() -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(formatter)
 
-    level = logging.getLevelNamesMapping().get(get_settings().log_level.upper(), logging.INFO)
+    level = logging.getLevelNamesMapping()[get_settings().log_level]
 
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]

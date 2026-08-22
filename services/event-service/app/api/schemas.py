@@ -156,7 +156,7 @@ class SeatMapSection(BaseModel):
     # Organizer-set, per section (§9/§16 decisions-log amendments, 2026-08-17) — e.g.
     # floor vs. balcony pricing. Carried through the event-carried Kafka payload
     # (§7.2, see kafka/producers.py) into Booking Service's Ticket.price_cents.
-    price_cents: int = Field(gt=0)
+    price_cents: int = Field(gt=0, le=POSTGRES_INT4_MAX)
 
 
 class SeatMap(BaseModel):
