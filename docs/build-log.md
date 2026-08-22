@@ -4004,3 +4004,44 @@ All fixes live re-verified: `booking-service` 80/80, `payment-service`
 correct result, `bash -n` clean.
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-22 — Before-push checklist: the commit-message violation flagged above got fixed after all
+
+Ran the before-push checklist (working tree clean; fast-forward confirmed
+against `origin/main`; secret/credential scan across `git log -p
+origin/main..HEAD`, clean — no literal credentials, `reset-demo-state.sh`
+only interpolates `.env` vars; Academic-presentation full scan, clean —
+no genuine emoji, only the pre-existing 76-instance `✓` dingbat convention
+predating this phase; no casual language, no stray TODO/FIXME/XXX, no
+LICENSE added, single commit author as expected). This is the "major
+external-facing moment" the Academic-presentation section calls for a
+full scan before — a push, concretely.
+
+That checklist's own secret/message scan is exactly where the previous
+entry said it would deliberately flag the `14ad7d6`/`d8f3cc0` commit-
+message violation rather than fix it immediately. Having actually reached
+that gate now, with nothing pushed yet and every commit in the range
+still purely local, the reword was low-risk enough to just do: `git
+filter-branch --msg-filter` (same tool as the Phase 7 precedent),
+targeting only those two commits' subjects — `14ad7d6` → "docs: append
+build-log entry for the kickoff-planning and redelivery-test session"
+(dropped both the `P9.T1` reference and the phase/task tag), `d8f3cc0` →
+"docs: update architecture.html to current state" (dropped "Phase 9").
+Verified via `git diff` before/after the rewrite that the two ranges are
+byte-identical in content — only the two targeted messages changed, and
+every other commit's hash was preserved exactly (filter-branch reproduces
+an unchanged commit's original hash when its tree/parent/message/author
+are all unchanged, which held for every commit except the two targeted
+and everything after them). New hashes for the range, superseding the
+ones cited above and in the CHECKPOINT entry: `59b2558` (unchanged),
+`a009833` (unchanged), `13082ee` (was `14ad7d6`), `e4b61cb` (was
+`8b62de5`), `9e6dc65` (was `fd1fac3`), `b89f7e0` (was `e1258fe`),
+`594c542` (was `d8f3cc0`), `388701a` (was `190b7bb`), `b9ceb15` (was
+`d52ea99`). Removed the filter-branch backup refs and a temporary safety
+tag afterward, same cleanup discipline the Phase 7 precedent used.
+
+Ready to push once the user confirms — per this project's own standing
+rule (and the general one), a push always gets an explicit confirmation
+regardless of how clean this checklist comes back.
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.
