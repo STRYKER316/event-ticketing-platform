@@ -29,8 +29,7 @@ class BookingCancelledMessage(BaseModel):
 
 
 class NotificationAction(enum.Enum):
-    # BOOKING_CONFIRMED is booking-service's own producer-side member
-    # (Phase 5, app/kafka/schemas.py there), not sent from here.
+    # BOOKING_CONFIRMED is booking-service's own producer-side member (Phase 5), not sent from here.
     PAYMENT_CONFIRMED = "payment_confirmed"
     REFUND_FAILED = "refund_failed"
 
@@ -41,6 +40,5 @@ class NotificationMessage(BaseModel):
 
     action: NotificationAction
     booking_id: uuid.UUID
-    # PAYMENT_CONFIRMED has no natural reason text — only REFUND_FAILED
-    # supplies one (the Stripe error message).
+    # PAYMENT_CONFIRMED has no natural reason text — only REFUND_FAILED supplies one (the Stripe error message).
     reason: str | None = None

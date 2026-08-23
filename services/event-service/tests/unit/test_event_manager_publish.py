@@ -81,9 +81,7 @@ async def test_publish_already_published_is_rejected():
 
 
 async def test_publish_rejects_an_event_whose_start_time_has_passed():
-    # EventCreate/EventUpdate only check start_time is future at submission
-    # time; a DRAFT event left sitting past its start_time must still be
-    # rejected at publish time, not silently published.
+    # EventCreate/EventUpdate only check start_time at submission time — a DRAFT left sitting past it must still be rejected at publish time.
     event = make_draft_event()
     event.start_time = datetime.now(timezone.utc) - timedelta(minutes=1)
     manager = make_manager(event, seat_map=SEAT_MAP)

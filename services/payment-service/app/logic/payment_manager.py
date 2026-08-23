@@ -28,13 +28,7 @@ class PaymentManager:
     async def create_charge(self, payload: ChargeRequest) -> PaymentResponse:
         payment = await self._resolve_payment_row(payload)
         if payment.stripe_charge_id is None:
-            # A row with no stripe_charge_id yet means either this is a
-            # brand-new attempt, or a previous one never actually reached
-            # Stripe (see _submit_to_stripe's error path) — either way this
-            # genuinely (re)submits, rather than getting stuck replaying a
-            # charge Stripe never received. A row that already has one is
-            # skipped entirely: idempotent by construction (§9), Stripe
-            # already accepted this idempotency_key, no second API call.
+            # No stripe_charge_id yet means new attempt or one that never reached Stripe — genuinely (re)submit. Already set means Stripe accepted this idempotency_key: skip, idempotent by construction (§9).
             await self._submit_to_stripe(payment, payload)
             await self._session.commit()
         else:
@@ -57,11 +51,7 @@ class PaymentManager:
             await self._session.commit()
             return payment
         except IntegrityError:
-            # Lost a race to a concurrent first-time charge attempt for the
-            # same booking — the unique index on booking_id caught it. Use
-            # the winner's row instead of erroring out; create_charge's
-            # caller-side check on stripe_charge_id decides whether it
-            # still needs submitting.
+            # Lost a race to a concurrent first-time charge for the same booking (unique index on booking_id) — use the winner's row instead of erroring out.
             await self._session.rollback()
             winner = await self._payments.get_by_booking_id(payload.booking_id)
             if winner is None:
@@ -71,12 +61,7 @@ class PaymentManager:
             return winner
 
     async def _submit_to_stripe(self, payment: Payment, payload: ChargeRequest) -> None:
-        # This call only *initiates* the charge attempt (§9 amendment) —
-        # confirmation of success/failure is webhook-driven (see
-        # payments.py's webhook route), even though Stripe test mode often
-        # resolves a PaymentIntent synchronously. Treating the webhook as the
-        # sole source of truth is what makes a lost synchronous response (a
-        # network blip after Stripe already processed the charge) safe.
+        # This call only *initiates* the charge (§9 amendment) — confirmation is webhook-driven, which is what makes a lost synchronous response (a network blip after Stripe processes it) safe.
         try:
             intent = await stripe.PaymentIntent.create_async(
                 amount=payment.amount_cents,
@@ -87,10 +72,7 @@ class PaymentManager:
                 automatic_payment_methods={"enabled": True, "allow_redirects": "never"},
             )
         except stripe.error.StripeError as exc:
-            # Warning, not error — same log-level-discipline reasoning as
-            # _submit_refund_to_stripe's identical exception type below: a
-            # decline or Stripe-side failure is expected/handled, not a
-            # system incident.
+            # Warning, not error — a decline or Stripe-side failure is expected/handled, not a system incident.
             logger.warning("stripe_charge_submission_failed", booking_id=str(payment.booking_id), error=str(exc))
             raise HTTPException(status.HTTP_502_BAD_GATEWAY, "payment provider unreachable") from exc
         payment.stripe_charge_id = intent.id
@@ -103,11 +85,12 @@ class PaymentManager:
     ) -> None:
         """Webhook-driven confirmation (§9) — this is the sole source of
         truth for a Payment's terminal status, not create_charge()'s
-        synchronous Stripe response. Idempotent by construction (§7's
-        general rule, applied to a webhook the same as a Kafka consumer):
-        a rowcount-gated conditional UPDATE only transitions a Payment
+        synchronous Stripe response. Idempotent by construction: a
+        rowcount-gated conditional UPDATE only transitions a Payment
         that's still PENDING, so a redelivered webhook — or two overlapping
-        deliveries racing each other — can't both win it.
+        deliveries racing each other — can't both win it. This is the same
+        general rule decisions-log §7 sets for a Kafka consumer, applied
+        here to a webhook.
 
         Publishes *before* committing — the reverse order would let a
         Kafka-publish failure strand a Payment in its new terminal status
@@ -126,9 +109,7 @@ class PaymentManager:
             logger.warning("webhook_payment_not_found", stripe_charge_id=intent_id)
             return
         if new_status is PaymentStatus.SUCCEEDED:
-            # Also accepts FAILED->SUCCEEDED: a late genuine success must
-            # still confirm the booking, not be dropped as a no-op just
-            # because an earlier webhook already parked the row in FAILED.
+            # Also accepts FAILED->SUCCEEDED: a late genuine success must still confirm the booking, not drop as a no-op.
             transitioned = await self._payments.transition_to_succeeded(intent_id)
         else:
             transitioned = await self._payments.transition_if_pending(intent_id, new_status)
@@ -139,8 +120,7 @@ class PaymentManager:
             return
         payment.status = new_status
         if new_status is PaymentStatus.SUCCEEDED:
-            # Integration point #3 (§7 point 3, Phase 5) — both must finish
-            # before commit; gathered instead of sequential awaits.
+            # Integration point #3 (§7 point 3) — both must finish before commit; gathered instead of sequential.
             await asyncio.gather(
                 producer.publish_outcome(payment), notification_producer.publish_payment_confirmed(payment.booking_id)
             )
@@ -196,15 +176,7 @@ class PaymentManager:
                 idempotency_key=f"{payment.booking_id}-refund",
             )
         except stripe.error.StripeError as exc:
-            # Refund-failure path (§22's explicit scope boundary — no
-            # re-lock, no rollback): logged as a warning, not an error —
-            # this is Stripe/the card network declining, an expected,
-            # handled failure per the log-level-discipline convention, not
-            # a system incident. Payment.status stays SUCCEEDED so a future
-            # redelivery or manual retry can still attempt the refund
-            # again; do not re-raise, a Kafka consumer's per-message
-            # exception handling shouldn't kill the background consumer
-            # task over a Stripe-side failure that's already been surfaced.
+            # Refund failure is logged, not rolled back: Payment.status stays SUCCEEDED so a retry can still refund (decisions-log §22).
             logger.warning("stripe_refund_submission_failed", booking_id=str(payment.booking_id), error=str(exc))
             await self._publish_refund_failed_notification(payment.booking_id, str(exc), notification_producer)
             return
@@ -215,15 +187,7 @@ class PaymentManager:
     async def _publish_refund_failed_notification(
         self, booking_id: uuid.UUID, reason: str, notification_producer: NotificationProducer
     ) -> None:
-        # A failure here (broker down, etc.) must not escape and be
-        # misattributed by the consumer's retry wrapper as a DB-write
-        # failure — it would trigger a pointless re-submission to Stripe on
-        # retry (safe, same idempotency key, but
-        # wasteful) and, after the retry budget is exhausted, silently lose
-        # the notification with a misleading log event name. Logged and
-        # swallowed instead: the refund failure itself is already recorded
-        # by the warning above; losing only the notification is the
-        # narrower, honestly-scoped failure.
+        # Logged and swallowed, not re-raised — the refund failure is already recorded above; letting this escape would misattribute it as a DB-write failure to the consumer's retry wrapper.
         try:
             await notification_producer.publish_refund_failed(booking_id, reason)
         except Exception:

@@ -21,10 +21,7 @@ class _Runnable(Protocol):
 
 @pytest.fixture(scope="session")
 def kafka_container() -> "KafkaContainer":
-    # Confluent image + .with_kraft() — the compose stack's apache/kafka
-    # image isn't compatible with testcontainers' KafkaContainer (CLAUDE.md's
-    # corrected Conventions note), same combination every other service's
-    # suite already uses.
+    # Must be the Confluent image, not apache/kafka — its bootstrap scripts aren't compatible with testcontainers' KafkaContainer.
     with KafkaContainer("confluentinc/cp-kafka:7.6.0").with_kraft() as container:
         yield container
 

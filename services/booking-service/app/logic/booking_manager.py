@@ -93,14 +93,7 @@ class BookingManager:
             raise HTTPException(status.HTTP_409_CONFLICT, "seat unavailable")
 
     async def _create_booking_row(self, user: Principal, ticket: Ticket) -> Booking:
-        # Captured before any commit/rollback: session.rollback() below expires
-        # every attribute on `ticket` (an ORM instance bound to this session),
-        # and accessing an expired attribute triggers an implicit lazy-reload
-        # that isn't safely awaitable from inside this except block — it
-        # raises sqlalchemy.exc.MissingGreenlet instead, turning a clean 409
-        # into an unhandled 500. Found live: a stale PENDING booking left over
-        # from earlier testing (ticket.status said AVAILABLE, but an old
-        # active booking row still referenced it) hit this exact branch.
+        # Captured before rollback: rollback() expires `ticket`'s attributes, and re-touching one from inside except raises MissingGreenlet instead of returning it, turning a clean 409 into a 500.
         ticket_id = ticket.id
         booking = Booking(
             user_subject=user.subject, event_id=ticket.event_id, ticket_id=ticket_id, status=BookingStatus.PENDING
@@ -109,11 +102,7 @@ class BookingManager:
             await self._bookings.create(booking)
             await self._session.commit()
         except IntegrityError:
-            # The partial unique index (uq_bookings_active_ticket) caught a
-            # race the hold strategy somehow missed — defense-in-depth, not
-            # the primary correctness mechanism. Compensate by releasing the
-            # hold we just (wrongly) acquired, not by attempting a
-            # distributed rollback (no distributed transactions, §8).
+            # uq_bookings_active_ticket caught a race the hold strategy missed (defense-in-depth); compensate by releasing the wrongly-acquired hold, not a distributed rollback (§8).
             await self._session.rollback()
             await self._hold_strategy.release_hold(ticket_id)
             logger.warning("booking_integrity_race_lost", ticket_id=str(ticket_id))
@@ -162,8 +151,7 @@ class BookingManager:
             response = await http_client.post(url, json=payload, headers={"Authorization": f"Bearer {bearer_token}"})
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            # Payment Service answered directly (distinct from connection/timeout below).
-            # Warning, not error — mirrors payment-service's own level for this rejection.
+            # Payment Service answered directly (vs. connection/timeout below); warning, not error, mirrors payment-service's own level for this rejection.
             logger.warning(
                 "pay_booking_payment_service_rejected",
                 booking_id=str(booking.id),
@@ -216,11 +204,7 @@ class BookingManager:
             logger.warning(not_found_event, booking_id=str(booking_id))
             raise HTTPException(status.HTTP_404_NOT_FOUND, "booking not found")
         if booking.user_subject != user.subject:
-            # 404, not 403: unlike an event, a booking has no publicly
-            # visible state at all (no GET route, no public listing), so
-            # its existence must stay hidden from every non-owner, not just
-            # its mutation blocked — same reasoning as event-service's
-            # _fetch_owned_event for a DRAFT event.
+            # 404, not 403: a booking has no publicly visible state at all, so its existence must stay hidden from non-owners, not just its mutation blocked (same as event-service's DRAFT-event handling).
             logger.warning(ownership_denied_event, booking_id=str(booking_id), subject=user.subject)
             raise HTTPException(status.HTTP_404_NOT_FOUND, "booking not found")
         if booking.status is not expected_status:
@@ -231,11 +215,7 @@ class BookingManager:
     async def _check_before_event_start(self, booking: Booking) -> None:
         start_time = await self._events.get_start_time(booking.event_id)
         if start_time is None:
-            # Fail closed, not open: a missing Event row (only reachable for
-            # a booking whose event predates this table, since
-            # ProvisioningConsumer writes it in the same transaction as the
-            # Ticket going forward) must not silently skip the cutoff check
-            # §22 amendment #2 exists to enforce.
+            # Fail closed: a missing Event row (only reachable for a booking predating this table) must not silently skip the cancellation-cutoff check (decisions-log §22 amendment #2).
             logger.warning("cancel_booking_no_event_start_time", booking_id=str(booking.id))
             raise HTTPException(status.HTTP_409_CONFLICT, "cannot verify the event's start time")
         if start_time <= datetime.now(timezone.utc):
@@ -247,19 +227,13 @@ class BookingManager:
     ) -> None:
         transitioned = await self._bookings.transition_if_confirmed(booking.id, BookingStatus.CANCELLED)
         if not transitioned:
-            # Lost a race to a concurrent cancel or expiry sweep — same
-            # defense-in-depth reasoning as _create_booking_row's own
-            # integrity-race handling.
+            # Lost a race to a concurrent cancel or expiry sweep — same defense-in-depth reasoning as _create_booking_row's integrity-race handling.
             logger.warning("cancel_booking_race_lost", booking_id=str(booking.id))
             raise HTTPException(status.HTTP_409_CONFLICT, "booking is not confirmed")
         booking.status = BookingStatus.CANCELLED
         await self._hold_strategy.release_booking(booking.ticket_id)
         booking_id = booking.id
-        # Commit before publish, unlike payment_manager's publish-before-commit
-        # webhook ordering — that's safe only because Stripe's own redelivery
-        # guarantees a retry on an uncommitted failure; a plain HTTP cancel has
-        # no such external redelivery, so publishing first risked a refund
-        # firing against a booking that then rolled back to CONFIRMED.
+        # Commit before publish, unlike payment_manager's publish-before-commit: Stripe redelivery covers an uncommitted failure there, but a plain HTTP cancel has no such redelivery, so publishing first risked a refund against a booking that rolled back.
         await self._session.commit()
         try:
             await cancelled_producer.publish_cancelled(booking_id)

@@ -21,20 +21,13 @@ from app.logic.helpers.hold_strategy_factory import get_hold_strategy
 
 logger = structlog.get_logger()
 
-# A transient DB error (connection blip, pool exhaustion, brief deadlock) is
-# retried in place a few times before this consumer gives up on a message —
-# without this, run()'s per-record offset commit (see enable_auto_commit
-# below) would advance straight past a message whose write never actually
-# succeeded, silently losing that event's tickets on the very first hiccup.
+# Retried so a transient DB error doesn't let the per-record offset commit advance past a message whose write never actually succeeded.
 DB_WRITE_MAX_ATTEMPTS = 3
 DB_WRITE_RETRY_BACKOFF_SECONDS = 1.0
 
 _T = TypeVar("_T")
 
-# A transient broker error on the booking-confirmed notification publish is
-# retried in place before giving up — same shape as _run_with_retry, applied
-# to a Kafka send instead of a DB write (see _publish_confirmation_with_retry
-# for why this runs outside, not inside, the retried DB transaction).
+# Same retry shape as _run_with_retry, applied to a Kafka send instead of a DB write.
 NOTIFICATION_PUBLISH_MAX_ATTEMPTS = 3
 NOTIFICATION_PUBLISH_RETRY_BACKOFF_SECONDS = 1.0
 
@@ -113,15 +106,7 @@ def build_kafka_consumer() -> AIOKafkaConsumer:
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=settings.kafka_consumer_group_id,
         auto_offset_reset="earliest",
-        # Default (True) commits offsets on a background timer regardless of
-        # whether _handle()'s DB write actually finished — a crash between
-        # that timer firing and the write committing would silently drop
-        # tickets instead of safely redelivering them (§7 idempotency relies
-        # on redelivery actually happening). Committing manually, once per
-        # record, after _handle() returns, guarantees a genuine process
-        # crash mid-write is always safely redelivered. It does not by
-        # itself guarantee a *caught* write failure is retried forever —
-        # see DB_WRITE_MAX_ATTEMPTS in _handle() for that half of the story.
+        # Manual, per-record commit after _handle() finishes — default auto-commit could advance past a write that never actually succeeded.
         enable_auto_commit=False,
     )
 
@@ -142,20 +127,14 @@ class ProvisioningConsumer:
     async def _handle(self, raw: bytes) -> None:
         try:
             payload = json.loads(raw)
-            # payload.get() assumes a JSON object; valid JSON that isn't one
-            # (a bare list/string/number/null) raises AttributeError here,
-            # which must not escape and kill the background consumer task.
+            # payload.get() assumes a JSON object; valid non-object JSON raises AttributeError, caught below rather than killing the consumer task.
             action = KafkaAction(payload.get("action"))
         except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as exc:
             logger.error("provisioning_consumer_message_unparseable", error=str(exc), raw=raw[:500])
             return
 
         if action is KafkaAction.DELETED:
-            # event-service now refuses to delete a PUBLISHED event at all
-            # (see EventManager._check_cannot_delete_published) precisely
-            # because Booking Service may hold Ticket/Booking rows against
-            # it — a DELETED message should never arrive for a provisioned
-            # event in practice. Nothing to do here either way.
+            # event-service refuses to delete a PUBLISHED event (see EventManager._check_cannot_delete_published), so this should never arrive.
             return
 
         try:
@@ -164,10 +143,7 @@ class ProvisioningConsumer:
             logger.error("provisioning_consumer_message_invalid", raw=raw[:500], exc_info=True)
             return
 
-        # event-service only ever publishes an UPSERTED message when the event's
-        # status is PUBLISHED (decisions-log §15 amendment, 2026-08-15) — every
-        # message on this topic already represents a published event, so there is
-        # no separate "is this published" check to make here.
+        # event-service only ever publishes UPSERTED for a PUBLISHED event (§15 amendment) — no separate "is this published" check needed here.
         seats = [(seat.section, seat.row, seat.label, seat.price_cents) for seat in message.seats]
         inserted = await self._write_tickets(message.event_id, message.start_time, seats)
         if inserted is None:
@@ -211,8 +187,7 @@ def build_payment_outcome_consumer() -> AIOKafkaConsumer:
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=settings.payment_outcome_consumer_group_id,
         auto_offset_reset="earliest",
-        # Same reasoning as build_kafka_consumer() above — manual, per-record
-        # offset commit only after _handle() has fully finished.
+        # Same reasoning as build_kafka_consumer() above.
         enable_auto_commit=False,
     )
 
@@ -279,10 +254,7 @@ class PaymentOutcomeConsumer:
             bookings = BookingRepository(session)
             transitioned = await bookings.transition_if_pending(message.booking_id, new_status)
             if transitioned:
-                # Only touch the hold strategy if this call actually won the
-                # transition — a redelivered message that matched zero rows
-                # above must not release/confirm a hold a *different*, later
-                # booking now legitimately holds on the same ticket.
+                # Only touch the hold strategy if this call actually won the transition — a redelivered no-op must not touch a later booking's hold.
                 strategy = get_hold_strategy(session, self._redis)
                 if message.action is PaymentOutcomeAction.SUCCEEDED:
                     await strategy.confirm_hold(message.ticket_id)
@@ -290,11 +262,7 @@ class PaymentOutcomeConsumer:
                     await strategy.release_hold(message.ticket_id)
                 return transitioned, None
             if message.action is PaymentOutcomeAction.SUCCEEDED:
-                # Lost the transition on a SUCCEEDED outcome: a hold-expiry
-                # sweep likely already flipped this booking to EXPIRED, so
-                # the customer was charged but the seat is gone. Look up
-                # the current status so the caller can trigger a refund
-                # instead of silently dropping it.
+                # Lost the transition on SUCCEEDED: likely a hold-expiry sweep already flipped this to EXPIRED — look up status so the caller can refund.
                 current = await bookings.get_by_id(message.booking_id)
                 return transitioned, current.status if current is not None else None
             return transitioned, None
@@ -311,18 +279,10 @@ class PaymentOutcomeConsumer:
         transitioned, current_status = result
 
         if transitioned and message.action is PaymentOutcomeAction.SUCCEEDED:
-            # Integration point #3 (§7 point 3, Phase 5) — best-effort here
-            # on purpose (see docstring above); the booking's CONFIRMED
-            # status has already committed regardless of whether this
-            # succeeds.
+            # Integration point #3 (§7 point 3) — best-effort; the CONFIRMED status has already committed regardless of whether this succeeds.
             await self._publish_confirmation_with_retry(message.booking_id)
         elif not transitioned and current_status is BookingStatus.EXPIRED:
-            # Charged with nothing to show for it: reuse the same
-            # booking.cancelled path (integration point #5, §22) to trigger
-            # a refund rather than inventing a second compensation
-            # mechanism (§8 forbids distributed transactions). Known
-            # residual gap: no DLQ exists for this consumer, so a refund
-            # trigger that exhausts its own retry budget stays unrefunded.
+            # Charged with nothing to show for it: reuse booking.cancelled (integration point #5, §22) to refund rather than a second compensation mechanism (§8). No DLQ here — retry exhaustion drops the refund trigger (decisions-log §26).
             logger.warning(
                 "payment_outcome_succeeded_on_expired_booking_triggering_refund",
                 booking_id=str(message.booking_id),

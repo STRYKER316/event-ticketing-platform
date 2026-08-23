@@ -17,10 +17,7 @@ logger = structlog.get_logger()
 
 
 def _log_if_died(name: str, task: asyncio.Task) -> None:
-    # Same reasoning as booking-service/app/main.py's own helper — a
-    # background task's exception is otherwise only surfaced when the task
-    # object is garbage-collected, which never happens while `lifespan`
-    # holds a live reference to it for the app's whole lifetime.
+    # Same reasoning as booking-service's own helper — otherwise a background task's exception stays silent until garbage-collected.
     if task.cancelled():
         return
     exc = task.exception()

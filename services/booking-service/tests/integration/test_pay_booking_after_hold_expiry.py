@@ -24,11 +24,7 @@ USER = Principal(subject="user-1", roles=[])
 async def test_pay_booking_after_hold_expired_via_real_sweep_409s_without_charging(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
-    # Proves the expired-hold-race guard against a real expiry, not a
-    # mocked booking.status — seeds a genuinely stale PENDING booking, runs
-    # the real sweep mechanism (BookingRepository.expire_stale_pending(),
-    # the same call hold_sweep.py's scheduled job makes) so the booking
-    # actually transitions PENDING -> EXPIRED, then attempts payment.
+    # Proves the expired-hold-race guard against a real expiry (via the actual sweep mechanism), not a mocked booking.status.
     ticket_id = await seed_ticket(db_session_factory)
     async with db_session_factory() as session:
         ticket = await session.get(Ticket, ticket_id)
@@ -45,11 +41,7 @@ async def test_pay_booking_after_hold_expired_via_real_sweep_409s_without_chargi
         booking_id = booking.id
 
     async with db_session_factory() as session:
-        # >=1, not ==1: this sweep is unscoped by design (it's the same
-        # call the real scheduled job makes), so it may also catch a stale
-        # row another test left behind against this shared database — the
-        # per-booking status assertion below is this test's actual
-        # correctness check, not the sweep's own rowcount.
+        # >=1, not ==1: this unscoped sweep may also catch a stale row from another test — the per-booking assertion below is the real check.
         expired = await BookingRepository(session).expire_stale_pending(older_than_seconds=600)
         await session.commit()
     assert expired >= 1

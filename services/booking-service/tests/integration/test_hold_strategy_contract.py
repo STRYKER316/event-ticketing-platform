@@ -14,8 +14,7 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_cron_strategy_satisfies_the_shared_contract(db_session_factory: async_sessionmaker[AsyncSession]):
-    # Same contract already proven fake-only in tests/unit/test_hold_strategy_contract.py
-    # (P3.T3) — this proves CronHoldStrategy satisfies it too, against real Postgres.
+    # Same contract already proven fake-only in tests/unit/test_hold_strategy_contract.py — this proves it against real Postgres.
     ticket_id = await seed_ticket(db_session_factory)
 
     async with db_session_factory() as session:
@@ -66,9 +65,7 @@ async def test_cron_strategy_satisfies_the_shared_contract(db_session_factory: a
 
 
 async def test_redis_strategy_satisfies_the_shared_contract(redis_client: Redis):
-    # Same contract, proven against real Redis — CronHoldStrategy and
-    # RedisHoldStrategy satisfy the identical TicketHoldStrategy interface
-    # despite storing hold state in entirely different places (§6).
+    # Same contract, proven against real Redis — both strategies satisfy the identical interface despite storing hold state very differently (§6).
     ticket_id = uuid.uuid4()
     strategy = RedisHoldStrategy(redis_client)
 

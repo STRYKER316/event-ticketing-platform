@@ -30,9 +30,7 @@ async def test_unknown_action_does_not_raise():
 
 
 async def test_valid_json_non_object_does_not_raise():
-    # payload.get("action") assumes a dict; a bare list/number/string/null is
-    # still valid JSON but has no .get() — this must not escape _handle and
-    # kill the background consumer task.
+    # payload.get("action") assumes a dict; a bare list/number/string/null has no .get() and must not escape _handle.
     consumer = make_consumer()
 
     for non_object_payload in (b'["a", "list"]', b"5", b'"a string"', b"null"):
@@ -40,8 +38,7 @@ async def test_valid_json_non_object_does_not_raise():
 
 
 async def test_invalid_upserted_payload_does_not_raise():
-    # Valid JSON object, action="upserted", but missing required fields
-    # (title, start_time, etc.) — model_validate rejects it, must not raise.
+    # action="upserted" but missing required fields — model_validate rejects it, must not raise.
     consumer = make_consumer()
 
     await consumer._handle(f'{{"action": "upserted", "event_id": "{uuid.uuid4()}"}}'.encode())
@@ -60,13 +57,7 @@ def _upserted_payload(event_id: uuid.UUID) -> bytes:
 
 
 async def test_db_write_failure_does_not_raise_and_retries_every_attempt(monkeypatch):
-    # A well-formed message whose DB write blows up on every attempt
-    # (connection dropped, constraint violation, whatever) must not escape
-    # _handle and kill the background consumer task — see _write_tickets()
-    # in consumers.py. session_factory() raising is the simplest way to
-    # force that path without a real broken database. Zero backoff keeps
-    # this test fast; call-count proves every attempt actually happened
-    # rather than giving up after the first.
+    # A DB write that fails on every attempt must not escape _handle; zero backoff keeps this fast, call-count proves every attempt happened.
     monkeypatch.setattr(consumers, "DB_WRITE_RETRY_BACKOFF_SECONDS", 0)
     call_count = 0
 

@@ -65,9 +65,7 @@ async def test_ttl_expiry_triggers_refresh():
     cache = JWKSCache(_settings(jwks_cache_ttl_seconds=0), client=client)
 
     await cache.get_key("key-1")
-    # TTL is 0 — every lookup is stale, but the min-refetch-interval throttle
-    # (1s) suppresses the immediate second fetch. Bypass it directly to prove
-    # staleness alone would otherwise trigger a refetch.
+    # TTL is 0 so every lookup is stale, but the min-refetch-interval throttle suppresses the immediate second fetch — bypassed directly here.
     cache._last_attempt_at = 0.0
     await cache.get_key("key-1")
 

@@ -86,9 +86,7 @@ async def test_failed_message_releases_hold_immediately_under_cron_strategy(
 async def test_redelivered_succeeded_message_confirms_and_notifies_exactly_once(
     db_session_factory: async_sessionmaker[AsyncSession], redis_client: Redis
 ):
-    # Literal redelivery of the identical message (not a stale cross-message
-    # scenario) — the same shape every other Kafka integration point's own
-    # redelivery test already uses (§7's general idempotent-consumer rule).
+    # Literal redelivery of the identical message, exercising the general idempotent-consumer rule (§7).
     ticket_id = await seed_ticket(db_session_factory)
     async with db_session_factory() as session:
         ticket = await session.get(Ticket, ticket_id)
@@ -119,10 +117,7 @@ async def test_redelivered_succeeded_message_confirms_and_notifies_exactly_once(
 async def test_succeeded_message_on_already_expired_booking_triggers_refund(
     db_session_factory: async_sessionmaker[AsyncSession], redis_client: Redis
 ):
-    # A hold-expiry sweep can flip a booking to EXPIRED before a late-arriving
-    # SUCCEEDED outcome is processed; the customer was genuinely charged, so
-    # this must trigger a refund via the same booking.cancelled path
-    # cancel_booking already uses, not silently drop the outcome.
+    # A hold-expiry sweep can flip a booking to EXPIRED before a late SUCCEEDED outcome arrives — a genuine charge must trigger a refund, not be dropped.
     ticket_id = await seed_ticket(db_session_factory)
     booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
     async with db_session_factory() as session:
@@ -146,8 +141,7 @@ async def test_succeeded_message_on_already_expired_booking_triggers_refund(
     async with db_session_factory() as session:
         booking = await session.get(Booking, booking_id)
         ticket = await session.get(Ticket, ticket_id)
-        # Left as EXPIRED, not silently re-confirmed — the seat may already
-        # be legitimately held or booked by someone else by now.
+        # Left as EXPIRED, not silently re-confirmed — the seat may already be legitimately held or booked by someone else.
         assert booking.status is BookingStatus.EXPIRED
         assert ticket.status is TicketStatus.AVAILABLE
 
@@ -155,10 +149,7 @@ async def test_succeeded_message_on_already_expired_booking_triggers_refund(
 async def test_redelivered_message_on_already_confirmed_booking_does_not_touch_a_new_holder(
     db_session_factory: async_sessionmaker[AsyncSession], redis_client: Redis
 ):
-    # The correctness contract this task exists to satisfy (§7): a
-    # redelivered "failed" message for a booking that already succeeded
-    # (already CONFIRMED) must not release the ticket a *different*, later
-    # booking may since legitimately hold.
+    # A redelivered "failed" for an already-CONFIRMED booking must not release a *different*, later booking's ticket (the idempotent-consumer contract, §7).
     ticket_id = await seed_ticket(db_session_factory)
     booking_id = await _seed_pending_booking(db_session_factory, ticket_id)
     consumer = PaymentOutcomeConsumer(

@@ -15,12 +15,7 @@ from app.logic.payment_manager import PaymentManager
 
 logger = structlog.get_logger()
 
-# Same shape as booking-service/app/kafka/consumers.py's own constants — a
-# transient DB error (connection blip, pool exhaustion) is retried in place
-# a few times before this consumer gives up on a message. Duplicated here
-# rather than shared, since these are two independently deployable
-# services (same reasoning Kafka schemas are independently defined on each
-# side, not shared code).
+# Same shape as booking-service's own constants — retries a transient DB error a few times before giving up on a message. Duplicated, not shared, since the two services deploy independently.
 DB_WRITE_MAX_ATTEMPTS = 3
 DB_WRITE_RETRY_BACKOFF_SECONDS = 1.0
 
@@ -60,15 +55,7 @@ async def _run_with_retry(
     failed_event: str,
     **log_context: object,
 ) -> _T | None:
-    # Unconditional commit() at the end, same as booking-service's copy of
-    # this helper — kept even though this service's only current caller
-    # (_refund) routes through PaymentManager, which already owns its own
-    # commit per this project's "Manager methods that mutate always end
-    # with commit()" convention, making this a harmless no-op today.
-    # Removing it would silently strand any *future* handler wired through
-    # this same helper that doesn't route through a self-committing Manager,
-    # with no signal that anything was wrong — a safety net worth the
-    # redundant call.
+    # Unconditional commit() is a harmless no-op today (the only caller's Manager already commits) but guards any future handler wired through this helper that doesn't self-commit.
     async def _in_session() -> _T:
         async with session_factory() as session:
             result = await operation(session)
@@ -98,9 +85,7 @@ def build_cancelled_bookings_consumer() -> AIOKafkaConsumer:
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=settings.cancelled_bookings_consumer_group_id,
         auto_offset_reset="earliest",
-        # Same reasoning as booking-service's consumers — manual, per-record
-        # offset commit only after _handle() has fully finished, so a
-        # process crash mid-refund is always safely redelivered.
+        # Same reasoning as booking-service's consumers — manual, per-record offset commit only after _handle() finishes, so a crash mid-refund is always safely redelivered.
         enable_auto_commit=False,
     )
 

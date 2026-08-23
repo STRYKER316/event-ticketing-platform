@@ -34,10 +34,7 @@ logger = structlog.get_logger()
 
 
 def _log_if_died(name: str, task: asyncio.Task) -> None:
-    # A background task's exception is otherwise only surfaced when the task
-    # object is garbage-collected — which never happens while `lifespan`
-    # holds a live reference to it for the app's whole lifetime, so a crash
-    # here would stay completely silent without this.
+    # A task's exception is otherwise only surfaced on garbage-collection, which never happens while `lifespan` holds a live reference — a crash would stay silent without this.
     if task.cancelled():
         return
     exc = task.exception()
@@ -51,9 +48,7 @@ async def lifespan(app: FastAPI):
     consumer_task: asyncio.Task | None = None
     payment_outcome_kafka_consumer: AIOKafkaConsumer | None = None
     payment_outcome_task: asyncio.Task | None = None
-    # Both hold strategies need a periodic sweep (build_scheduler() picks the
-    # right job for whichever is active, §6) — an unrecognized HOLD_STRATEGY
-    # fails here the same way it would on the first booking request.
+    # Both hold strategies need a periodic sweep (build_scheduler() picks the right job, §6); an unrecognized HOLD_STRATEGY fails here same as on the first booking request.
     scheduler: AsyncIOScheduler = build_scheduler()
     try:
         kafka_consumer = build_kafka_consumer()
@@ -77,12 +72,8 @@ async def lifespan(app: FastAPI):
         scheduler.start()
         yield
     finally:
-        # try/finally so a failure partway through startup still closes
-        # whatever was already opened, instead of leaking the consumer.
-        # scheduler.start() (above) may never have run — e.g. kafka_consumer
-        # .start() raised first — and shutdown() on a never-started scheduler
-        # raises SchedulerNotRunningError, which would mask the original
-        # exception and abort every teardown step below it.
+        # try/finally so a startup failure still closes whatever was already opened, instead of leaking the consumer.
+        # scheduler.start() may never have run, and shutdown() on a never-started scheduler raises SchedulerNotRunningError, masking the original exception — hence the running check.
         if scheduler.running:
             scheduler.shutdown(wait=False)
         for task in (consumer_task, payment_outcome_task):
@@ -109,16 +100,8 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RedisError)
     async def redis_error_handler(request: Request, exc: RedisError) -> JSONResponse:
-        # RedisHoldStrategy (§6) has no clean way to signal "the backend
-        # itself is unreachable" through TicketHoldStrategy's bool-returning
-        # interface without conflating it with "seat unavailable" — caught
-        # here instead, at the ASGI boundary, so every route reachable
-        # through the hold strategy (create_booking, list_tickets_for_event,
-        # cancel_booking) gets one clean 503 rather than each needing its own
-        # try/except. Kafka consumers calling the same strategy are
-        # unaffected — this handler only wraps the HTTP request/response
-        # cycle, so PaymentOutcomeConsumer's own _run_with_retry still sees
-        # the raw exception and retries as designed.
+        # TicketHoldStrategy's bool-returning interface can't signal "backend unreachable" without conflating it with "seat unavailable", so it's caught here at the ASGI boundary for one clean 503 across every HTTP route instead of a try/except per route.
+        # Kafka consumers are unaffected — this only wraps the HTTP cycle, so PaymentOutcomeConsumer's _run_with_retry still sees the raw exception and retries as designed.
         logger.error("hold_backend_unreachable", error=str(exc))
         return JSONResponse(status_code=503, content={"detail": "hold service unavailable"})
 

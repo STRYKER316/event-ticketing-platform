@@ -4725,3 +4725,33 @@ Decisions-log delta: none — both fixes are the same
 config/exception-handler-pattern category as the Redis fix last round,
 applied to two more already-locked dependencies, not new architecture.
 `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Repo-wide inline-comment trim
+
+User asked to clean up/trim unnecessary or long comments across files.
+Surveyed every `.py` file outside `migrations/` for runs of 4+
+consecutive `#`-prefixed lines (55 files hit), dispatched five parallel
+subagents (one per service, booking-service split into `app/`/`tests/`
+given its size) to compress each block to one crisp line — never a
+multi-paragraph explanation — while leaving docstrings completely
+untouched (this project's deliberate, established documentation style,
+distinct from an inline comment). Five of the six subagents were
+interrupted mid-run; verified the partial state (down to 27 files at a
+3+ line threshold, full five-service suite still green — comment-only
+edits, so a no-op was expected but confirmed anyway) and finished the
+remaining files directly rather than re-dispatching, since the leftover
+scope was small enough by then to just do. Along the way, caught one
+more `(found in code review)`-phrased comment the original sweep's
+plain-string grep missed (`payment-service/tests/unit/test_payment_manager.py`,
+phrased "Found in code review:" at the start of the comment rather than
+mid-sentence in parens) and fixed it as part of the same pass.
+
+Net result: 69 files touched, 194 insertions / 788 deletions, confirmed
+comment-only via `git diff` (every changed line is a `#` comment or
+blank — no code, imports, or docstrings touched). Final survey: zero
+files left with a 3+ line consecutive `#`-comment run. Full suite
+re-run after every batch of edits, not just once at the end:
+65/23/52/14/9 across the five services plus 31 for `_shared/auth`, all
+green throughout.
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.

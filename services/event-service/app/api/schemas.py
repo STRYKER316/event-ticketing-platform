@@ -153,9 +153,7 @@ class SeatMapRow(BaseModel):
 class SeatMapSection(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     rows: list[SeatMapRow] = Field(min_length=1)
-    # Organizer-set, per section (§9/§16 decisions-log amendments, 2026-08-17) — e.g.
-    # floor vs. balcony pricing. Carried through the event-carried Kafka payload
-    # (§7.2, see kafka/producers.py) into Booking Service's Ticket.price_cents.
+    # Organizer-set per section (§9/§16), e.g. floor vs. balcony — carried via Kafka into Booking Service's Ticket.price_cents.
     price_cents: int = Field(gt=0, le=POSTGRES_INT4_MAX)
 
 
@@ -176,13 +174,7 @@ class SeatMapUpsert(BaseModel):
 
     @model_validator(mode="after")
     def no_duplicate_seats(self) -> "SeatMapUpsert":
-        # (section, row, label) is booking-service's own unique constraint
-        # (bulk_upsert_available's ON CONFLICT DO NOTHING) — that constraint
-        # silently drops a duplicate rather than erroring, so without this
-        # check here a seat map claiming N seats provisions fewer than N
-        # real, sellable tickets with no warning to the organizer. Caught at
-        # the DTO boundary instead, per this project's own DTO-as-strict-
-        # validation-boundary convention.
+        # booking-service's unique constraint silently drops duplicates rather than erroring, so catch here or seat count silently falls short.
         seen: set[tuple[str, str, str]] = set()
         for section in self.sections:
             for row in section.rows:

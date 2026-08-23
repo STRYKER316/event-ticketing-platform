@@ -38,9 +38,7 @@ class Settings(BaseSettings):
     @field_validator("log_level", mode="before")
     @classmethod
     def _uppercase_log_level(cls, value: object) -> object:
-        # Preserves the pre-existing case-insensitive env var behavior
-        # (configure_logging used to .upper() at lookup time) while still
-        # rejecting a genuinely unrecognized value at startup via the Literal.
+        # Keeps env vars case-insensitive while still rejecting unrecognized values at startup via the Literal.
         return value.upper() if isinstance(value, str) else value
 
     @property
@@ -141,11 +139,7 @@ _mongo_client: AsyncIOMotorClient | None = None
 def get_mongo_client() -> AsyncIOMotorClient:
     global _mongo_client
     if _mongo_client is None:
-        # PyMongo's default serverSelectionTimeoutMS is 30000 — fine for a
-        # request that can afford to wait, but it made /healthz block for
-        # 30+ seconds against a genuinely unreachable Mongo instead of
-        # failing fast, defeating the point of a liveness check. 5s still
-        # tolerates a brief network blip without false-failing.
+        # PyMongo's default 30s serverSelectionTimeoutMS made /healthz block that long against unreachable Mongo; 5s still tolerates a blip.
         _mongo_client = AsyncIOMotorClient(get_settings().mongo_url, serverSelectionTimeoutMS=5000)
     return _mongo_client
 
@@ -167,15 +161,10 @@ _kafka_producer_lock = asyncio.Lock()
 
 async def get_kafka_producer() -> AIOKafkaProducer:
     global _kafka_producer
-    # Unlike get_engine()/get_mongo_client(), this has an `await` between the
-    # check and the assignment, so two concurrent first callers can otherwise
-    # both start a producer — the loser's connection is then never stopped.
+    # Unlike get_engine()/get_mongo_client(), there's an `await` between check and assignment, so two concurrent first callers could otherwise both start a producer.
     async with _kafka_producer_lock:
         if _kafka_producer is None:
-            # aiokafka's default request_timeout_ms is 40000 -- under a broker outage
-            # that leaves a publish-triggering request (already past its Postgres
-            # commit) hanging for 40s before the client sees a failure. 10s still
-            # tolerates real broker slowness while failing fast enough to matter.
+            # aiokafka's default request_timeout_ms is 40000, leaving a post-commit publish hanging that long under a broker outage; 10s still tolerates real slowness.
             producer = AIOKafkaProducer(
                 bootstrap_servers=get_settings().kafka_bootstrap_servers, request_timeout_ms=10_000
             )

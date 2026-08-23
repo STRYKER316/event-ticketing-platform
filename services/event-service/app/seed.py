@@ -65,10 +65,7 @@ async def seed(session_factory, mongo_db) -> None:
         await session.flush()
 
         now = datetime.now(timezone.utc)
-        # All start times are in the future: EventManager.publish_event now rejects
-        # publishing an event whose start_time has already passed (mirrors the
-        # EventCreate/EventUpdate submission-time check), so a seeded "already
-        # happened" demo event is no longer publishable through the real path.
+        # All start times are in the future: publish_event rejects a start_time already in the past, so a seeded "already happened" event wouldn't publish.
         seed_events = [
             _SeedEvent(
                 title="Wandering Notes: Reunion Tour",
@@ -99,11 +96,7 @@ async def seed(session_factory, mongo_db) -> None:
             ),
         ]
 
-        # Routed through the real EventManager create/upsert-seat-map/publish path
-        # (not direct DB rows) so a fresh seed actually reaches Search (via Kafka)
-        # and Booking Service (Ticket provisioning) — matching what a real organizer
-        # publishing an event through the API produces, not just rows that claim
-        # status="published" with nothing downstream ever notified.
+        # Routed through the real EventManager path (not direct DB rows) so a fresh seed actually reaches Search and Booking Service via Kafka, not just rows claiming status="published".
         producer = await get_event_producer()
         manager = EventManager(session, mongo_db, producer)
         for spec in seed_events:

@@ -34,10 +34,7 @@ async def test_create_charge_persists_pending_payment_with_correct_amount(db_ses
 async def test_concurrent_first_time_charges_for_one_booking_only_one_creates(
     db_session_factory: async_sessionmaker[AsyncSession], monkeypatch
 ):
-    # The correctness contract _resolve_payment_row's IntegrityError handling
-    # exists to satisfy: two genuinely concurrent first-charge attempts for
-    # the same booking must resolve to one Payment row, not a 500 from an
-    # unhandled unique-constraint violation.
+    # Two genuinely concurrent first-charge attempts for the same booking must resolve to one Payment row, not a 500 from a unique-constraint violation.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     create_mock = AsyncMock(return_value=MagicMock(id="pi_race"))
     monkeypatch.setattr(stripe.PaymentIntent, "create_async", create_mock)
@@ -51,12 +48,7 @@ async def test_concurrent_first_time_charges_for_one_booking_only_one_creates(
 
     first_id, second_id = await asyncio.gather(_attempt(), _attempt())
 
-    # Exactly one Payment row for the booking — the unique index is the hard
-    # guarantee. Stripe may occasionally still be called twice here (if the
-    # loser re-fetches before the winner's own stripe_charge_id commits) —
-    # that residual race is exactly why Stripe's own idempotency_key exists
-    # as the backstop against an actual double charge (§9); this test's job
-    # is proving the previously-unhandled IntegrityError no longer 500s.
+    # Exactly one Payment row is the hard guarantee; Stripe's own idempotency_key (§9) backstops the residual double-Stripe-call race, not this test.
     assert first_id == second_id
     assert create_mock.await_count in (1, 2)
     async with db_session_factory() as session:
@@ -81,11 +73,7 @@ async def test_replayed_charge_against_real_db_does_not_double_charge(db_session
 async def test_concurrent_overlapping_webhook_deliveries_only_one_wins(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
-    # The correctness contract the rowcount-gated transition_if_pending exists
-    # to satisfy: two genuinely concurrent webhook deliveries for the same
-    # charge must not both transition the row or both publish — a prior
-    # read-then-write version could let both pass the PENDING check before
-    # either committed.
+    # Two genuinely concurrent webhook deliveries for the same charge must not both transition the row or both publish.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     async with db_session_factory() as seed_session:
         await PaymentRepository(seed_session).create(
@@ -149,9 +137,7 @@ async def test_webhook_transitions_payment_and_replay_is_a_safe_no_op(db_session
 
 
 async def test_late_success_webhook_after_failure_confirms_booking_against_real_db(db_session: AsyncSession):
-    # A late genuine success must still confirm the booking even though an
-    # earlier webhook already moved the row to FAILED — transition_if_pending
-    # alone would silently drop this as a no-op.
+    # A late genuine success must still confirm the booking even though an earlier webhook already moved the row to FAILED.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     payments = PaymentRepository(db_session)
     await payments.create(

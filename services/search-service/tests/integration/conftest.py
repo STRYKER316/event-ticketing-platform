@@ -17,9 +17,7 @@ def es_container() -> "ElasticSearchContainer":
 
 @pytest.fixture(scope="session")
 def kafka_container() -> "KafkaContainer":
-    # testcontainers' KafkaContainer targets the Confluent image's bootstrap
-    # scripts specifically — the compose stack's `apache/kafka` image isn't
-    # compatible with it, so tests use Confluent's image in KRaft mode here.
+    # testcontainers' KafkaContainer targets the Confluent image's bootstrap scripts — the compose stack's apache/kafka image isn't compatible, so tests use Confluent's image in KRaft mode.
     with KafkaContainer("confluentinc/cp-kafka:7.6.0").with_kraft() as container:
         yield container
 

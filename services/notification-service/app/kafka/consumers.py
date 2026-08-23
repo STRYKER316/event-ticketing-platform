@@ -16,9 +16,7 @@ logger = structlog.get_logger()
 
 _M = TypeVar("_M", bound=BaseModel)
 
-# Bounded retry for a transient republish failure, mirroring booking-service's
-# DB-write retry shape — this service has no DB, so a Kafka republish is its
-# equivalent "must finish before offset commit" side effect (§17 amendment).
+# Bounded retry for a transient republish failure — this service's no-DB equivalent of "must finish before offset commit" (§17 amendment).
 PUBLISH_MAX_ATTEMPTS = 3
 PUBLISH_RETRY_BACKOFF_SECONDS = 1.0
 
@@ -111,9 +109,7 @@ class NotificationConsumer:
         await _consume_with_manual_commit(self._consumer, self._handle)
 
     async def _handle(self, raw: bytes) -> None:
-        # Unretriable poison message on parse failure — same handling
-        # ProvisioningConsumer/PaymentOutcomeConsumer already use for their
-        # own parse failures.
+        # Unretriable poison message on parse failure — same handling ProvisioningConsumer/PaymentOutcomeConsumer use.
         message = _parse_or_log(NotificationMessage, raw, "notification_consumer_message_invalid")
         if message is None:
             return
@@ -129,11 +125,7 @@ class NotificationConsumer:
                 error=str(exc),
                 reason=message.reason,
             )
-            # attempt=2 — the next attempt about to be made (§17 amendment
-            # #2). Published before this record's offset commits (see
-            # _consume_with_manual_commit above) — a crash between the
-            # failed delivery and this publish must redeliver from
-            # `notifications`, not silently drop the message.
+            # attempt=2 is the next attempt to be made; published before the offset commits, so a crash here redelivers rather than drops the message.
             envelope = RetryEnvelope(attempt=2, original=message, last_error=_error_text(exc))
             await _publish_with_retry(
                 lambda: self._retry_publisher.publish_retry(envelope),
@@ -161,10 +153,7 @@ class RetryConsumer:
         if envelope is None:
             return
 
-        # A real, in-process asyncio.sleep — this consumer has no other
-        # work competing for its attention while backing off, and aiokafka
-        # has no native delayed-delivery primitive to reach for instead
-        # (this phase's whole "hand-rolled, not @RetryableTopic" framing).
+        # Real in-process sleep — aiokafka has no native delayed-delivery primitive, and this is hand-rolled, not @RetryableTopic.
         await asyncio.sleep(compute_backoff_seconds(envelope.attempt))
 
         try:
@@ -210,8 +199,8 @@ def build_dlq_consumer() -> AIOKafkaConsumer:
 
 class DlqConsumer:
     """Visibility only (§17 amendment #2) — nothing reprocesses out of the
-    DLQ automatically. Matches what §17 actually promises: 'not silently
-    dropped,' not 'automatically retried forever.'"""
+    DLQ automatically. This matches what that amendment actually promises:
+    'not silently dropped,' not 'automatically retried forever.'"""
 
     def __init__(self, consumer: AIOKafkaConsumer):
         self._consumer = consumer

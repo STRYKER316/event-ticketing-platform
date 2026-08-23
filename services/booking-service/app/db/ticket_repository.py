@@ -8,15 +8,7 @@ from app.db.base_repository import BaseRepository
 from app.db.chunking import chunked
 from app.db.models import Ticket
 
-# 7 bind params per row: the 6 supplied here (id, event_id, section,
-# row_name, seat_label, price_cents) plus `status`, which isn't in this
-# dict but is still a real bind param — Ticket.status's Python-side default
-# (TicketStatus.AVAILABLE) is applied by SQLAlchemy at the Core level even
-# for this values()-based bulk insert, so it counts. chunked()'s
-# BIND_PARAM_SAFE_BATCH_SIZE is sized for exactly this call site's worst
-# case (see its own docstring) — a seat map anywhere near event-service's
-# MAX_SEAT_MAP_SEATS (20,000) would already overflow a single unbatched
-# INSERT's ~32,767 bind-param cap without this chunking.
+# 7 bind params/row (6 here plus Ticket.status's SQLAlchemy-applied default) — chunked()'s batch size is sized for this call site's worst case.
 
 
 class TicketRepository(BaseRepository[Ticket]):

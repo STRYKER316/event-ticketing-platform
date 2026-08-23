@@ -64,11 +64,7 @@ async def test_expire_stale_pending_does_not_touch_recent_pending_bookings(
 async def test_abandoned_redis_hold_no_longer_permanently_blocks_the_seat(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
-    # The actual bug this closes: under the Redis strategy, an abandoned
-    # PENDING booking used to sit forever, and uq_bookings_active_ticket
-    # (status IN ('PENDING', 'CONFIRMED')) would then reject every future
-    # booking attempt on that seat even after the Redis hold itself had long
-    # since expired -- the seat became permanently unbookable.
+    # Bug this closes: under redis strategy, an abandoned PENDING booking used to sit forever, permanently blocking the seat via uq_bookings_active_ticket.
     ticket_id = await seed_ticket(db_session_factory)
     async with db_session_factory() as session:
         abandoned = Booking(
@@ -81,8 +77,7 @@ async def test_abandoned_redis_hold_no_longer_permanently_blocks_the_seat(
         session.add(abandoned)
         await session.commit()
 
-    # Before the sweep runs, a new booking on the same ticket is (correctly)
-    # still rejected by the partial unique index.
+    # Before the sweep runs, a new booking on the same ticket is still correctly rejected.
     async with db_session_factory() as session:
         blocked = Booking(
             user_subject="user-2", event_id=uuid.uuid4(), ticket_id=ticket_id, status=BookingStatus.PENDING

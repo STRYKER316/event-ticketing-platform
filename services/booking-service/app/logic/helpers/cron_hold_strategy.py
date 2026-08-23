@@ -78,13 +78,7 @@ class CronHoldStrategy(TicketHoldStrategy):
 
         released = 0
         for batch in chunked(expiring_ticket_ids):
-            # Both UPDATEs below re-check status/expiry, not just ticket ID: a
-            # ticket in this batch may have been re-held or booked between the
-            # SELECT above and here, and a bare-ID UPDATE would then wrongly
-            # touch a row that has since moved on — the exact TOCTOU gap this
-            # class's docstring claims not to have. Both statements use the
-            # identical fresh predicate so they agree on exactly the same set
-            # of tickets, still-expired as of right now.
+            # Both UPDATEs re-check status/expiry, not just ticket ID — a bare-ID UPDATE could wrongly touch a row re-held/booked since the SELECT above.
             still_expired_ids = select(Ticket.id).where(
                 Ticket.id.in_(batch), Ticket.status == TicketStatus.HELD, Ticket.hold_expires_at < now
             )

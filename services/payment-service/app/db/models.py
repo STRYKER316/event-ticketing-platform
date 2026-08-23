@@ -22,23 +22,16 @@ class Payment(Base):
     __tablename__ = "payments"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    # No ForeignKey: booking_id/ticket_id belong to booking_db, a different
-    # service's database (database-per-service, §8) — cross-service data only
-    # arrives via Kafka (or, for charge initiation, the one narrow synchronous
-    # exception documented in decisions-log §9's Phase-4 amendment).
+    # No ForeignKey: booking_id/ticket_id belong to booking_db, a different service's database (database-per-service, §8).
     booking_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True, unique=True)
     ticket_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     amount_cents: Mapped[int] = mapped_column(nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="usd")
     status: Mapped[PaymentStatus] = mapped_column(nullable=False, default=PaymentStatus.PENDING)
     stripe_charge_id: Mapped[str | None] = mapped_column(String(255), index=True, unique=True)
-    # Booking ID doubles as Stripe's idempotency key (§9) — stored explicitly
-    # rather than re-derived, so a replayed charge attempt can be recognized
-    # without assuming booking_id and idempotency_key will always be identical.
+    # Booking ID doubles as Stripe's idempotency key (§9) — stored explicitly, not re-derived, so a replayed charge is recognized without assuming the two stay identical.
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
-    # Resubmission gate for refund_payment (§22), same shape as
-    # stripe_charge_id's own "NULL means not yet submitted" role in
-    # create_charge.
+    # Resubmission gate for refund_payment (§22) — same "NULL means not yet submitted" role stripe_charge_id plays in create_charge.
     stripe_refund_id: Mapped[str | None] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

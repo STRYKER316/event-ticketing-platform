@@ -28,13 +28,7 @@ def redis_container() -> "RedisContainer":
 
 @pytest.fixture(scope="session")
 def kafka_container() -> "KafkaContainer":
-    # testcontainers' KafkaContainer targets the Confluent image's bootstrap
-    # scripts specifically (both its Zookeeper and KRaft boot paths shell out
-    # to /etc/confluent/docker/configure, which the compose stack's
-    # apache/kafka image doesn't ship) — same finding search-service's own
-    # conftest already documented; CLAUDE.md previously claimed the opposite
-    # for this fixture, corrected during Phase 6 once this fixture's first
-    # real caller (P6.T4) actually exercised it and hit the failure.
+    # Must be the Confluent image, not apache/kafka — its bootstrap scripts shell out to /etc/confluent/docker/configure, which apache/kafka doesn't ship.
     with KafkaContainer("confluentinc/cp-kafka:7.6.0").with_kraft() as container:
         yield container
 

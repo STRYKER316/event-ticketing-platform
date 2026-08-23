@@ -14,10 +14,11 @@ class BookingRepository(BaseRepository[Booking]):
         super().__init__(session, Booking)
 
     async def transition_if_pending(self, booking_id: uuid.UUID, new_status: BookingStatus) -> bool:
-        """Idempotent by construction (§7's general "only transition if
-        currently in state X" rule, applied here to the payment-outcome
-        consumer, §7 point #4/§21): a redelivered message for an
-        already-terminal booking matches zero rows and is a safe no-op."""
+        """Idempotent by construction: only transitions a row currently in
+        the expected state, so a redelivered message for an already-terminal
+        booking matches zero rows and is a safe no-op (the general rule
+        applied here to the payment-outcome consumer — decisions-log §7
+        point #4/§21)."""
         return await self._transition_if_status(booking_id, BookingStatus.PENDING, new_status)
 
     async def transition_if_confirmed(self, booking_id: uuid.UUID, new_status: BookingStatus) -> bool:

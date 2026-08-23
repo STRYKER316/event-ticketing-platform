@@ -42,17 +42,7 @@ async def _attempt_booking(ticket_id: uuid.UUID, user_subject: str, session_fact
             await manager.create_booking(Principal(subject=user_subject, roles=[]), ticket_id)
             return True
         except HTTPException as exc:
-            # A losing client should see a clean 409 (either hold-strategy
-            # rejection or the uq_bookings_active_ticket defense-in-depth
-            # catch) — anything else, including a non-HTTPException crash,
-            # is a real bug and must fail the test rather than be counted as
-            # an ordinary loss. A too-broad `except Exception` here
-            # previously masked exactly that: a losing client crashing with
-            # sqlalchemy.exc.MissingGreenlet inside the IntegrityError
-            # compensation path (booking_manager.py's release_hold call
-            # accessing an expired ORM attribute post-rollback) looked
-            # identical to a clean loss under `except Exception: return
-            # False`, so this exact bug passed this test undetected.
+            # A losing client must see a clean 409, not a masked crash — `except Exception: return False` previously hid a MissingGreenlet bug in the compensation path as an ordinary loss.
             assert exc.status_code == 409, f"expected a clean 409 loss, got {exc.status_code}: {exc.detail}"
             return False
 
@@ -124,22 +114,11 @@ async def test_abandoned_hold_releases_under_cron_strategy_within_bounded_wait(
         assert ticket.status is TicketStatus.AVAILABLE
 
 
-# No redis-strategy counterpart here: under the redis strategy, abandoned-hold
-# release is plain Redis TTL expiry with no sweep involved, already covered by
-# test_redis_hold_race.py::test_abandoned_hold_auto_releases_on_ttl_no_sweep_needed.
+# No redis-strategy counterpart: that path is plain TTL expiry, covered by test_redis_hold_race.py::test_abandoned_hold_auto_releases_on_ttl_no_sweep_needed.
 
 
 async def test_integrity_race_compensation_does_not_crash(db_session_factory: async_sessionmaker[AsyncSession]):
-    # Reproduces, directly rather than probabilistically, the exact state a
-    # live session found: a ticket whose status says AVAILABLE while an
-    # active (PENDING) Booking row still references it — the hold strategy
-    # has no way to see this and correctly grants the hold, so
-    # _create_booking_row reaches the uq_bookings_active_ticket unique index
-    # and must hit the IntegrityError compensation path. That path
-    # previously crashed with sqlalchemy.exc.MissingGreenlet (accessing
-    # ticket.id on an ORM instance whose attributes session.rollback() had
-    # just expired) instead of returning a clean 409 — found live via two
-    # real concurrent curl requests, reproduced here deterministically.
+    # Deterministically reproduces a live-found race: a stale PENDING Booking on an AVAILABLE ticket forces the IntegrityError compensation path, which must return 409 rather than crash on an expired ORM attribute.
     ticket_id = await seed_ticket(db_session_factory)
     async with db_session_factory() as session:
         session.add(

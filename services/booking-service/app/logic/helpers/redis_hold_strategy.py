@@ -36,31 +36,10 @@ class RedisHoldStrategy(TicketHoldStrategy):
         return await self._redis.exists(_key(ticket_id)) > 0
 
     async def confirm_hold(self, ticket_id: uuid.UUID) -> None:
-        # Ticket.status is never written under this strategy (see class
-        # docstring) — confirming just cleans up the now-superseded Redis
-        # hold key rather than leaving it to sit until its own TTL expiry.
+        # tickets.status is never written here (see class docstring); this just clears the now-superseded Redis key instead of waiting on TTL expiry.
         await self._redis.delete(_key(ticket_id))
 
     async def release_booking(self, ticket_id: uuid.UUID) -> None:
-        # No-op: tickets.status is never written under this strategy, so a
-        # CONFIRMED booking's ticket is already sitting at AVAILABLE. What
-        # actually re-permits booking it again is uq_bookings_active_ticket
-        # (scoped to PENDING/CONFIRMED bookings) no longer matching once
-        # this cancellation flips Booking.status to CANCELLED — not this
-        # method. Same asymmetry as confirm_hold/acquire_hold (§6).
-        #
-        # Known boundary, not fixed here: this reasoning holds only within
-        # one strategy's whole lifetime for a given booking. HOLD_STRATEGY
-        # is a single config value fixed per
-        # deployment (§6) — a booking confirmed under `cron` (leaving
-        # tickets.status=BOOKED) that's later cancelled after a live switch
-        # to `redis` would no-op here and leave the ticket stuck at BOOKED,
-        # permanently unbookable, since _fetch_bookable_ticket rejects
-        # BOOKED regardless of which strategy is active. Switching
-        # HOLD_STRATEGY with in-flight bookings outstanding was never a
-        # supported operation (P8 only ever flips it between benchmark runs
-        # against a fresh seat pool, never mid-flight against live state) —
-        # documented here as an accepted limitation rather than papered
-        # over, consistent with how this class's own docstring already
-        # documents the confirm/acquire asymmetry.
+        # No-op: ticket stays AVAILABLE under this strategy; uq_bookings_active_ticket (via Booking.status=CANCELLED) is what re-permits rebooking, not this method.
+        # Known limitation: HOLD_STRATEGY is fixed per deployment — switching it mid-flight (never supported) can leave a booking confirmed under `cron` (ticket BOOKED) permanently unbookable if cancelled after a live switch to `redis`, since this no-ops instead of releasing it.
         pass

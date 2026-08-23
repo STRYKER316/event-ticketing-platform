@@ -7,9 +7,7 @@ from jwt.exceptions import PyJWKError
 
 from .config import AuthSettings
 
-# Throttles how often an unknown/expired-cache lookup can trigger an outbound
-# fetch, regardless of request volume — without this, a client sending garbage
-# `kid`s can drive 1:1 request-to-Keycloak-fetch traffic.
+# Throttles outbound refetches — without this, a client sending garbage `kid`s can drive 1:1 request-to-Keycloak-fetch traffic.
 MIN_REFETCH_INTERVAL_SECONDS = 1.0
 
 

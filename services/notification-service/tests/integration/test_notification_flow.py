@@ -85,9 +85,7 @@ async def test_successful_delivery_produces_no_retry_message(
         await kafka_producer.send_and_wait(
             NOTIFICATIONS_TOPIC, key=booking_id.encode(), value=_notification_message("booking_confirmed", booking_id)
         )
-        # No forced failure this test (simulated_failure_attempts=0) — assert
-        # nothing lands on notification-retry keyed to this booking (absence,
-        # not just a positive assertion).
+        # No forced failure — assert nothing lands on notification-retry keyed to this booking (absence, not just a positive assertion).
         await _assert_no_matching_record(retry_consumer, booking_id, timeout=3)
     finally:
         await retry_consumer.stop()
@@ -96,11 +94,7 @@ async def test_successful_delivery_produces_no_retry_message(
 async def test_redelivery_of_same_message_is_a_safe_no_op(
     kafka_container, kafka_producer: AIOKafkaProducer, fast_retry_settings, running_notification_consumer
 ):
-    # Tests decisions-log §17's idempotency claim rather than assuming it: a
-    # crash between delivery and offset commit redelivers the same raw record,
-    # so publishing the same key/value twice exercises the same code path.
-    # Asserts on captured logs, not just retry-topic absence, since absence
-    # alone can't tell "handled twice, safely" from "consumer silently stopped."
+    # Tests the idempotency claim rather than assuming it (decisions-log §17); asserts on captured logs since absence alone can't tell "safe" from "stopped".
     booking_id = str(uuid.uuid4())
     payload = _notification_message("booking_confirmed", booking_id)
     retry_consumer = await make_topic_consumer(kafka_container, NOTIFICATION_RETRY_TOPIC)
@@ -119,9 +113,7 @@ async def test_redelivery_of_same_message_is_a_safe_no_op(
 
             await _wait_until(delivered_twice, timeout=10)
 
-        # Both deliveries succeed independently (simulated_failure_attempts=0)
-        # — a safe no-op means no retry envelope for this booking, not a
-        # crash and not a corrupted/duplicated retry-ladder entry.
+        # Both deliveries succeed independently — a safe no-op means no retry envelope for this booking.
         await _assert_no_matching_record(retry_consumer, booking_id, timeout=3)
     finally:
         await retry_consumer.stop()
@@ -160,8 +152,7 @@ async def test_retry_consumer_recovers_and_does_not_republish_to_dlq(
         await kafka_producer.send_and_wait(
             NOTIFICATIONS_TOPIC, key=booking_id.encode(), value=_notification_message("refund_failed", booking_id)
         )
-        # The retry succeeds on its own (RetryConsumer's real backoff sleep,
-        # kept short by fast_retry_settings) — nothing should ever reach the DLQ.
+        # The retry succeeds on its own — nothing should ever reach the DLQ.
         await _assert_no_matching_record(dlq_consumer, booking_id, timeout=6)
     finally:
         await dlq_consumer.stop()
@@ -202,10 +193,7 @@ async def test_dlq_consumer_logs_receipt(kafka_container, kafka_producer: AIOKaf
         }
     )
 
-    # structlog isn't wired through stdlib logging in the test process
-    # (configure_logging() only ever runs from main.py's create_app()), so
-    # structlog's own capture_logs() is used instead of pytest's
-    # stdlib-logging-based caplog fixture.
+    # structlog isn't wired through stdlib logging here (that's create_app()'s job), so capture_logs() is used instead of pytest's caplog fixture.
     with structlog.testing.capture_logs() as captured:
         async with running_consumer(kafka_container, NOTIFICATION_DLQ_TOPIC, DlqConsumer):
             await kafka_producer.send_and_wait(

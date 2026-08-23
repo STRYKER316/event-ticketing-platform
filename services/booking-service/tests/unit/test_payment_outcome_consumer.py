@@ -40,8 +40,7 @@ async def test_succeeded_message_confirms_hold_when_transition_wins():
     bookings_repo.transition_if_pending.assert_awaited_once_with(booking_id, BookingStatus.CONFIRMED)
     strategy.confirm_hold.assert_awaited_once_with(ticket_id)
     strategy.release_hold.assert_not_awaited()
-    # Integration point #3 (§7 point 3, Phase 5) — a successful transition
-    # publishes booking_confirmed; a failed one (below) must not.
+    # Integration point #3 (§7): a successful transition publishes booking_confirmed; a failed one must not.
     notification_producer.publish_booking_confirmed.assert_awaited_once_with(booking_id)
 
 
@@ -66,10 +65,7 @@ async def test_failed_message_releases_hold_when_transition_wins():
 
 
 async def test_succeeded_message_on_expired_booking_triggers_refund():
-    # A hold-expiry sweep beat the SUCCEEDED outcome to the booking, so
-    # transition_if_pending correctly no-ops — but the customer was
-    # genuinely charged, so this must reuse the booking.cancelled path to
-    # trigger a refund rather than silently dropping the outcome.
+    # A hold-expiry sweep beat SUCCEEDED to the booking, but the customer was genuinely charged, so this must reuse the cancelled path to refund rather than drop the outcome.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     session = AsyncMock()
     expired_booking = MagicMock(status=BookingStatus.EXPIRED)
@@ -95,9 +91,7 @@ async def test_succeeded_message_on_expired_booking_triggers_refund():
 
 
 async def test_succeeded_message_on_confirmed_booking_does_not_trigger_a_duplicate_refund():
-    # The ordinary idempotent-replay case (already CONFIRMED, e.g. a
-    # redelivered message after a successful first run) must not be
-    # mistaken for the EXPIRED case above and must not re-trigger a refund.
+    # The ordinary idempotent-replay case (already CONFIRMED) must not be mistaken for the EXPIRED case above.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     session = AsyncMock()
     confirmed_booking = MagicMock(status=BookingStatus.CONFIRMED)
@@ -121,10 +115,7 @@ async def test_succeeded_message_on_confirmed_booking_does_not_trigger_a_duplica
 
 
 async def test_redelivered_message_on_already_terminal_booking_is_a_safe_no_op():
-    # The correctness contract this task exists to satisfy (§7's general
-    # idempotent-consumer rule): a redelivered message that matches zero
-    # rows must not touch the hold strategy at all — a later booking may
-    # already legitimately hold the same ticket.
+    # A zero-row match must not touch the hold strategy — a later booking may legitimately hold the same ticket (the idempotent-consumer rule, §7).
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     session = AsyncMock()
     bookings_repo = AsyncMock(transition_if_pending=AsyncMock(return_value=False))

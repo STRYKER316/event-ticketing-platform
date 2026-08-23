@@ -20,37 +20,19 @@ class Settings(BaseSettings):
     kafka_bootstrap_servers: str = "localhost:9094"
     notifications_topic: str = "notifications"
     notification_consumer_group_id: str = "notification-service-notifications"
-    # Kafka #3's own retry/DLQ topics (decisions-log §17 amendment,
-    # 2026-08-18) — retry state travels on the message (RetryEnvelope),
-    # not in a table, since this service deliberately has no DB.
+    # §17 amendment retry/DLQ topics — retry state travels on the message (RetryEnvelope), not a table, since this service has no DB.
     notification_retry_topic: str = "notification-retry"
     notification_retry_consumer_group_id: str = "notification-service-retry"
     notification_dlq_topic: str = "notification-dlq"
     notification_dlq_consumer_group_id: str = "notification-service-dlq"
 
-    # §17 amendment #2 — RetryEnvelope.attempt starts at 2 for the first
-    # retry (the initial delivery off `notifications` is attempt 1);
-    # attempt > retry_max_attempts routes to notification-dlq instead of
-    # retrying again. Backoff per attempt: min(retry_base_backoff_seconds
-    # ** attempt, retry_backoff_cap_seconds).
-    # Bounded to match RetryEnvelope.attempt's own le=1000 (app/kafka/schemas.py)
-    # — a misconfigured value above that would otherwise only fail at
-    # runtime, the first time RetryConsumer tries to construct the next
-    # envelope, instead of at startup.
+    # attempt starts at 2 for the first retry (initial delivery is attempt 1); attempt > retry_max_attempts routes to the DLQ. Backoff: min(base**attempt, cap).
+    # le=1000 bound matches RetryEnvelope.attempt's own le=1000 so a bad config fails at startup, not at the first retry.
     retry_max_attempts: Annotated[int, Field(gt=0, le=1000)] = 3
     retry_base_backoff_seconds: float = 2.0
     retry_backoff_cap_seconds: float = 30.0
 
-    # §17 amendment #3 — a demo/test instrument, not a production knob.
-    # Nothing in this system's real "delivery" (a structured log line, §19)
-    # can fail on its own, so proving the retry ladder for real rather than
-    # only under a mocked unit test needs an explicit, honest failure-
-    # injection point. 0 (default) disables it entirely: NotificationManager
-    # .deliver() never raises in normal operation. A positive value N fails
-    # every delivery attempt while attempt <= N, so set it to a small value
-    # (e.g. 1) to demonstrate retry-then-recovery, or to a value >=
-    # retry_max_attempts + 1 to demonstrate a message reaching
-    # notification-dlq.
+    # Demo/test-only failure injection (real "delivery" is just a log line and can't fail on its own): 0 disables it, N fails every attempt <= N.
     simulated_failure_attempts: int = 0
 
 
@@ -106,10 +88,7 @@ _kafka_producer_lock = asyncio.Lock()
 
 async def get_kafka_producer() -> AIOKafkaProducer:
     global _kafka_producer
-    # Unlike a plain None-check, this has an `await` between the check and
-    # the assignment, so two concurrent first callers can otherwise both
-    # start a producer — the loser's connection is then never stopped.
-    # Mirrors payment-service/booking-service's own core.py exactly.
+    # Lock guards the await between the None-check and assignment, so two concurrent first callers can't both start a producer.
     async with _kafka_producer_lock:
         if _kafka_producer is None:
             producer = AIOKafkaProducer(

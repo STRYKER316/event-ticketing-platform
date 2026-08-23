@@ -17,10 +17,7 @@ USER = Principal(subject="user-1", roles=[])
 
 
 def _stamp_generated_fields(booking: Booking) -> Booking:
-    # Simulates what BaseRepository.create()'s real flush() does: populates
-    # the client-side `id` default and (via implicit RETURNING) the
-    # server-side `created_at` default — neither of which a bare AsyncMock
-    # would ever set.
+    # Simulates what BaseRepository.create()'s real flush() would set, since a bare AsyncMock never would.
     booking.id = uuid.uuid4()
     booking.created_at = datetime.now(timezone.utc)
     return booking
@@ -48,10 +45,7 @@ async def test_create_booking_happy_path():
 
 
 async def test_list_tickets_for_event_maps_ticket_id_from_model_id():
-    # The DTO field is named ticket_id (clearer for a frontend joining it
-    # against a seat map) but the model's own field is id — this is the one
-    # manual mapping step from_attributes can't do for us, so it's the one
-    # thing this test exists to pin down.
+    # DTO field is ticket_id but the model's is id — the one manual mapping step from_attributes can't do for us.
     event_id = uuid.uuid4()
     ticket = Ticket(
         id=uuid.uuid4(), event_id=event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.AVAILABLE
@@ -76,10 +70,7 @@ async def test_list_tickets_for_event_maps_ticket_id_from_model_id():
 
 
 async def test_list_tickets_for_event_sources_booked_from_bookings_not_raw_ticket_column():
-    # The raw tickets.status column is never accurate under RedisHoldStrategy
-    # (§6), so BOOKED must come from a CONFIRMED Booking row instead — proven
-    # here by a ticket whose own (stale/irrelevant) status column says
-    # AVAILABLE but which the bookings repository reports as CONFIRMED.
+    # tickets.status is never accurate under RedisHoldStrategy (§6), so BOOKED must come from a CONFIRMED Booking row instead.
     event_id = uuid.uuid4()
     ticket = Ticket(
         id=uuid.uuid4(), event_id=event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.AVAILABLE
@@ -98,9 +89,7 @@ async def test_list_tickets_for_event_sources_booked_from_bookings_not_raw_ticke
 
 
 async def test_list_tickets_for_event_sources_held_from_hold_strategy_not_raw_ticket_column():
-    # Same reasoning for HELD: the raw column is left at AVAILABLE under
-    # RedisHoldStrategy, so this must come from the injected strategy's own
-    # is_held(), not ticket.status.
+    # Same reasoning for HELD: must come from the strategy's own is_held(), not ticket.status.
     event_id = uuid.uuid4()
     ticket = Ticket(
         id=uuid.uuid4(), event_id=event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.AVAILABLE
@@ -309,10 +298,7 @@ async def test_pay_booking_502s_when_payment_service_unreachable():
 
 
 async def test_pay_booking_forwards_payment_service_status_when_it_answers_with_an_error():
-    # Payment Service being reachable and rejecting the request (e.g. its
-    # own 502 when Stripe is down) is a different failure than a connection
-    # error — must not collapse into the same misleading "unreachable" 502
-    # regardless of what Payment Service actually said.
+    # A reachable-but-rejecting Payment Service is a different failure than a connection error and must not collapse into the same "unreachable" 502.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     booking = _pending_booking(booking_id, ticket_id)
     ticket = Ticket(id=ticket_id, event_id=booking.event_id, section="A", row_name="1", seat_label="A1", price_cents=2500, status=TicketStatus.HELD)
@@ -372,9 +358,7 @@ async def test_cancel_booking_happy_path_releases_seat_and_cancels():
 
 
 async def test_cancel_booking_with_no_event_start_time_on_record_409s():
-    # Fail closed, not open: a missing Event row (only reachable for a
-    # booking whose event predates this table) must not silently skip the
-    # cancellation-cutoff check §22 amendment #2 exists to enforce.
+    # Fail closed: a missing Event row must not silently skip the cancellation-cutoff check (decisions-log §22 amendment #2).
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     booking = _confirmed_booking(booking_id, ticket_id)
     manager = BookingManager(
@@ -454,9 +438,7 @@ async def test_cancel_booking_past_event_start_409s():
 
 
 async def test_cancel_booking_race_lost_409s():
-    # transition_if_confirmed matching zero rows — lost a race to a
-    # concurrent cancel or expiry sweep (same reasoning as
-    # _create_booking_row's own integrity-race handling).
+    # transition_if_confirmed matching zero rows means it lost a race to a concurrent cancel or expiry sweep.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     booking = _confirmed_booking(booking_id, ticket_id)
     manager = BookingManager(

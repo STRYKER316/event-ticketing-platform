@@ -35,9 +35,7 @@ class EventRepository:
         sort_desc: bool,
         status: EventStatus | None = None,
     ) -> list[Event]:
-        # status=None (the default) is unfiltered — used by callers with their own
-        # visibility rules (e.g. seed.py's "any data already present" check). The
-        # public listing route filters to PUBLISHED explicitly (EventManager.list_events).
+        # status=None (default) is unfiltered, for callers with their own visibility rules; the public route filters to PUBLISHED explicitly.
         column = _SORT_COLUMNS[sort_field]
         order = column.desc() if sort_desc else column.asc()
         tiebreaker = Event.id.desc() if sort_desc else Event.id.asc()
@@ -56,7 +54,6 @@ class EventRepository:
         return result.scalar_one()
 
     async def delete(self, event_id: uuid.UUID) -> bool:
-        # Core-level DELETE so rowcount is available: a concurrent duplicate delete
-        # matches zero rows once the winner has already committed.
+        # Core-level DELETE so rowcount is available: a concurrent duplicate delete matches zero rows once the winner has committed.
         result = await self._session.execute(sa_delete(Event).where(Event.id == event_id))
         return result.rowcount > 0

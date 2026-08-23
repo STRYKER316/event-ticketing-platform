@@ -43,9 +43,7 @@ async def _seed_confirmed_booking(session_factory: async_sessionmaker[AsyncSessi
 async def test_cancel_booking_publishes_a_real_message_on_the_real_topic(
     db_session_factory: async_sessionmaker[AsyncSession], kafka_container: "KafkaContainer"
 ):
-    # Proves BookingCancelledProducer's wire format against a real broker —
-    # the unit/mocked tests already prove cancel_booking's business logic,
-    # this proves the Kafka-transport half (§22, integration point #5).
+    # Proves BookingCancelledProducer's wire format against a real broker (§22, integration point #5) — the unit tests already cover business logic.
     bootstrap_servers = kafka_container.get_bootstrap_server()
     booking_id, ticket_id = await _seed_confirmed_booking(db_session_factory)
 
@@ -86,13 +84,7 @@ async def test_cancel_booking_publishes_a_real_message_on_the_real_topic(
 async def test_double_cancel_second_call_409s_and_does_not_re_release_or_republish(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
-    # Sequential double-cancel against real persisted state (not a mocked
-    # transition_if_confirmed return value, which test_booking_manager.py's
-    # own test_cancel_booking_race_lost_409s already covers) — each call
-    # opens its own session, the same way two separate real HTTP requests
-    # would. The first call's own status check (`_fetch_owned_confirmed_booking`
-    # requiring CONFIRMED) is what catches this on a sequential redo, not the
-    # concurrent-race path.
+    # Sequential double-cancel against real persisted state, each call in its own session like two real HTTP requests — caught by the status check, not the race path.
     booking_id, ticket_id = await _seed_confirmed_booking(db_session_factory)
     first_producer = AsyncMock()
     async with db_session_factory() as session:

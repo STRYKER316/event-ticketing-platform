@@ -19,9 +19,7 @@ class _KafkaMessageProducer:
         self._topic = topic
 
     async def _send(self, booking_id: uuid.UUID, message: BookingCancelledMessage | NotificationMessage, log_event: str) -> None:
-        # Keyed by booking ID so redelivery/ordering per booking is preserved
-        # on the consumer side (§7), same reasoning as every other producer
-        # in this system.
+        # Keyed by booking ID so redelivery/ordering per booking is preserved on the consumer side (§7), same as every other producer here.
         await self._producer.send_and_wait(
             self._topic,
             key=str(booking_id).encode(),

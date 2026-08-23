@@ -68,10 +68,7 @@ async def test_publish_upserted_sends_correct_topic_key_and_payload():
 
 
 async def test_publish_upserted_rejects_a_message_that_exceeds_the_size_limit():
-    # MAX_SEAT_MAP_SEATS (schemas.py) only bounds seat count, not the combined
-    # serialized byte size -- section/row/seat names allow up to 100 chars each,
-    # so a large venue can still overflow aiokafka's wire limit. This must be
-    # caught here with a clean 422, not deep inside the Kafka client's send.
+    # MAX_SEAT_MAP_SEATS only bounds seat count, not byte size — a large venue can still overflow aiokafka's wire limit; must be caught here, not in the client.
     producer = AsyncMock()
     event = make_event()
     event_producer = EventProducer(producer, TOPIC)

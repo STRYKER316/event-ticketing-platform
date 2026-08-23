@@ -12,11 +12,7 @@ from app.kafka.schemas import EventDeletedMessage, EventUpsertedMessage, KafkaAc
 
 logger = structlog.get_logger()
 
-# A transient Elasticsearch failure (connection blip, brief unavailability) is
-# retried in place a few times before this consumer gives up on a message —
-# without this, run()'s per-record offset commit (see enable_auto_commit
-# below) would advance straight past a message whose write never actually
-# succeeded, silently losing that event's index update on the first hiccup.
+# Retries a transient ES failure a few times before giving up — without this, the per-record offset commit (enable_auto_commit below) would advance past a message whose write never succeeded, silently losing it.
 ES_WRITE_MAX_ATTEMPTS = 3
 ES_WRITE_RETRY_BACKOFF_SECONDS = 1.0
 
@@ -28,8 +24,7 @@ def build_kafka_consumer() -> AIOKafkaConsumer:
         bootstrap_servers=settings.kafka_bootstrap_servers,
         group_id=settings.kafka_consumer_group_id,
         auto_offset_reset="earliest",
-        # Manual commit (default auto-commit would advance past a crash mid-write) —
-        # offset only commits in run() after _handle() fully finishes.
+        # Manual commit — default auto-commit would advance past a crash mid-write; offset commits in run() only after _handle() finishes.
         enable_auto_commit=False,
     )
 
@@ -81,17 +76,13 @@ class EventConsumer:
     async def run(self) -> None:
         async for record in self._consumer:
             await self._handle(record.value)
-            # Manual, per-record offset commit only after _handle() has
-            # fully finished — see build_kafka_consumer's enable_auto_commit
-            # note.
+            # Offset commits only after _handle() fully finishes — see build_kafka_consumer's enable_auto_commit note.
             await self._consumer.commit()
 
     async def _handle(self, raw: bytes) -> None:
         try:
             payload = json.loads(raw)
-            # payload.get() assumes a JSON object; valid JSON that isn't one
-            # (a bare list/string/number/null) raises AttributeError here,
-            # which must not escape and kill the background consumer task.
+            # payload.get() assumes a JSON object; a bare list/string/number/null raises AttributeError here, which must not escape and kill the consumer task.
             action = KafkaAction(payload.get("action"))
         except (json.JSONDecodeError, ValueError, AttributeError, TypeError) as exc:
             logger.warning("search_consumer_message_unparseable", error=str(exc), raw=raw[:500])

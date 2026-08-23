@@ -23,8 +23,7 @@ async def lifespan(app: FastAPI):
 
 
 def _json_safe(value: Any) -> Any:
-    # Starlette's JSONResponse rejects NaN/Infinity; a validation error that echoes
-    # a rejected NaN/Infinity input would otherwise crash the 422 into a 500.
+    # Starlette's JSONResponse rejects NaN/Infinity; echoing a rejected value back in the 422 body would otherwise crash it into a 500.
     if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
         return str(value)
     if isinstance(value, dict):

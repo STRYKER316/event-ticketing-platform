@@ -3,9 +3,9 @@ from abc import ABC, abstractmethod
 
 
 class TicketHoldStrategy(ABC):
-    """§6: both hold mechanisms (cron sweep, Redis TTL) satisfy this same
+    """Both hold mechanisms (cron sweep, Redis TTL) satisfy this same
     contract so BookingManager and the Phase 8 benchmark harness never
-    branch on which is active. Hold-state storage is deliberately
+    branch on which is active (§6). Hold-state storage is deliberately
     asymmetric between the two concrete implementations even though the
     contract they satisfy is identical — see CronHoldStrategy's and
     RedisHoldStrategy's own docstrings."""

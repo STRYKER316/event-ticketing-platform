@@ -16,8 +16,6 @@ def test_backoff_is_capped():
 
 
 def test_backoff_does_not_overflow_on_a_huge_attempt():
-    # RetryEnvelope.attempt is DTO-bounded (le=1000), but this function must
-    # stay safe on its own regardless — a value large enough to overflow
-    # base**attempt before min() ever clamps it must still return the cap, not raise.
+    # Must stay safe even for a value large enough to overflow base**attempt before min() clamps it — return the cap, not raise.
     with override_settings(retry_base_backoff_seconds=2.0, retry_backoff_cap_seconds=30.0):
         assert compute_backoff_seconds(10**9) == 30.0

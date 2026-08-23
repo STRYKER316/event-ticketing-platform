@@ -29,9 +29,7 @@ async def lifespan(app: FastAPI):
         consumer_task = asyncio.create_task(EventConsumer(kafka_consumer, repository).run())
         yield
     finally:
-        # try/finally so a failure partway through startup (e.g. ensure_index()
-        # timing out) still closes whatever was already opened, instead of
-        # leaking the ES client and/or Kafka consumer.
+        # try/finally so a startup failure (e.g. ensure_index() timing out) still closes whatever was already opened.
         if consumer_task is not None:
             consumer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -51,11 +49,7 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(TransportError)
     async def es_transport_error_handler(request: Request, exc: TransportError) -> JSONResponse:
-        # Same reasoning as booking-service's RedisError handler: one
-        # registration covers every HTTP route without each needing its own
-        # try/except, and only wraps the ASGI request/response cycle —
-        # EventConsumer's own Kafka-side ES writes are unaffected, since
-        # they never pass through here (they retry via _run_with_retry).
+        # Same reasoning as booking-service's RedisError handler — covers HTTP routes only; EventConsumer's Kafka-side writes retry separately via _run_with_retry.
         logger.error("search_backend_unreachable", error=str(exc))
         return JSONResponse(status_code=503, content={"detail": "search backend unavailable"})
 

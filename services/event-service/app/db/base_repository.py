@@ -30,7 +30,6 @@ class BaseRepository(Generic[ModelT]):
         return list(result.scalars().all())
 
     async def delete(self, instance_id: uuid.UUID) -> bool:
-        # Core-level DELETE so rowcount is available: a concurrent duplicate delete
-        # matches zero rows once the winner has already committed.
+        # Core-level DELETE so rowcount is available: a concurrent duplicate delete matches zero rows once the winner has committed.
         result = await self._session.execute(sa_delete(self._model).where(self._model.id == instance_id))
         return result.rowcount > 0

@@ -41,9 +41,7 @@ async def test_create_charge_calls_stripe_with_booking_id_as_idempotency_key(mon
 
 
 async def test_create_charge_is_idempotent_on_replay_once_stripe_accepted_it(monkeypatch):
-    # The correctness contract this task exists to satisfy (§9): a repeated
-    # charge attempt for a booking Stripe already accepted must not call
-    # Stripe a second time.
+    # §9: a repeated charge attempt for a booking Stripe already accepted must not call Stripe a second time.
     booking_id = uuid.uuid4()
     existing = Payment(
         id=uuid.uuid4(),
@@ -70,10 +68,7 @@ async def test_create_charge_is_idempotent_on_replay_once_stripe_accepted_it(mon
 
 
 async def test_create_charge_retries_stripe_when_previous_attempt_never_reached_it(monkeypatch):
-    # Live-testing regression: a Payment row can exist with no
-    # stripe_charge_id (the previous attempt raised before Stripe ever
-    # responded, e.g. a transient network error) — that must be retried, not
-    # treated as an idempotent replay forever.
+    # Regression: a Payment row with no stripe_charge_id (Stripe never responded) must be retried, not treated as an idempotent replay forever.
     booking_id = uuid.uuid4()
     existing = Payment(
         id=uuid.uuid4(),
@@ -135,10 +130,7 @@ async def test_webhook_success_transitions_pending_payment_and_publishes():
 
 
 async def test_replayed_webhook_on_already_terminal_payment_is_a_safe_no_op():
-    # The correctness contract this task exists to satisfy (§7's general
-    # idempotent-consumer rule, applied to a webhook): a redelivered event
-    # for an already-terminal Payment must not transition it again or
-    # publish a second Kafka message.
+    # A redelivered event for an already-terminal Payment must not transition or publish again — the idempotent-consumer rule (decisions-log §7) applied to a webhook.
     payment = Payment(
         id=uuid.uuid4(),
         booking_id=uuid.uuid4(),
@@ -167,9 +159,7 @@ async def test_replayed_webhook_on_already_terminal_payment_is_a_safe_no_op():
 
 
 async def test_late_success_webhook_after_earlier_failure_still_transitions_and_confirms():
-    # A FAILED payment must still accept a genuine later success and drive
-    # the same confirm-booking publish as the PENDING->SUCCEEDED path, not
-    # be silently dropped as a no-op.
+    # A FAILED payment must still accept a genuine later success and drive the same confirm-booking publish as the PENDING->SUCCEEDED path.
     payment = Payment(
         id=uuid.uuid4(),
         booking_id=uuid.uuid4(),
@@ -274,10 +264,7 @@ async def test_refund_payment_on_unknown_booking_is_a_safe_no_op():
 
 
 async def test_refund_payment_replay_after_success_is_a_safe_no_op(monkeypatch):
-    # The correctness contract this exists to satisfy (§7's general
-    # idempotent-consumer rule, applied to a Kafka consumer instead of a
-    # webhook): a redelivered booking.cancelled message for an
-    # already-refunded Payment must not call Stripe a second time.
+    # A redelivered booking.cancelled for an already-refunded Payment must not call Stripe a second time (idempotent-consumer rule, decisions-log §7).
     booking_id = uuid.uuid4()
     payment = _succeeded_payment(booking_id)
     payment.stripe_refund_id = "re_already_done"
@@ -310,9 +297,7 @@ async def test_refund_payment_on_non_succeeded_payment_is_a_safe_no_op(monkeypat
 
 
 async def test_refund_payment_on_stripe_failure_publishes_notification_and_leaves_status_unchanged(monkeypatch):
-    # §22's explicit scope boundary: a failed refund is logged and surfaced,
-    # not rolled back — Payment.status must stay SUCCEEDED, not flip to any
-    # terminal-looking state, so a future retry can still attempt it again.
+    # A failed refund is logged and surfaced, not rolled back — Payment.status stays SUCCEEDED so a future retry can attempt it again (decisions-log §22).
     booking_id = uuid.uuid4()
     payment = _succeeded_payment(booking_id)
     payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=payment))
@@ -333,11 +318,7 @@ async def test_refund_payment_on_stripe_failure_publishes_notification_and_leave
 
 
 async def test_refund_payment_notification_publish_failure_does_not_raise(monkeypatch):
-    # Found in code review: if publish_refund_failed itself raises (broker
-    # down), that must not escape refund_payment — a Kafka consumer's own
-    # retry wrapper would otherwise misattribute it as a DB failure and
-    # retry the whole operation (including a pointless re-submission to
-    # Stripe) before silently losing the notification anyway.
+    # A raise from publish_refund_failed itself must not escape refund_payment — the consumer's retry wrapper would otherwise misattribute it as a DB failure.
     booking_id = uuid.uuid4()
     payment = _succeeded_payment(booking_id)
     payments = AsyncMock(get_by_booking_id=AsyncMock(return_value=payment))

@@ -12,10 +12,7 @@ class AuthSettings(BaseSettings):
     keycloak_issuer: NonBlankStr
     expected_audience: NonBlankStr
     jwks_cache_ttl_seconds: int = 300
-    # JWKS is public key material — fetching it doesn't require hitting the same
-    # hostname a token's `iss` claim carries. Override when the service reaches
-    # Keycloak over a different network path than clients used to get their
-    # token (e.g. Docker-internal service name vs. the host-mapped port).
+    # Override when the service reaches Keycloak over a different network path than clients do (e.g. Docker-internal name vs. host-mapped port).
     jwks_uri_override: NonBlankStr | None = None
 
     @field_validator("keycloak_issuer")

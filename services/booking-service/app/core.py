@@ -33,22 +33,17 @@ class Settings(BaseSettings):
     payment_outcomes_topic: str = "payment.outcomes"
     # Integration point #5 (§22) — this service's first-ever Kafka producer.
     cancelled_bookings_topic: str = "booking.cancelled"
-    # Integration point #3 (§7 point 3, Phase 5) — shared with payment-service,
-    # which already publishes REFUND_FAILED here since P6.T3.
+    # Integration point #3 (§7 point 3, Phase 5) — shared with payment-service, which already publishes REFUND_FAILED here since P6.T3.
     notifications_topic: str = "notifications"
     kafka_consumer_group_id: str = "booking-service"
-    # Separate from kafka_consumer_group_id: sharing one group id across
-    # both consumers meant every payment.outcomes rebalance also rebalanced
-    # the (unrelated) provisioning consumer's event.events subscription,
-    # and vice versa.
+    # Separate from kafka_consumer_group_id so a payment.outcomes rebalance doesn't also rebalance the unrelated provisioning consumer, and vice versa.
     payment_outcome_consumer_group_id: str = "booking-service-payment-outcomes"
 
     hold_strategy: Literal["cron", "redis"] = "cron"  # Phase 8 benchmark toggles this
     hold_ttl_seconds: int = 600
     hold_sweep_interval_seconds: int = 30
 
-    # Booking Service fronts payment (decisions-log §9 amendment) — the one
-    # synchronous inter-service call in this system.
+    # Booking Service fronts payment (decisions-log §9 amendment) — the one synchronous inter-service call in this system.
     payment_service_url: str = "http://localhost:8004"
 
     @property
@@ -142,9 +137,7 @@ _redis_lock = asyncio.Lock()
 
 async def get_redis() -> Redis:
     global _redis
-    # Unlike get_engine(), this has an `await` between the check and the
-    # assignment, so two concurrent first callers can otherwise both start a
-    # client — the loser's connection is then never closed.
+    # Unlike get_engine(), an `await` sits between the check and assignment, so without the lock two concurrent first callers could both start a client and leak the loser's connection.
     async with _redis_lock:
         if _redis is None:
             _redis = Redis(host=get_settings().redis_host, port=get_settings().redis_port, decode_responses=True)

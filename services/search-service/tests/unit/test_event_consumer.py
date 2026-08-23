@@ -69,9 +69,7 @@ async def test_unknown_action_does_not_raise():
 
 
 async def test_repository_failure_is_caught_not_raised_after_exhausting_retries(monkeypatch):
-    # Zero backoff keeps this test fast; call-count proves every attempt
-    # actually happened rather than giving up after the first — same pattern
-    # as booking-service's equivalent DB-write-failure test.
+    # Zero backoff keeps this fast; call-count proves every attempt happened, not just the first — same pattern as booking-service's equivalent test.
     monkeypatch.setattr(consumers, "ES_WRITE_RETRY_BACKOFF_SECONDS", 0)
     consumer, repository = make_consumer()
     repository.upsert.side_effect = RuntimeError("elasticsearch down")
@@ -82,10 +80,7 @@ async def test_repository_failure_is_caught_not_raised_after_exhausting_retries(
 
 
 async def test_transient_repository_failure_is_retried_then_succeeds(monkeypatch):
-    # Regression test for the "no bounded retry around the ES write" finding:
-    # a transient failure on the first attempt(s) must not be treated as a
-    # permanent loss — the write is retried in place and the document still
-    # ends up indexed once the transient condition clears.
+    # Regression test: a transient failure on early attempts must not be treated as permanent loss — the write retries and still succeeds once it clears.
     monkeypatch.setattr(consumers, "ES_WRITE_RETRY_BACKOFF_SECONDS", 0)
     consumer, repository = make_consumer()
     repository.upsert.side_effect = [RuntimeError("transient ES blip"), None]
@@ -96,8 +91,7 @@ async def test_transient_repository_failure_is_retried_then_succeeds(monkeypatch
 
 
 async def test_offset_only_committed_after_handle_finishes():
-    # run()'s per-record offset commit must happen strictly after _handle()
-    # returns, not on aiokafka's background auto-commit timer.
+    # run()'s per-record offset commit must happen strictly after _handle() returns, not on aiokafka's background auto-commit timer.
     calls: list[str] = []
     repository = AsyncMock()
     repository.upsert.side_effect = lambda *_a, **_kw: calls.append("write")
@@ -117,9 +111,7 @@ async def test_offset_only_committed_after_handle_finishes():
 
 
 async def test_valid_json_non_object_does_not_raise():
-    # payload.get("action") assumes a dict; a bare list/number/string/null is
-    # still valid JSON but has no .get() — this must not escape _handle and
-    # kill the background consumer task.
+    # payload.get("action") assumes a dict; a bare list/number/string/null is valid JSON but has no .get() — this must not escape _handle and kill the consumer task.
     consumer, repository = make_consumer()
 
     for non_object_payload in (["a", "list"], 5, "a string", None):

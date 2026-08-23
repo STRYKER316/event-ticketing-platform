@@ -73,8 +73,7 @@ async def test_non_owning_organizer_cannot_update():
 
 
 async def test_non_owning_organizer_gets_403_updating_a_published_event():
-    # PUBLISHED event: existence is already public, so mutation is merely
-    # forbidden (403), not hidden (404) — unlike the DRAFT case above.
+    # PUBLISHED event: existence is already public, so mutation is merely forbidden (403), not hidden (404) — unlike the DRAFT case above.
     event = make_event()
     event.status = EventStatus.PUBLISHED
     manager = make_manager(event)
@@ -136,9 +135,7 @@ async def test_non_owning_organizer_cannot_upsert_seat_map():
 
 
 async def test_seat_map_upsert_rejected_once_event_is_published():
-    # Booking Service may already have provisioned Ticket rows from the current
-    # seat map once PUBLISHED (§7.2) — mutating it in place is refused the same
-    # way delete is, rather than silently republished.
+    # Booking Service may already have provisioned Ticket rows from this seat map once PUBLISHED (§7.2) — refused the same way delete is.
     event = make_event()
     event.status = EventStatus.PUBLISHED
     manager = make_manager(event)
@@ -168,9 +165,7 @@ async def test_delete_reports_not_found_when_a_concurrent_delete_won_the_race():
 
 
 async def test_owning_organizer_cannot_delete_a_published_event():
-    # Event Service can't see booking_db (§8) to check for live bookings, so
-    # a PUBLISHED event is refused outright rather than conditionally
-    # checked (Task 6 amendment, decisions-log delta).
+    # Event Service can't see booking_db (§8) to check for live bookings, so a PUBLISHED event is refused outright rather than conditionally checked.
     event = make_event()
     event.status = EventStatus.PUBLISHED
     manager = make_manager(event)
@@ -194,9 +189,7 @@ async def test_update_rejects_end_time_before_existing_start_time():
     assert exc_info.value.status_code == 422
 
 
-# --- DRAFT visibility scoping (§15) ---
-# A DRAFT event's existence and full seat map must not be readable by
-# anyone but its owning organizer, even by guessing the event ID.
+# --- DRAFT visibility scoping (§15): only the owning organizer may read a DRAFT event, even by guessing its ID. ---
 
 
 async def test_draft_event_is_hidden_from_non_owning_organizer():

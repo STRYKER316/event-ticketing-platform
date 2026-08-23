@@ -23,10 +23,7 @@ logger = structlog.get_logger()
 
 
 def _log_if_died(name: str, task: asyncio.Task) -> None:
-    # Same reasoning as booking-service/payment-service's own helper — a
-    # background task's exception is otherwise only surfaced when the task
-    # object is garbage-collected, which never happens while `lifespan`
-    # holds a live reference to it for the app's whole lifetime.
+    # Surfaces the exception now, since it otherwise only shows on GC, which never happens while `lifespan` keeps a live reference.
     if task.cancelled():
         return
     exc = task.exception()
@@ -36,9 +33,7 @@ def _log_if_died(name: str, task: asyncio.Task) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # No shared_auth.aclose() here (unlike every other service's lifespan)
-    # — this service exposes no protected routes, so no JWKS client is ever
-    # created (see this phase's kickoff doc process note).
+    # No shared_auth.aclose() here — this service exposes no protected routes, so no JWKS client is ever created.
     notification_kafka_consumer: AIOKafkaConsumer | None = None
     notification_task: asyncio.Task | None = None
     retry_kafka_consumer: AIOKafkaConsumer | None = None

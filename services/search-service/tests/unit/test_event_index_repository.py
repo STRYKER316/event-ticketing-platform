@@ -39,8 +39,7 @@ async def test_ensure_index_skips_create_when_already_exists():
 
 
 async def test_ensure_index_swallows_concurrent_create_race():
-    # Two instances both lose the exists()-then-create() race against each
-    # other; the loser's create() must not crash startup.
+    # Two instances both lose the exists()-then-create() race; the loser's create() must not crash startup.
     repository, client = make_repository()
     client.indices.exists.return_value = False
     client.indices.create.side_effect = _bad_request_error("resource_already_exists_exception")

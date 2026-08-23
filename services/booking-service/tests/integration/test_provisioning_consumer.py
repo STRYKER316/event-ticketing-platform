@@ -54,9 +54,7 @@ async def test_upserted_message_provisions_one_ticket_per_seat(
 async def test_upserted_message_writes_the_event_start_time(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
-    # §22 amendment #2 — the cancellation-cutoff check depends on this row
-    # existing, written from the same message that already provisions
-    # tickets, no new Kafka point.
+    # The cancellation-cutoff check depends on this row, written from the same message that already provisions tickets (decisions-log §22 amendment #2).
     event_id = uuid.uuid4()
     consumer = ProvisioningConsumer(consumer=None, session_factory=db_session_factory)
 
@@ -113,11 +111,7 @@ async def test_redelivered_message_creates_no_duplicate_tickets(
 async def test_seat_map_larger_than_one_insert_batch_provisions_every_seat(
     db_session_factory: async_sessionmaker[AsyncSession],
 ):
-    # Regression: a single multi-row INSERT bound 6 params/seat, so a seat
-    # map anywhere near event-service's 20,000-seat cap overflowed Postgres's
-    # ~32,767 bind-param limit. INSERT_BATCH_SIZE is 5000, so 6000 seats
-    # forces a real two-batch provision (5000 + 1000) and proves nothing gets
-    # dropped or duplicated across the batch boundary.
+    # Regression: an unbatched multi-row INSERT overflowed Postgres's bind-param cap near event-service's seat-map limit; 6000 seats forces a real two-batch provision.
     event_id = uuid.uuid4()
     seat_count = 6000
     start = datetime.now(timezone.utc) + timedelta(days=1)
@@ -143,10 +137,7 @@ async def test_seat_map_larger_than_one_insert_batch_provisions_every_seat(
 async def test_transient_db_failure_recovers_on_retry_and_still_provisions(
     db_session_factory: async_sessionmaker[AsyncSession], monkeypatch
 ):
-    # A DB error on the first attempt(s) — the "connection blip" the retry
-    # loop exists for — must not cost the tickets: the real session_factory
-    # is used from the attempt that succeeds onward, and the seats still all
-    # land.
+    # A DB error on the first attempt(s) (the "connection blip" the retry loop exists for) must not cost the tickets.
     monkeypatch.setattr(consumers, "DB_WRITE_RETRY_BACKOFF_SECONDS", 0)
     event_id = uuid.uuid4()
     call_count = 0

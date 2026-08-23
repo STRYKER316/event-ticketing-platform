@@ -27,8 +27,7 @@ class Settings(BaseSettings):
     # Integration point #5 (§22) — this service's first-ever Kafka consumer.
     cancelled_bookings_topic: str = "booking.cancelled"
     cancelled_bookings_consumer_group_id: str = "payment-service-cancelled-bookings"
-    # Integration point #3, producer side only this phase (§22 amendment #3)
-    # — Notification Service doesn't exist yet to consume it.
+    # Integration point #3, producer side only this phase (§22 amendment #3) — Notification Service doesn't exist yet to consume it.
     notifications_topic: str = "notifications"
 
     stripe_secret_key: str = "sk_test_changeme"
@@ -125,15 +124,10 @@ _kafka_producer_lock = asyncio.Lock()
 
 async def get_kafka_producer() -> AIOKafkaProducer:
     global _kafka_producer
-    # Unlike get_engine(), this has an `await` between the check and the
-    # assignment, so two concurrent first callers can otherwise both start a
-    # producer — the loser's connection is then never stopped.
+    # Unlike get_engine(), there's an `await` between check and assignment, so two concurrent first callers could otherwise both start a producer and strand the loser's connection.
     async with _kafka_producer_lock:
         if _kafka_producer is None:
-            # aiokafka's default request_timeout_ms is 40000 -- under a broker outage
-            # that leaves a publish-triggering request hanging for 40s before the
-            # client sees a failure. 10s still tolerates real broker slowness while
-            # failing fast enough to matter (same value as event-service's producer).
+            # 10s request timeout (vs. aiokafka's 40s default) fails fast on a broker outage while still tolerating real slowness (same value as event-service's producer).
             producer = AIOKafkaProducer(
                 bootstrap_servers=get_settings().kafka_bootstrap_servers, request_timeout_ms=10_000
             )

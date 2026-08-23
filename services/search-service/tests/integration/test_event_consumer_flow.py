@@ -61,11 +61,7 @@ async def test_publish_makes_event_searchable_and_redelivery_is_a_noop(
         "seats": [{"section": "A", "row": "1", "label": "A1", "price_cents": 2500}],
     }
 
-    # Eventual consistency (§7): nothing has indexed this fresh event_id yet
-    # (checked before publishing, deterministically — checking immediately
-    # after send_and_wait would race the consumer and could flake on a fast
-    # machine). It only becomes searchable once the consumer actually
-    # processes the message below.
+    # Eventual consistency (§7): checked before publishing, deterministically — checking right after send_and_wait would race the consumer and could flake.
     assert not await es_client.exists(index="events", id=event_id)
 
     await kafka_producer.send_and_wait(EVENTS_TOPIC, key=event_id.encode(), value=json.dumps(message).encode())
@@ -117,8 +113,7 @@ async def test_delete_removes_document_and_redelivered_delete_is_a_noop(
 
     await _wait_until(deleted)
 
-    # A redelivered delete for an already-deleted document must not raise or
-    # otherwise disrupt the consumer loop.
+    # A redelivered delete for an already-deleted document must not raise or disrupt the consumer loop.
     await kafka_producer.send_and_wait(
         EVENTS_TOPIC, key=event_id.encode(), value=json.dumps(delete_message).encode()
     )

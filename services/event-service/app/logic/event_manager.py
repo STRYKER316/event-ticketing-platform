@@ -39,9 +39,7 @@ class EventManager:
         self._venues = VenueRepository(session)
         self._performers = PerformerRepository(session)
         self._seat_maps = SeatMapRepository(mongo_db)
-        # Optional: only the write paths that publish (update/publish/delete)
-        # need it — reads and plain create() shouldn't require a live Kafka
-        # connection just to construct this class.
+        # Optional: only the write paths that publish (update/publish/delete) need it — reads and create() shouldn't require a live Kafka connection.
         self._producer = producer
 
     async def list_events(
@@ -51,8 +49,7 @@ class EventManager:
         sort_field: EventSortField,
         sort_order: SortOrder,
     ) -> EventListResponse:
-        # Public listing (§15): DRAFT events are never visible here, only to
-        # their owning organizer via a direct GET /events/{id} — see get_event.
+        # Public listing (§15): DRAFT events are never visible here, only via a direct GET /events/{id} to their owning organizer.
         events = await self._events.list(
             limit, offset, sort_field.value, sort_order is SortOrder.DESC, status=EventStatus.PUBLISHED
         )
@@ -125,9 +122,7 @@ class EventManager:
         if seat_map is None:
             logger.warning("event_publish_missing_seat_map", event_id=str(event_id))
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "cannot publish an event without a seat map")
-        # Publish before commit (matches payment_manager's webhook handler): a
-        # Kafka failure leaves the status mutation uncommitted, so the client
-        # can retry instead of getting stuck behind the already-published 409.
+        # Publish before commit (matches payment_manager's webhook handler): a Kafka failure leaves the mutation uncommitted, so the client can retry.
         event.status = EventStatus.PUBLISHED
         await self._producer.publish_upserted(event, seat_map)
         await self._session.commit()
@@ -136,10 +131,7 @@ class EventManager:
     async def delete_event(self, user: Principal, event_id: uuid.UUID) -> None:
         event = await self._fetch_owned_event(user, event_id)
         self._check_cannot_delete_published(event)
-        # A PUBLISHED event can never reach here (checked above), so a
-        # deleted event was always DRAFT — never provisioned in Booking
-        # Service, so there is nothing for a booking.deleted Kafka message
-        # to announce.
+        # A PUBLISHED event can never reach here, so a deleted event was always DRAFT and never provisioned in Booking Service — nothing to announce.
         deleted = await self._events.delete(event_id)
         if not deleted:
             # Lost a race with a concurrent duplicate delete.
@@ -187,10 +179,7 @@ class EventManager:
     async def _apply_update(self, event: Event, payload: EventUpdate) -> None:
         if payload.title is not None:
             event.title = payload.title
-        # description is nullable/clearable, unlike the other fields here (which
-        # are non-nullable on Event, so an explicit null on them is meaningless) —
-        # `is not None` can't tell "omitted" from "explicit null", so this field
-        # alone needs the model_fields_set sentinel to actually support clearing it.
+        # description alone is nullable/clearable; `is not None` can't tell "omitted" from "explicit null", so it needs the model_fields_set sentinel.
         if "description" in payload.model_fields_set:
             event.description = payload.description
         if payload.start_time is not None:
@@ -208,32 +197,19 @@ class EventManager:
             event.performers = await self._resolve_performers(payload.performer_ids)
 
     def _check_cannot_delete_published(self, event: Event) -> None:
-        # Event Service cannot see booking_db (database-per-service, §8) and
-        # there is no sixth Kafka integration point for a delete-time
-        # cross-service check (§7 caps the five). Once an event is
-        # PUBLISHED, tickets may exist in Booking Service — refuse deletion
-        # outright rather than attempt a coordination check this
-        # architecture has no channel for.
+        # Event Service can't see booking_db (§8) and there's no sixth Kafka point for a delete-time check (§7) — refuse outright once PUBLISHED.
         if event.status is EventStatus.PUBLISHED:
             logger.warning("event_delete_rejected_published", event_id=str(event.id))
             raise HTTPException(status.HTTP_409_CONFLICT, "cannot delete a published event")
 
     def _check_visible(self, event: Event, user: Principal | None) -> None:
-        # Ownership scoping applied to visibility, not just mutation (§15): a
-        # DRAFT event (pricing, layout, existence) is readable only by its
-        # owning organizer. Return 404 rather than 403 to a non-owner so a
-        # DRAFT event's existence can't be distinguished from a nonexistent
-        # one by enumerating IDs.
+        # Ownership scoping applied to visibility, not just mutation (§15); 404 (not 403) to a non-owner so DRAFT existence can't be enumerated.
         if event.status is EventStatus.DRAFT and (user is None or event.organizer_id != user.subject):
             logger.warning("event_visibility_denied", event_id=str(event.id))
             raise HTTPException(status.HTTP_404_NOT_FOUND, "event not found")
 
     def _check_seat_map_immutable_once_published(self, event: Event) -> None:
-        # Once PUBLISHED, Booking Service may already have provisioned Ticket
-        # rows from the current seat map (§7.2) — mutating it in place could
-        # silently orphan or mis-price those tickets. Same refuse-outright
-        # posture as _check_cannot_delete_published, for the same reason
-        # (no channel to check booking_db, §8).
+        # Once PUBLISHED, Booking Service may have already provisioned Tickets from this seat map — mutating it could silently orphan or mis-price them.
         if event.status is EventStatus.PUBLISHED:
             logger.warning("event_seat_map_mutation_rejected_published", event_id=str(event.id))
             raise HTTPException(status.HTTP_409_CONFLICT, "cannot modify the seat map of a published event")

@@ -17,10 +17,7 @@ from app.logic.booking_manager import BookingManager
 from app.logic.helpers.hold_strategy_factory import get_hold_strategy
 
 router = APIRouter()
-# Separate from shared_auth's own internal bearer-scheme instance — this one
-# exists purely to recover the raw token string so it can be forwarded to
-# Payment Service unmodified (§9 amendment); it parses the same
-# Authorization header get_current_user already validates, no extra cost.
+# Separate from shared_auth's own bearer-scheme instance — this one just recovers the raw token to forward to Payment Service unmodified (§9 amendment).
 _bearer_scheme = HTTPBearer(auto_error=True)
 
 

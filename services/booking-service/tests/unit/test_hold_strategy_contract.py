@@ -8,11 +8,7 @@ from app.logic.helpers.fake_hold_strategy import FakeHoldStrategy
 pytestmark = pytest.mark.asyncio
 
 
-# The real Postgres- and Redis-backed implementations (CronHoldStrategy,
-# RedisHoldStrategy) satisfy this identical contract too — proven against
-# real infra in tests/integration/test_hold_strategy_contract.py, since a
-# unit-tier fixture here can't stand up testcontainers. This file stays
-# fake-only so it runs with no infra at all.
+# The real Postgres/Redis implementations satisfy this same contract, proven against real infra in tests/integration/test_hold_strategy_contract.py; this file stays fake-only so it runs with no infra.
 @pytest.fixture
 def strategy() -> FakeHoldStrategy:
     return FakeHoldStrategy()

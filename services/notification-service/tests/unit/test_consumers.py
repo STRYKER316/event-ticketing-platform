@@ -13,11 +13,7 @@ def test_error_text_falls_back_to_repr_for_blank_message():
 
 
 def test_error_text_falls_back_to_repr_for_whitespace_only_message():
-    # Regression for the bug this project already found and partially fixed
-    # once (commits ec18336/a8411c6): `str(exc) or repr(exc)` treats "  " as
-    # truthy, so it used to pass the whitespace straight through — only for
-    # RetryEnvelope's own strip_whitespace to collapse it back to "" and
-    # raise ValidationError one level down.
+    # Regression: `str(exc) or repr(exc)` treats "  " as truthy, letting it through only for RetryEnvelope's strip_whitespace to collapse it to "" downstream.
     exc = Exception("   ")
     text = _error_text(exc)
     assert text == repr(exc)
@@ -25,11 +21,7 @@ def test_error_text_falls_back_to_repr_for_whitespace_only_message():
 
 
 def test_whitespace_only_exception_does_not_crash_retry_envelope_construction():
-    # The actual failure mode: RetryConsumer/NotificationConsumer building a
-    # RetryEnvelope from _error_text(exc) must never raise, even for an
-    # exception whose message is whitespace-only — that ValidationError used
-    # to escape every _publish_with_retry guard and permanently kill the
-    # consumer task on redelivery.
+    # Building a RetryEnvelope from _error_text(exc) must never raise, even for a whitespace-only message — that used to kill the consumer task.
     exc = Exception("   ")
     envelope = RetryEnvelope(
         attempt=2,

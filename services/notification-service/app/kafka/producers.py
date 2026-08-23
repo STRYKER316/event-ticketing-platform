@@ -41,8 +41,7 @@ class RetryPublisher:
     async def _send(
         self, envelope: RetryEnvelope, topic: str, log_fn: Callable[..., None], log_event: str, **log_fields
     ) -> None:
-        # Keyed by booking ID, same reasoning as every other producer in
-        # this system — redelivery/ordering per booking preserved (§7).
+        # Keyed by booking ID, same as every other producer here — redelivery/ordering per booking preserved (§7).
         await self._producer.send_and_wait(
             topic,
             key=str(envelope.original.booking_id).encode(),

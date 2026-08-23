@@ -68,9 +68,7 @@ def test_seat_map_upsert_rejects_empty_sections():
 
 
 def test_seat_map_upsert_rejects_a_section_with_no_rows():
-    # A non-empty `sections` list satisfies SeatMapUpsert's own constraint
-    # while still describing zero actual seats if nothing stops an empty
-    # `rows` list nested inside it.
+    # A non-empty `sections` list still describes zero actual seats if nothing stops an empty `rows` list nested inside it.
     with pytest.raises(ValidationError):
         SeatMapUpsert(sections=[SeatMapSection(price_cents=2500, name="A", rows=[])])
 
@@ -93,9 +91,7 @@ def test_seat_map_section_rejects_non_positive_price():
 
 
 def test_seat_map_section_rejects_price_beyond_postgres_int4_range():
-    # An out-of-range price flows through Kafka into booking-service's
-    # Ticket.price_cents (a plain Postgres int4 column) and would otherwise
-    # cause a permanent insert failure on every redelivery.
+    # An out-of-range price flows through Kafka into a plain Postgres int4 column and would otherwise permanently fail the insert on every redelivery.
     with pytest.raises(ValidationError):
         SeatMapSection(
             price_cents=POSTGRES_INT4_MAX + 1, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])]

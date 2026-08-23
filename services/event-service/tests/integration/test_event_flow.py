@@ -43,13 +43,7 @@ async def test_create_venue_commits_visibly_to_a_second_connection(db_session: A
 
     created = await manager.create_venue(VenueCreate(name="New Arena", address="9 New St", capacity=500))
 
-    # A query against db_session itself would pass even if create_venue
-    # never committed: BaseRepository.create() already flush()es, and a
-    # flushed-but-uncommitted row is visible to further queries on the same
-    # open transaction (expire_on_commit=False keeps the in-memory object
-    # live too). Only a genuinely separate connection can tell "flushed"
-    # apart from "committed" — Postgres's default READ COMMITTED isolation
-    # hides db_session's write from here unless it was actually committed.
+    # A query against db_session itself would pass even without a commit (flush() alone is visible there); only a separate connection under READ COMMITTED can tell the two apart.
     other_engine = create_async_engine(_migrated_database_url)
     async with other_engine.connect() as conn:
         row = (await conn.execute(text("SELECT name, capacity FROM venues WHERE id = :id"), {"id": str(created.id)})).one()
@@ -102,9 +96,7 @@ async def test_cross_organizer_cannot_upsert_seat_map(db_session: AsyncSession, 
 async def test_seat_map_upsert_is_rejected_once_event_is_published(
     db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
 ):
-    # Booking Service may already have provisioned Ticket rows from the current
-    # seat map once PUBLISHED — mutating it in place is refused the same way
-    # delete is, rather than silently republished.
+    # Booking Service may already have provisioned Tickets from the current seat map once PUBLISHED, so mutation is refused, same as delete.
     venue = await _seed_venue(db_session)
     producer = AsyncMock()
     manager = EventManager(db_session, mongo_db, producer=producer)
@@ -194,9 +186,7 @@ async def test_publish_notifies_producer_and_republishes_on_update(
     await manager.update_event(ORGANIZER, created.id, EventUpdate(title="Renamed Concert"))
     assert producer.publish_upserted.await_count == 2
 
-    # A published event can never be deleted (Task 6 amendment, §-delta in
-    # decisions-log): Event Service has no channel to check Booking Service
-    # for live bookings, so deletion is refused outright once PUBLISHED.
+    # A published event can never be deleted: Event Service has no channel to check Booking Service for live bookings, so deletion is refused outright.
     with pytest.raises(HTTPException) as exc_info:
         await manager.delete_event(ORGANIZER, created.id)
     assert exc_info.value.status_code == 409
@@ -253,8 +243,7 @@ async def test_deleting_a_draft_event_does_not_notify_producer(db_session: Async
 async def test_repository_delete_reports_false_when_the_row_is_already_gone(
     db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
 ):
-    # Proves the rowcount-based race fix in EventManager.delete_event: deleting the
-    # same event ID twice, real rowcount is 0 the second time.
+    # Proves the rowcount-based race fix: deleting the same event ID twice, real rowcount is 0 the second time.
     venue = await _seed_venue(db_session)
     manager = EventManager(db_session, mongo_db, producer=AsyncMock())
     start = datetime.now(timezone.utc) + timedelta(days=1)
@@ -296,8 +285,7 @@ async def test_cross_organizer_update_is_rejected(db_session: AsyncSession, mong
 async def test_draft_event_and_seat_map_hidden_from_non_owner_and_anonymous(
     db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase
 ):
-    # A DRAFT event's existence and full seat map (pricing, layout) must not
-    # be readable by anyone who guesses/enumerates the event ID.
+    # A DRAFT event's existence and full seat map (pricing, layout) must not be readable by anyone who guesses/enumerates the event ID.
     venue = await _seed_venue(db_session)
     manager = EventManager(db_session, mongo_db, producer=AsyncMock())
     start = datetime.now(timezone.utc) + timedelta(days=1)
@@ -330,8 +318,7 @@ async def test_draft_event_and_seat_map_hidden_from_non_owner_and_anonymous(
 
 
 async def test_public_listing_excludes_draft_events(db_session: AsyncSession, mongo_db: AsyncIOMotorDatabase):
-    # Regression test: EventRepository.list built no WHERE clause on status, so
-    # DRAFT events leaked into the public GET /events listing.
+    # Regression test: EventRepository.list built no WHERE clause on status, so DRAFT events leaked into the public GET /events listing.
     venue = await _seed_venue(db_session)
     manager = EventManager(db_session, mongo_db, producer=AsyncMock())
     start = datetime.now(timezone.utc) + timedelta(days=1)
