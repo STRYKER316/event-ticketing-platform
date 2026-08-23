@@ -255,7 +255,9 @@ async def test_pay_booking_on_unknown_booking_404s():
     assert exc_info.value.status_code == 404
 
 
-async def test_pay_booking_by_non_owner_403s():
+async def test_pay_booking_by_non_owner_404s():
+    # A booking has no publicly visible state — existence must stay hidden
+    # from a non-owner the same way a DRAFT event's does, not just 403.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     booking = _pending_booking(booking_id, ticket_id, user_subject="someone-else")
     manager = BookingManager(
@@ -268,7 +270,7 @@ async def test_pay_booking_by_non_owner_403s():
 
     with pytest.raises(HTTPException) as exc_info:
         await manager.pay_booking(USER, booking_id, "token", AsyncMock())
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
 
 
 async def test_pay_booking_on_non_pending_booking_409s():
@@ -402,7 +404,8 @@ async def test_cancel_booking_on_unknown_booking_404s():
     assert exc_info.value.status_code == 404
 
 
-async def test_cancel_booking_by_non_owner_403s():
+async def test_cancel_booking_by_non_owner_404s():
+    # Same existence-hiding reasoning as test_pay_booking_by_non_owner_404s.
     booking_id, ticket_id = uuid.uuid4(), uuid.uuid4()
     booking = _confirmed_booking(booking_id, ticket_id, user_subject="someone-else")
     manager = BookingManager(
@@ -415,7 +418,7 @@ async def test_cancel_booking_by_non_owner_403s():
 
     with pytest.raises(HTTPException) as exc_info:
         await manager.cancel_booking(USER, booking_id, AsyncMock())
-    assert exc_info.value.status_code == 403
+    assert exc_info.value.status_code == 404
 
 
 async def test_cancel_booking_on_non_confirmed_booking_409s():

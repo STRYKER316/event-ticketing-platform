@@ -216,8 +216,13 @@ class BookingManager:
             logger.warning(not_found_event, booking_id=str(booking_id))
             raise HTTPException(status.HTTP_404_NOT_FOUND, "booking not found")
         if booking.user_subject != user.subject:
+            # 404, not 403: unlike an event, a booking has no publicly
+            # visible state at all (no GET route, no public listing), so
+            # its existence must stay hidden from every non-owner, not just
+            # its mutation blocked — same reasoning as event-service's
+            # _fetch_owned_event for a DRAFT event.
             logger.warning(ownership_denied_event, booking_id=str(booking_id), subject=user.subject)
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "not your booking")
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "booking not found")
         if booking.status is not expected_status:
             logger.warning(wrong_status_event, booking_id=str(booking_id), status=booking.status.value)
             raise HTTPException(status.HTTP_409_CONFLICT, wrong_status_detail)
