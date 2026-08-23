@@ -1080,7 +1080,7 @@ docker exec -it kafka /opt/kafka/bin/kafka-console-consumer.sh \
 <span class="out">{"action":"refund_failed","booking_id":"...","reason":"Invalid API Key provided: sk_test_****geme"}</span>
 
 <span class="c"># repeat-cancel on the now-CANCELLED booking — 409, and a cancel attempt past the event's
-# start time also 409s (§22's cancellation-cutoff policy, enforced against a new booking_db.events row)</span>
+# start time also 409s (cancellation-cutoff policy enforced against a new booking_db.events row, decisions-log §22)</span>
 curl -X POST localhost/bookings/&lt;same booking id&gt;/cancel -H "Authorization: Bearer $ALICE_TOKEN"
 <span class="out">{"detail":"booking is not confirmed"}</span>                <span class="fail">409</span>
 
@@ -1133,7 +1133,7 @@ curl -X POST localhost/bookings -H "Authorization: Bearer $ALICE_TOKEN" -d '{"ti
 <span class="out">{"id":"...", "status":"pending", ...}</span>                <span class="ok">201</span>
 
 <span class="c"># two real concurrent clients racing the same seat through the real API — found and fixed
-# a crash on the double-booking-critical path itself (see §06's proven list, build-log.md)</span>
+# a crash on the double-booking-critical path itself (see §06 below, and docs/build-log.md)</span>
 <span class="out">one 201 (a genuine PENDING booking), one clean 409 {"detail":"seat unavailable"} — no 500</span>  <span class="ok">live-verified</span></pre>
 </section>
 

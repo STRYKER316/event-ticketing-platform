@@ -88,9 +88,9 @@ class PaymentManager:
         synchronous Stripe response. Idempotent by construction: a
         rowcount-gated conditional UPDATE only transitions a Payment
         that's still PENDING, so a redelivered webhook — or two overlapping
-        deliveries racing each other — can't both win it. This is the same
-        general rule decisions-log §7 sets for a Kafka consumer, applied
-        here to a webhook.
+        deliveries racing each other — can't both win it. Same idempotent-
+        consumer rule this codebase already applies to Kafka consumers
+        (decisions-log §7), applied here to a webhook.
 
         Publishes *before* committing — the reverse order would let a
         Kafka-publish failure strand a Payment in its new terminal status

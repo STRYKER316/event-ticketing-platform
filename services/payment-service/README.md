@@ -24,10 +24,11 @@ Service consumes to confirm the booking or release the hold immediately.
 point #5, §22) — no equivalent API route, the Kafka message itself is the
 authorization, since Booking Service already checked ownership before
 publishing it. `PaymentManager.refund_payment` issues a Stripe refund
-(idempotency key `{booking_id}-refund`, the same pattern §9 uses for charges),
-gated by `stripe_refund_id is None`, the same resubmission-gate shape
-`create_charge` already uses. On a Stripe failure, `Payment.status` stays
-`SUCCEEDED` (no re-lock, no rollback — this is the explicit scope boundary §22 sets) and a
+(idempotency key `{booking_id}-refund`, the same pattern already used for
+charges, §9), gated by `stripe_refund_id is None`, the same resubmission-gate
+shape `create_charge` already uses. On a Stripe failure, `Payment.status`
+stays `SUCCEEDED` — no re-lock, no rollback, by explicit scope decision
+(§22) — and a
 message publishes to a new `notifications` topic — producer only this
 phase, since Notification Service (its consumer) doesn't exist until
 Phase 5.

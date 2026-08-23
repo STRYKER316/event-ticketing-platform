@@ -52,8 +52,8 @@ exercised live against a running Keycloak instance with real seed users
 subjects) during Phase 1 — not inferred from reading the route
 declarations. See `docs/architecture.html` §2 for the traced sequence.
 
-**P1 addendum — closing the venue/seat-map write gap.** Decisions-log §15
-originally described Event Service's write scope as "`POST /events`,
+**P1 addendum — closing the venue/seat-map write gap.** Event Service's
+write scope was originally described in decisions-log §15 as "`POST /events`,
 venue/seat-map management," but only the event endpoints were ever built in
 Phase 1 — `master-development-plan.md` never scheduled a task for the other
 two, so it went unnoticed until an audit ahead of Phase 3 surfaced it: an
@@ -70,7 +70,7 @@ what an organizer most recently set.
 
 **Phase 2 addition — publish as its own step.** Event Service originally
 shipped `POST /events` creating an event directly in a `PUBLISHED` state
-per decisions-log §15's original "creation = publishing" wording, but the
+per the original "creation = publishing" wording in decisions-log §15, but the
 actual Phase 1 build used a `DRAFT`/`PUBLISHED` model with no way to reach
 `PUBLISHED` at all — an open scope question deliberately left at the Phase
 1 checkpoint. Resolved in Phase 2 once the Kafka producer needed a concrete
@@ -102,13 +102,13 @@ points on the same auth-requirement spectrum `CLAUDE.md`'s conventions
 require every route to declare, not the same check applied twice.
 
 **Phase 3 addition — closing the `_check_no_bookings` stub with a
-decidable-locally rule.** §15's original delete policy read "deleting a
+decidable-locally rule.** The original delete policy in decisions-log §15 read "deleting a
 published event with existing tickets/bookings is not supported... only
 events with zero bookings can be removed" — a check Event Service was
 never actually able to perform, since database-per-service (§8) means it
 cannot see whether Booking Service holds any `Ticket`/`Booking` rows for
 a given event, and there is no sixth Kafka integration point for a
-delete-time cross-service query (§7 caps the five). Resolved at the point
+delete-time cross-service query, since integration points are capped at five (§7). Resolved at the point
 Booking Service actually existed and gave the stub something concrete to
 resolve against: `DELETE /events/{id}` now refuses unconditionally once
 `status == PUBLISHED` (409), regardless of whether tickets were ever
@@ -143,7 +143,7 @@ chapter's Payment Service section for the full account. The table above
 reflects the corrected, enforced state.
 
 **Ownership scoping on `/pay` works the same way as every other
-ownership-scoped route** (§15's pattern): the booking's stored
+ownership-scoped route**, the same pattern established in decisions-log §15: the booking's stored
 `user_subject` compared against the caller's JWT `subject`, not just a role
 check — `organizer` has no special standing here, same as booking itself
 (§15 delta, Phase 3). A booking has no publicly visible state at all (no
@@ -172,8 +172,8 @@ real idempotency bug this testing caught and fixed.
 |---|---|---|---|---|
 | `POST /bookings/{id}/cancel` (Booking Service) | 401 | **404** (existence hidden) | Allow (cancels + releases seat + triggers refund) | **409** |
 
-**Ownership scoping works the same way as `/pay`** (§15's pattern, applied
-a third time in this system): the booking's stored `user_subject` compared
+**Ownership scoping works the same way as `/pay`** — the same pattern from
+decisions-log §15, applied a third time in this system: the booking's stored `user_subject` compared
 against the caller's JWT `subject`, not a role check — `organizer` has no
 special standing over a booking it didn't make, same as booking and
 payment before it. Same existence-hiding 404, not 403, for the same reason
@@ -181,8 +181,8 @@ as `/pay`. Two state preconditions stack on top of the
 authorization check, both independently checked and independently
 returning 409: the booking must currently be `CONFIRMED` (cancelling a
 still-`PENDING`, already-`CANCELLED`, or `EXPIRED` booking is rejected),
-and the event's `start_time` must not have passed yet (§22's cancellation
-policy — full refund, any time before the event starts, no partial-refund
+and the event's `start_time` must not have passed yet (the cancellation
+policy in §22 — full refund, any time before the event starts, no partial-refund
 tiers). Payment Service has no route of its own for this at all — the
 refund is entirely Kafka-triggered (integration point #5), the message
 itself standing in as authorization since Booking Service already checked
@@ -218,8 +218,8 @@ Service's `PaymentOutcomeConsumer` (booking-confirmed) and Payment
 Service's webhook handler and refund path (payment-confirmed,
 refund-failed) each already checked ownership or used the Kafka message
 itself as authorization before publishing, the same "message is the
-authorization" reasoning §8/§22 already establish for Payment Service's
-own consumers. This is the "explicit, never implicit" auth convention
+authorization" reasoning already established for Payment Service's own
+consumers (§8/§22). This is the "explicit, never implicit" auth convention
 applied to its edge case: a service can genuinely have nothing to guard,
 and that absence is stated here rather than left unaddressed.
 

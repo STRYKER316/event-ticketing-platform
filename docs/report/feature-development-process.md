@@ -52,7 +52,7 @@ contention for one seat" — was already proven in Phase 3 (P3.T7,
 (below). Phase 8's job is not to re-prove correctness; it's to measure
 which mechanism performs better, and by how much, under real concurrent
 load — this is a genuine engineering trade-off decision, not a foregone
-conclusion, and decisions-log §6 deliberately left it open until it could
+conclusion, deliberately left open in decisions-log §6 until it could
 be measured rather than guessed.
 
 ## Methodology
@@ -107,8 +107,8 @@ independent runs per strategy.
 2. Hold-acquisition latency (p50/p95/p99) for successful bookings.
 3. Release latency, two ways: the *passive* path (an abandoned hold left
    to expire via cron sweep interval / Redis TTL, polled for), and the
-   *immediate* path (§17's `payment.failed` → immediate-release trigger,
-   simulated directly — see the decisions-log §17 amendment for why: P4,
+   *immediate* path (the `payment.failed` → immediate-release trigger from
+   §17, simulated directly — see the decisions-log §17 amendment for why: P4,
    the real trigger's producer, doesn't exist yet at this point in the
    locked report-first build order, and deferring the whole metric until
    P4 would contradict the reason P8 runs before P4 in the first place).
@@ -184,8 +184,8 @@ samples is suggestive rather than conclusive. What is conclusive,
 regardless of which strategy: **both release in single-digit
 milliseconds when triggered directly, versus ~12 seconds via the passive
 path — roughly three orders of magnitude faster, independent of hold
-strategy.** This confirms decisions-log §17's compensation-flow decision
-(build a real `payment.failed` → immediate-release path, not just rely on
+strategy.** This confirms the compensation-flow decision in decisions-log
+§17 (build a real `payment.failed` → immediate-release path, not just rely on
 the timeout safety net) is worth its documented implementation cost (§17:
 "roughly 2-4 days for the retry/DLQ pattern, plus ~0.5-1 day for the
 payment-failure hold-release handler") regardless of which hold strategy
@@ -198,7 +198,7 @@ performs exactly the write this benchmark measured directly — the
 a stand-in for a future handler, it's the real one, verified live against
 the running stack (see the Testing Strategy and Class Diagrams chapters'
 Payment Service sections). The numbers above were not re-measured, since
-the mechanism is identical either way (§17's original amendment already
+the mechanism is identical either way (the original amendment to §17 already
 established this — simulating the call is a faithful measurement of the
 mechanism, not a placeholder for it).
 
@@ -225,7 +225,7 @@ more data.
 correct** (P3.T7, and reconfirmed by this run's exact 30/30 successful
 allocation under both strategies, all three runs each), and cron requires
 no second infrastructure dependency (no Redis container, one fewer moving
-part in the deployed system, §12's cost-management priorities), the
+part in the deployed system, per the cost-management priorities in §12), the
 measured evidence in this report mildly favors `cron` as the default for
 the current single-instance deployment target (§12: AWS Elastic
 Beanstalk, one instance) — not because it demonstrably outperforms redis

@@ -81,7 +81,7 @@ unit test structurally cannot:
   The test asserts a document does *not* exist immediately after
   publishing (`await es_client.exists(...)` is `False` right after
   `send_and_wait`), then polls until it does — capturing the exact
-  asynchronous-indexing trade-off decisions-log §7/§26 calls out as an
+  asynchronous-indexing trade-off called out in decisions-log §7/§26 as an
   honest design consequence rather than a bug, with a passing test as the
   evidence rather than just a written claim.
 - **Redelivery is a proven no-op, not an assumed one**, for both directions:
@@ -430,8 +430,8 @@ discipline) found six real issues, most severe first:
    authenticated user, not just Booking Service, could submit an arbitrary
    `booking_id` and `amount_cents`, bypassing the ownership check and
    authoritative price lookup that only exist on Booking Service's side of
-   the call. This is exactly the failure mode decisions-log §9's amendment
-   assumed away ("Payment Service only needs to know the caller presented a
+   the call. This is exactly the failure mode the amendment in decisions-log
+   §9 assumed away ("Payment Service only needs to know the caller presented a
    valid Keycloak token... since Booking Service already verified
    ownership") without anything actually enforcing that only Booking
    Service could reach it. Fixed by narrowing the Traefik router rule.
@@ -575,7 +575,7 @@ found six issues, most severe first:
    treated a missing `Event` row as "before the cutoff, allow it," with no
    log line — undetectable, and reachable for real (two events in the
    running dev stack predate this phase's migration). This is precisely
-   the gap §22 amendment #2 exists to close, so leaving it open would have
+   the gap amendment #2 to §22 exists to close, so leaving it open would have
    meant the amendment's own fix wasn't actually enforced — exactly the
    kind of claim the Integrity rule doesn't allow standing unverified.
    Fixed to fail closed (409, logged). Live-verified both directions

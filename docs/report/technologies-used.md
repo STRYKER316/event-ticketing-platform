@@ -501,10 +501,10 @@ that provisions a fresh, self-contained seat pool via the real
 `event-service`/`booking-service` APIs, fires a fixed burst of concurrent
 clients at it via `asyncio.gather`, and measures successful/failed booking
 counts, hold-acquisition latency (p50/p95/p99), and time-to-release-after-
-abandonment — the three metrics decisions-log §6 calls for.
+abandonment — the three metrics called for in decisions-log §6.
 
-**Why (over k6):** decisions-log §6 left "k6 or a multi-threaded harness"
-undecided; resolved 2026-08-16 in favor of the Python asyncio harness after
+**Why (over k6):** the choice between "k6 or a multi-threaded harness" was
+left undecided in decisions-log §6; resolved 2026-08-16 in favor of the Python asyncio harness after
 confirming with the user. It reuses the exact `asyncio.gather`
 concurrent-client pattern already proven correct in P3.T7's concurrency
 suite (`test_concurrency_suite.py` — N clients racing one seat, exactly one
@@ -570,8 +570,8 @@ fixed, including a login-completion race in the OIDC callback route.
 `booking-service` goes through it, including the seat map's live status
 poll.
 
-**Why:** decisions-log §23's "polling, not push" design for the seat
-map needs an interval-based refetch with request de-duplication and
+**Why:** the "polling, not push" design for the seat map (decisions-log §23)
+needs an interval-based refetch with request de-duplication and
 cache invalidation; React Query's `refetchInterval` gives that for one
 config line instead of hand-rolled `setInterval`/cleanup logic repeated
 across every screen that needs live data. Chosen over plain
@@ -596,7 +596,7 @@ current user/token to the rest of the app via a React context.
 Authorization Code + PKCE flow (§5) before Phase 7 began — building that
 exchange by hand (state/nonce generation, code-verifier storage across the
 redirect, token-endpoint POST, silent renew) is exactly the "don't roll
-your own auth" reasoning §5 already applied to the backend, now applied to
+your own auth" reasoning already applied to the backend (§5), now applied to
 the one place a browser-side OIDC client is actually needed.
 
 **Status:** Implemented, Tested (live) — but not by trusting the library.

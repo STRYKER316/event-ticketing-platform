@@ -440,7 +440,7 @@ received.
 
 **Phase 6 additions**: `BookingManager.cancel_booking` and a genuine third
 `TicketHoldStrategy` method, `release_booking` — not a `release_hold`
-reuse, despite decisions-log §22's original phrasing suggesting one. A
+reuse, despite the original phrasing in decisions-log §22 suggesting one. A
 `CONFIRMED` booking's ticket is `BOOKED`, and `release_hold`'s conditional
 `UPDATE` only ever matches `HELD`, so the two methods target different
 source states even though both end at `AVAILABLE`. `release_booking`
@@ -452,8 +452,8 @@ seat comes from `uq_bookings_active_ticket` no longer matching once
 `Booking.status` flips to `CANCELLED`, not from any Ticket-table write.
 `EventRepository` is new and deliberately not a `BaseRepository`
 subclass — `Event`'s primary key is `event_id`, not `id`, and this table
-exists solely so `cancel_booking` has a `start_time` to enforce §22's
-"before the event starts" cutoff against, populated by
+exists solely so `cancel_booking` has a `start_time` to enforce the
+"before the event starts" cutoff (§22) against, populated by
 `ProvisioningConsumer` from the same Kafka message that already
 provisions tickets (no new integration point). **A missing `Event` row
 fails the cutoff check closed (409), not open** — found at CHECKPOINT: the
@@ -612,8 +612,8 @@ never trusted for that, even though Stripe test mode often resolves a
 `PaymentIntent` synchronously, because a lost synchronous response after
 Stripe already processed the charge would otherwise be indistinguishable
 from a genuine failure. `handle_webhook_event` is idempotent the same way
-Booking Service's Kafka consumers are (§7's general rule, applied to a
-webhook instead of a Kafka redelivery): a rowcount-gated conditional
+Booking Service's Kafka consumers are (the same general rule from §7,
+applied to a webhook instead of a Kafka redelivery): a rowcount-gated conditional
 `UPDATE` (`PaymentRepository.transition_if_pending`, mirroring
 `BookingRepository`'s method of the same name) only transitions a `Payment`
 still `pending`, so a replayed webhook — or two genuinely overlapping
@@ -664,10 +664,10 @@ redelivery race isn't reachable here the way it was for the webhook route,
 since this consumer processes one Kafka partition's records strictly
 sequentially, so only crash-then-restart redelivery is possible, and a
 retried Stripe call with the same `{booking_id}-refund` idempotency key
-(§9's pattern, applied to refunds) is already safe by construction. On a
+(the same pattern as §9, applied to refunds) is already safe by construction. On a
 `stripe.error.StripeError`, `refund_payment` does not roll anything
-back — `Payment.status` stays `SUCCEEDED` (§22's explicit no-re-lock
-scope boundary) — and publishes to a new `NotificationProducer`, the
+back — `Payment.status` stays `SUCCEEDED` (the explicit no-re-lock
+scope boundary in §22) — and publishes to a new `NotificationProducer`, the
 producer side only of integration point #3 (Notification Service itself
 doesn't exist until Phase 5, which runs after this phase in the locked
 build order; Kafka producer and consumer are independently deployable, the
@@ -854,9 +854,9 @@ not the `search-service` `EventConsumer` Repository-direct exception:
 that exception applies to a Kafka consumer with no equivalent API route
 to unify with, and this new addition *is* an API route, so it gets its
 own `BookingManager` method like the rest (found and corrected in this
-phase's `/pre-pr` code-review pass — see decisions-log §23's amendment
-correction). This is the read half
-of the seat-map composition decisions-log §23 describes, which had a
+phase's `/pre-pr` code-review pass — see the amendment correction in
+decisions-log §23). This is the read half
+of the seat-map composition described in decisions-log §23, which had a
 design but no route until this phase — see the Database Schema Design and
 Requirement Gathering chapters' Phase 7 sections for the endpoint's public/
 no-auth reasoning and the Testing Strategy chapter for how a real

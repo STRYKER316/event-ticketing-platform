@@ -242,7 +242,7 @@ events(
 **`events` (Phase 6) is deliberately minimal** — not a copy of Event
 Service's own data (that would be cross-service table duplication beyond
 what's needed, §8), just the one field `cancel_booking` needs to enforce
-§22's "before the event starts" cutoff. Written by `ProvisioningConsumer`
+the "before the event starts" cutoff (§22). Written by `ProvisioningConsumer`
 from the same `EventUpsertedMessage.start_time` field already received (and
 previously discarded) for ticket provisioning — no new Kafka integration
 point, the same event-carried-state-transfer mechanism (§7.2) just used a
@@ -437,8 +437,8 @@ booking reached a genuine `POST https://api.stripe.com/v1/refunds` call,
 failing only at the same placeholder-key boundary Phase 4's charge flow
 hits (401, not a bypass); `status` confirmed to stay `SUCCEEDED` and
 `stripe_refund_id` `NULL` after the failed attempt, not silently flipped
-to any terminal-looking state, matching §22's explicit no-rollback scope
-boundary. A hand-crafted redelivery of the same `booking.cancelled`
+to any terminal-looking state, matching the explicit no-rollback scope
+boundary in §22. A hand-crafted redelivery of the same `booking.cancelled`
 message correctly re-attempted the refund (since it hadn't yet succeeded)
 rather than silently no-op'ing; the true already-refunded-redelivery
 no-op case is proven in the automated integration suite with a mocked

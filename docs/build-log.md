@@ -4754,4 +4754,71 @@ re-run after every batch of edits, not just once at the end:
 65/23/52/14/9 across the five services plus 31 for `_shared/auth`, all
 green throughout.
 
+## 2026-08-23 — Comment/prose cleanup: `§NN` used as a sentence's subject
+
+Separate follow-up to the trim above, prompted directly by the user
+after reading one of the surviving comments: `# Refund-failure path
+(§22's scope boundary — no re-lock/rollback): ...` in
+`payment-service/payment_manager.py`, asking what `§22's` even means in
+a code file. Every comment/docstring throughout the repo cites
+`docs/decisions-log.md` section numbers as `§NN` — as a plain trailing
+parenthetical (`... (§8)`) this is fine and intentional (traceability
+to the locked decision record), but a number of instances instead used
+`§NN` as the sentence's grammatical subject or possessor — e.g. `§22's
+scope boundary`, `the general rule §7's ... rule`, or later, once the
+literal possessive was gone, still-confusing verb-subject rewrites like
+`the rule decisions-log §7 sets`. All three forms are the same
+underlying problem: unreadable without `decisions-log.md` open, since
+`§NN` reads as a self-explanatory named concept rather than a citation.
+
+Dispatched five parallel subagents (one per service) to sweep
+`services/` for the exact `§NN's` possessive pattern plus a broader
+eyeball pass of every `§`-bearing line. Found and fixed 13 instances:
+payment-service (5, including the flagged one and its
+`test_payment_manager.py`/`README.md` echoes), booking-service (8,
+across `app/` and `tests/`), notification-service (4). event-service
+and search-service had none — already citation-style throughout.
+
+User then reported still seeing `§` references and asked why the first
+pass missed them. Re-swept and found two real misses: the
+payment-service subagent had rewritten two possessives to dodge the
+literal `§N's` grep (`the general rule decisions-log §7 sets`, `the
+explicit scope boundary §22 sets`) without fixing the underlying
+problem — `§NN` was still the sentence's grammatical subject, just via
+a verb instead of a possessive. Fixed both directly. The bulk of what
+the user was still seeing, though, wasn't a miss at all: the original
+sweep was intentionally scoped to `services/` only, and the same
+`§NN`-as-subject pattern is far more common in `docs/` prose, which
+that pass never touched. Swept the two doc locations that are genuinely
+presentable/living (not historical or self-referential, see below) —
+`docs/architecture.html` (2 fixes: a decisions-log §22 possessive in an
+example shell comment, and a self-referential-but-still-awkward `§06's
+proven list` reworded to match the file's own `see §NN below/above`
+style) and `docs/report/*.md` via one more subagent (29 fixes across 6
+of 8 chapter files; `README.md` and `project-description.md` already
+clean).
+
+Deliberately left three doc locations untouched, each for a different
+reason: `docs/build-log.md` and `docs/phases/*-kickoff.md` are
+historical/append-only records per this session's own established
+precedent (already applied when the booking 403→404 fix's own
+build-log entries and old phase-kickoff docs were left alone);
+`decisions-log.md`'s internal self-references to its own sections
+(`§17's amendment below`, `§13's cost strategy`) aren't the same
+problem, since a reader of that document already has the numbered
+section in front of them — it's local navigation, not an opaque
+external citation the way a code comment or report chapter's reference
+is. `architecture.html`'s own `§01`/`§06` self-references got the same
+pass, left alone for the same reason.
+
+Verification throughout: `grep -rn "§[0-9]*'s"` plus an explicit
+verb-form grep (`sets|enforces|requires|says|mandates|...`) across
+every touched location, both empty at the end. `payment-service` unit
+suite re-run after the direct code fixes: 14/14 green (pure
+comment/docstring diff, no logic touched). No test suite applies to
+the markdown/HTML changes.
+
+Decisions-log delta: none — pure prose clarity, no decision content
+changed. `CLAUDE.md` delta: none.
+
 Decisions-log delta: none. `CLAUDE.md` delta: none.
