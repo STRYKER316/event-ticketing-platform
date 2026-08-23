@@ -1,8 +1,10 @@
 # Requirement Gathering
 
-*Status: draft, partial — roles/permissions evidence from Phases 1, 3, 4, 5,
-6, and now 7. This draft covers what's actually enforced in the codebase
-today, not aspirational scope.*
+*Status: draft, all seven roles/permissions tables (Event, Booking, Payment,
+Cancellation, Notification, the Phase 7 ticket-status route) plus the
+Phase 8 benchmark's non-functional-requirements cross-reference in place.
+This draft covers what's actually enforced in the codebase today, not
+aspirational scope.*
 
 ## Actors
 
@@ -261,9 +263,50 @@ the auth split. Full organizer flow (venue → event → seat map → publish)
 live-verified end to end via the same request shapes the frontend sends;
 the published event was immediately searchable and bookable afterward.
 
+## Non-functional requirements — the Hold-Mechanism Benchmark (Phase 8)
+
+Every roles/permissions table above states this system's functional
+requirements — who can do what. The one non-functional requirement this
+project set out to demonstrate with a real number, not a hand-wave, is
+the double-booking-critical path's throughput and latency under
+contention (§6): can the dual `TicketHoldStrategy` mechanism actually
+resolve a seat race correctly *and* fast, at a scale beyond the
+correctness suite's 25 clients. Phase 8's benchmark (this report's only
+Measured chapter — see Feature Development Process for the full
+methodology and honest reading of the results) answers this directly,
+against a fixed load profile of 300 concurrent requests (10 clients
+racing each of 30 contended seats), three independent runs per strategy:
+
+- **Correctness under load, not just speed**: both `TicketHoldStrategy`
+  implementations allocated the contended pool exactly correctly on
+  every run — 30/30 successful bookings, 270/270 real `409`s, zero
+  double-bookings — confirming the concurrency guarantee P3.T7's smaller
+  suite already proved still holds an order of magnitude past that
+  suite's own scale.
+- **Hold-acquisition latency**: p50 0.431s (cron) / 0.446s (redis), p95
+  1.052s / 1.257s, p99 1.144s / 1.417s — statistically indistinguishable
+  between strategies at this scale (n=3), the honest reading being that
+  neither mechanism's acquisition path is the dominant cost relative to
+  request overhead (network, auth, FastAPI dispatch).
+- **Release latency**: the passive path (abandoned hold → TTL/sweep) is
+  ~12-13s for both strategies, bounded by the configured
+  `HOLD_TTL_SECONDS`/`HOLD_SWEEP_INTERVAL_SECONDS` rather than by
+  mechanism speed; the immediate-trigger path (§17's compensation flow,
+  simulated ahead of Phase 4 actually existing to drive it, then
+  confirmed as the real mechanism once Phase 4 shipped) completes in
+  single-digit milliseconds for both strategies — roughly three orders of
+  magnitude faster than the passive path, the measured justification for
+  building the immediate-release compensation flow at all rather than
+  relying on the timeout safety net alone.
+
+These numbers are this report's one instance of a non-functional
+requirement verified by real, repeated, archived measurement
+(`docs/benchmark-results/`) rather than by a roles table or a live-tested
+status code — see the Feature Development Process chapter for the full
+methodology, per-run data, and the mixed-result reading the data actually
+supports (a small, consistent millisecond-scale edge for cron on
+immediate release; no meaningful difference elsewhere).
+
 ## What this chapter still needs
 
-Non-functional requirements (the Hold-Mechanism Benchmark's
-throughput/latency targets) depend on Phase 8 (already measured — see the
-Feature Development Process chapter — but not yet cross-referenced from
-this chapter's non-functional-requirements framing).
+None remaining.
