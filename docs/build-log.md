@@ -4609,3 +4609,119 @@ already-locked conventions (the app-level-exception-handler pattern
 `event-service` already established; the DTO-as-strict-validation-
 boundary rule already in `CLAUDE.md`'s Conventions section), not new
 architectural decisions. `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Seventh testing round: the rest of the external-dependency-down sweep, plus malformed-input and timeout spot-checks
+
+Continued queuing rounds per user instruction. Completed the pattern
+started with Kafka-down and Redis-down: Postgres, Elasticsearch, and
+MongoDB each stopped in turn against the live stack, one at a time, to
+check every service's actual degradation behavior — not just its
+`/healthz` route, which every service already gets right by design
+(each already wraps its own datastore ping in a bare `except Exception`
+and maps it to 503, confirmed live for all five services' `/healthz`
+either in this round or an earlier one).
+
+**Postgres down**: `/healthz` correctly 503s on all three Postgres-backed
+services (event-service, booking-service, payment-service); the two
+Postgres-independent services (search-service, notification-service)
+correctly stay 200, confirming clean dependency isolation. But an actual
+business route (`GET /events`) crashes to a bare, unstructured 500 — the
+same class of issue the Redis fix addressed last round. **Deliberately
+not fixed the same way**: the raw exception reaching the ASGI boundary
+here is a bare `socket.gaierror` (a builtin `OSError` subclass), not a
+scoped library exception like `redis.exceptions.RedisError` or
+`elastic_transport.TransportError` — SQLAlchemy's `safe_reraise()`
+re-raises the original DBAPI-level exception unchanged rather than
+wrapping it in something Postgres-specific and narrow. Catching it
+cleanly would mean an app-level `except OSError`, which is broad enough
+to risk silently reclassifying unrelated network/file errors as
+"database unreachable" — a worse failure mode than the one being fixed.
+Weighed against severity (a full Postgres outage is already a full
+system outage; 500 vs. 503 barely changes the story for a client that's
+already getting a 5xx either way, unlike the Redis case, which degraded
+one specific feature silently while the rest of a fully healthy system
+kept working) — logged as an accepted, lower-priority gap rather than
+force-fit a narrower catch that doesn't actually exist for this
+particular failure path.
+
+**Real bug — Elasticsearch down crashed `GET /search` to a bare 500**,
+same shape as the Redis bug, but with a clean fix available this time:
+`elastic_transport.ConnectionError` (raised here) inherits from
+`elastic_transport.TransportError`, a properly scoped base covering
+connection failures, timeouts, and SSL errors without reaching into
+`elasticsearch.exceptions.ApiError`'s territory (legitimate
+application-level failures — bad requests, auth — that should keep
+propagating as themselves, not get relabeled "backend unavailable").
+Fixed with the same `@app.exception_handler` pattern as booking-service's
+Redis fix: one registration in `search-service/app/main.py`, clean `503
+{"detail":"search backend unavailable"}`. Confirmed by construction
+(exception handlers only wrap the ASGI cycle) that `EventConsumer`'s own
+Kafka-side ES writes are unaffected — they retry via `_run_with_retry`
+same as always. **Testing wrinkle worth recording**: the first two
+attempts to verify this live gave false readings — `docker compose up`
+silently restarts a stopped dependency to satisfy `depends_on:
+condition: service_healthy` (same gotcha hit with Redis last round, this
+time also with Elasticsearch and MongoDB), and separately,
+`--force-recreate`-ing `search-service` *while* Elasticsearch was down
+hit a different, legitimate failure — `ensure_index()` in `lifespan()`
+crashes the whole container at startup if ES isn't reachable yet
+(reasonable fail-fast behavior, not a bug), which is a different
+scenario from "ES was fine when the service started, then went away."
+Corrected methodology: start the dependency, wait for its own Docker
+healthcheck to report `healthy` (a plain `sleep` after `docker compose
+start` isn't enough — Elasticsearch's JVM takes meaningfully longer to
+accept connections than the container takes to report "Started"), let
+the service start cleanly once, *then* stop only the dependency being
+tested. Live-verified end to end under the corrected methodology: 503
+while ES is down, 200 again once it's back.
+
+**Real bug — MongoDB down made `/healthz` take 30+ seconds to report
+unhealthy**, on a route whose entire purpose is fast liveness checking.
+Root cause: `AsyncIOMotorClient` was constructed with no
+`serverSelectionTimeoutMS`, so it fell back to PyMongo's own 30000ms
+default. The design was already correct (`HealthManager.check()`
+already wraps the Mongo ping in the same `except Exception` → 503 shape
+every other service uses) — the *timeout*, not the error handling, was
+the actual bug. Fixed by passing `serverSelectionTimeoutMS=5000` at
+client construction in `event-service/app/core.py`'s `get_mongo_client()`
+— long enough to tolerate a brief network blip without false-failing,
+short enough that a genuinely down Mongo is reported in seconds, not
+half a minute. Live-verified: 30.6s before the fix, 5.3s after, same
+`503 {"detail":"database unreachable"}` either way — only the latency
+changed. No Docker-level `healthcheck:` currently depends on
+event-service's own `/healthz` (only Postgres/Kafka/etc. use
+`condition: service_healthy`), so nothing in this repo's own automation
+was actually broken by the pre-fix latency — but a real load balancer or
+orchestrator readiness probe would have been.
+
+**Malformed-input spot-check, clean across the board.** Non-UUID
+`ticket_id` in a `POST /bookings` body, non-UUID path param on
+`/bookings/{id}/cancel` and `/events/{id}`, truncated/invalid JSON, an
+empty body, and a Stripe-webhook POST with no valid signature — all
+handled cleanly by FastAPI's own DTO validation or the webhook's
+existing signature check, clean 422/400 in every case, no crashes. No
+findings; recorded as evidence the DTO-as-strict-validation-boundary
+convention is actually holding, not just declared.
+
+**httpx timeout on the synchronous booking→payment call, confirmed
+already correct — no fix needed.** `get_http_client()`
+(`booking-service/app/core.py`) already constructs its `httpx.AsyncClient`
+with an explicit `timeout=10.0` and a comment stating the fail-fast
+rationale; `_charge_via_payment_service`'s existing `except
+httpx.HTTPError` branch (confirmed via `httpx.TimeoutException.__mro__`:
+`TimeoutException` → `TransportError` → `RequestError` → `HTTPError`)
+already catches a timeout the same way it catches Payment Service being
+completely unreachable, translating either into a clean 502 rather than
+hanging the request. Checked by inspection rather than forcing a live
+slow-response simulation, since the code already demonstrates the
+correct shape end to end.
+
+All dependency-down scenarios restored and live-reconfirmed recovered
+(Postgres, Elasticsearch, MongoDB each brought back up and re-verified
+healthy) before moving on. `make reset` run afterward. Full five-service
+suite: 65/23/52/14/9, all green, no regressions.
+
+Decisions-log delta: none — both fixes are the same
+config/exception-handler-pattern category as the Redis fix last round,
+applied to two more already-locked dependencies, not new architecture.
+`CLAUDE.md` delta: none.

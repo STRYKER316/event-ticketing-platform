@@ -2,14 +2,19 @@ import asyncio
 import contextlib
 from contextlib import asynccontextmanager
 
+import structlog
 from aiokafka import AIOKafkaConsumer
-from fastapi import FastAPI
+from elastic_transport import TransportError
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api import health, search
 from app.core import close_es_client, configure_logging, get_es_client
 from app.db.event_index_repository import EventIndexRepository
 from app.kafka.consumers import EventConsumer, build_kafka_consumer
+
+logger = structlog.get_logger()
 
 
 @asynccontextmanager
@@ -43,6 +48,16 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(search.router)
     Instrumentator().instrument(app).expose(app)
+
+    @app.exception_handler(TransportError)
+    async def es_transport_error_handler(request: Request, exc: TransportError) -> JSONResponse:
+        # Same reasoning as booking-service's RedisError handler: one
+        # registration covers every HTTP route without each needing its own
+        # try/except, and only wraps the ASGI request/response cycle —
+        # EventConsumer's own Kafka-side ES writes are unaffected, since
+        # they never pass through here (they retry via _run_with_retry).
+        logger.error("search_backend_unreachable", error=str(exc))
+        return JSONResponse(status_code=503, content={"detail": "search backend unavailable"})
 
     return app
 

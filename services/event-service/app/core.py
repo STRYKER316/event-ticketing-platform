@@ -141,7 +141,12 @@ _mongo_client: AsyncIOMotorClient | None = None
 def get_mongo_client() -> AsyncIOMotorClient:
     global _mongo_client
     if _mongo_client is None:
-        _mongo_client = AsyncIOMotorClient(get_settings().mongo_url)
+        # PyMongo's default serverSelectionTimeoutMS is 30000 — fine for a
+        # request that can afford to wait, but it made /healthz block for
+        # 30+ seconds against a genuinely unreachable Mongo instead of
+        # failing fast, defeating the point of a liveness check. 5s still
+        # tolerates a brief network blip without false-failing.
+        _mongo_client = AsyncIOMotorClient(get_settings().mongo_url, serverSelectionTimeoutMS=5000)
     return _mongo_client
 
 
