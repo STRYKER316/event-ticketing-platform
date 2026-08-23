@@ -18,6 +18,10 @@ def _reject_nul_bytes(value: str) -> str:
 _NoNulBytes = AfterValidator(_reject_nul_bytes)
 
 POSTGRES_INT4_MAX = 2_147_483_647  # Postgres Integer column max
+# Stripe rejects a USD PaymentIntent below this with `amount_too_small` — found live
+# (testing-strategy.md Round 11) when a 1-cent ticket reached a real charge attempt and
+# failed with an opaque 502 at pay time instead of being rejected here at creation time.
+STRIPE_MIN_CHARGE_CENTS_USD = 50
 
 
 # Length caps mirror models.py's DB column limits (StringDataRightTruncationError otherwise).
@@ -154,7 +158,7 @@ class SeatMapSection(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     rows: list[SeatMapRow] = Field(min_length=1)
     # Organizer-set per section (§9/§16), e.g. floor vs. balcony — carried via Kafka into Booking Service's Ticket.price_cents.
-    price_cents: int = Field(gt=0, le=POSTGRES_INT4_MAX)
+    price_cents: int = Field(ge=STRIPE_MIN_CHARGE_CENTS_USD, le=POSTGRES_INT4_MAX)
 
 
 class SeatMap(BaseModel):

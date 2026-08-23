@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from app.api.schemas import (
     MAX_SEAT_MAP_SEATS,
     POSTGRES_INT4_MAX,
+    STRIPE_MIN_CHARGE_CENTS_USD,
     EventCreate,
     EventUpdate,
     Seat,
@@ -88,6 +89,24 @@ def test_seat_map_upsert_accepts_valid_payload():
 def test_seat_map_section_rejects_non_positive_price():
     with pytest.raises(ValidationError):
         SeatMapSection(price_cents=0, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])])
+
+
+def test_seat_map_section_rejects_price_below_stripe_usd_minimum():
+    with pytest.raises(ValidationError):
+        SeatMapSection(
+            price_cents=STRIPE_MIN_CHARGE_CENTS_USD - 1,
+            name="A",
+            rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])],
+        )
+
+
+def test_seat_map_section_accepts_price_at_stripe_usd_minimum():
+    section = SeatMapSection(
+        price_cents=STRIPE_MIN_CHARGE_CENTS_USD,
+        name="A",
+        rows=[SeatMapRow(name="1", seats=[Seat(label="A1", x=0, y=0)])],
+    )
+    assert section.price_cents == STRIPE_MIN_CHARGE_CENTS_USD
 
 
 def test_seat_map_section_rejects_price_beyond_postgres_int4_range():

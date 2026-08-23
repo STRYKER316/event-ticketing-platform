@@ -1022,24 +1022,25 @@ Frontend: 9/9 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. This
 phase's exit checklist is now fully checked off; see `docs/build-log.md`'s
 2026-08-21 entries for the walkthrough's full narrative.
 
-## Post-launch hardening: ten rounds against the live stack ahead of deployment
+## Post-launch hardening: eleven rounds against the live stack ahead of deployment
 
 Phase 9's own CHECKPOINT closed with every exit-checklist item verified,
 but the user asked for further rounds beyond it — "run a bunch of
 testing rounds... make the system foolproof" — deliberately ahead of
 Phase 10 (AWS deployment) and with the Stripe test-mode key still
-unset. Not tied to any single numbered phase task, this became a
-ten-round arc against the actual running `docker compose` stack
+unset. Not tied to any single numbered phase task, this became an
+eleven-round arc against the actual running `docker compose` stack
 (never mocks), each round self-verified live before being counted as
 done, per the Integrity rule. The user's standing triage instruction
 throughout: fix everything real found, rather than partial-defer for
-later. Across all ten rounds, this surfaced and fixed 14 real bugs —
+later. Across all eleven rounds, this surfaced and fixed 15 real bugs —
 6 in the first pass alone, then one to two per subsequent round — plus
 one infrastructure defect (Kafka never actually persisting data), one
 deliberately accepted gap (a Postgres-down 500 left unfixed on
 purpose, discussed below), Round 9's real Stripe test-mode charge and
-refund round trip closing the last deferred gap, and Round 10's
-genuine-concurrency and webhook-forgery checks, both clean.
+refund round trip closing the last deferred gap, Round 10's
+genuine-concurrency and webhook-forgery checks (both clean), and Round
+11's real Stripe-minimum-charge finding.
 
 **Round 1 — first adversarial/sanity pass, ~36 findings.** Two parallel
 live-testing rounds (adversarial + sanity) plus a five-service
@@ -1267,17 +1268,43 @@ and a `/cancel` attempt against a booking still PENDING (charged but not
 yet webhook-confirmed) correctly 409'd rather than being treated as
 already-CONFIRMED. No bugs found.
 
+**Round 11 — a real bug: nothing stopped a ticket priced below Stripe's
+own minimum charge.** Created a real event as an organizer (`bob`) with a
+seat map section priced at `price_cents=1`; Event Service's DTO layer
+accepted it (its only constraint at the time was `gt=0`), the ticket
+provisioned normally, and a real booking against it reached
+`POST /bookings/{id}/pay`. The charge attempt failed at Stripe with
+`error_code=amount_too_small`, `"Amount must be at least $0.50 USD"` —
+correctly caught as a `StripeError` and turned into a clean `502`, not a
+crash, but the message reaching the caller (`"payment service rejected
+the charge attempt"`) gives no indication the actual cause is a
+mispriced ticket rather than a genuine gateway problem, and the booking
+would sit `PENDING`, permanently unpayable, until its hold naturally
+expired. This is exactly the class of gap `CLAUDE.md`'s DTO-boundary
+convention exists to prevent — a logical constraint enforced several
+calls downstream instead of at the DTO that first accepts the value.
+Fixed by tightening `SeatMapSection.price_cents` from `Field(gt=0, ...)`
+to `Field(ge=STRIPE_MIN_CHARGE_CENTS_USD, ...)` (`STRIPE_MIN_CHARGE_CENTS_USD
+= 50`, `event-service/app/api/schemas.py`) — the same boundary a
+pricing section already crosses via Kafka into Booking Service's
+`Ticket.price_cents`, now rejected at creation with a clean `422` instead
+of at charge time with an opaque `502`. Live-reverified after rebuilding
+and restarting `event-service`: a 1-cent seat map upload now `422`s with
+`"Input should be greater than or equal to 50"`, and a 50-cent upload
+still succeeds. Two new unit tests added at the boundary (49 rejected, 50
+accepted); `event-service`'s suite: 65 → 67, still green.
+
 The five-service unit suite was re-run after each round that changed
-code (Rounds 1, 2, 5, 6, 7 — Rounds 3, 4, 8, 9, 10 either made no
+code (Rounds 1, 2, 5, 6, 7, 11 — Rounds 3, 4, 8, 9, 10 either made no
 application code changes or, for Round 3, changed infrastructure config
 only), green throughout with zero regressions introduced by any fix,
-ending at 65/23/52/14/9 after Round 7's fixes — unchanged since, as no
-round after it touched application code. `_shared/auth`'s own suite
+ending at 67/23/52/14/9 after Round 11's fix. `_shared/auth`'s own suite
 (31/31) was confirmed separately, alongside adjacent comment-cleanup
-work in this same session, not as part of this ten-round arc itself.
+work in this same session, not as part of this eleven-round arc itself.
 What remained open after Round 8 — the Stripe test-mode key setup, and
 the one Payment Service idempotency branch blocked on it — was closed by
-Round 9 above; Round 10 then closed the remaining untested angle (real
-concurrency, not sequential replay, against the Stripe-calling path and
-the webhook endpoint's own trust boundary). Nothing further is
-deliberately deferred.
+Round 9 above; Round 10 closed the remaining untested angle around real
+concurrency and webhook trust; Round 11 closed a genuine validation gap
+only a real Stripe charge attempt could have surfaced, since no
+testcontainer or mock Stripe client enforces its actual minimum-charge
+business rule. Nothing further is deliberately deferred.

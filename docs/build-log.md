@@ -5178,3 +5178,47 @@ with a new Round 10 paragraph (post-launch hardening section retitled
 Fed-by column to match.
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Eleventh testing round: a real bug — no floor on ticket price against Stripe's own minimum charge
+
+User asked whether any further rounds were worth running after the
+tenth. Reviewed what remained genuinely untested rather than assuming
+diminishing returns applied: two candidate angles surfaced from reading
+the actual route code — whether `GET /events` list filters DRAFT events
+(already excluded by construction per an existing code comment, not
+worth a live round on its own) and whether anything validates a ticket's
+`price_cents` against Stripe's real minimum charge, which no
+testcontainer or mock could ever catch since it's a Stripe-side business
+rule, not something this codebase decides.
+
+Created a real event as organizer `bob` (`get-token.sh bob changeme`)
+with a seat map section priced at `price_cents=1`. `event-service`
+accepted it — its only constraint at the time was `Field(gt=0, ...)`.
+The ticket provisioned normally; a real booking against it reached
+`POST /bookings/{id}/pay`; `payment-service` logs showed the real Stripe
+call fail with `error_code=amount_too_small`, `"Amount must be at least
+$0.50 USD"`, correctly turned into a clean `502` rather than a crash —
+but `"payment service rejected the charge attempt"` gives no hint the
+real cause is a mispriced ticket, and the booking would sit `PENDING`,
+permanently unpayable, until its hold naturally expired.
+
+Fixed at the DTO boundary per `CLAUDE.md`'s "logical constraint beyond
+raw type gets a validator at the DTO layer, not a downstream check
+several calls deep" convention: added `STRIPE_MIN_CHARGE_CENTS_USD = 50`
+and tightened `SeatMapSection.price_cents` from `Field(gt=0, ...)` to
+`Field(ge=STRIPE_MIN_CHARGE_CENTS_USD, ...)`
+(`event-service/app/api/schemas.py`). Added two unit tests at the
+boundary (49 rejected, 50 accepted); `event-service`'s suite: 65 → 67,
+green. Rebuilt and restarted `event-service`, live-reverified: a 1-cent
+seat map upload now `422`s with `"Input should be greater than or equal
+to 50"`; a 50-cent upload still succeeds.
+
+Updated `docs/report/testing-strategy.md` with a new Round 11 paragraph
+(post-launch hardening section retitled "eleven rounds," bug count
+14 → 15, unit-suite tally 65/23/52/14/9 → 67/23/52/14/9) and
+`docs/report/README.md`'s Testing Strategy row and Fed-by column to
+match. Checked `database-schema-design.md`, `class-diagrams.md`, and
+`decisions-log.md`'s `price_cents` mentions for staleness — none state
+the specific Pydantic bound, so none needed a change.
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.
