@@ -5229,3 +5229,59 @@ match. Checked `database-schema-design.md`, `class-diagrams.md`, and
 the specific Pydantic bound, so none needed a change.
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Twelfth testing round: closing the two angles named as open — JWT audience and Notification poison messages, both clean
+
+User asked to close the two gaps named at the end of Round 11's summary
+rather than leave them as accepted risk.
+
+**JWT audience.** Every real client seeded into the realm was unsuitable
+for testing a wrong-audience token live: `ticketing-service` (the only
+password-grant-capable client) always carries the correct
+`ticketing-services-audience` mapper, and `ticketing-frontend` is
+PKCE-only, so scripting a token through it would need real browser
+automation. Used the Keycloak Admin REST API instead (`admin-cli`
+password grant against the `master` realm, using `.env`'s
+`KEYCLOAK_ADMIN_USER`/`PASSWORD`) to create a throwaway public client,
+`audience-probe-temp`, with `directAccessGrantsEnabled: true` and no
+audience mapper. A password-grant token for `alice` through it decoded
+to `aud: null` (no claim at all, not even Keycloak's default `account`).
+`POST /bookings` on the live stack with this token correctly `401`'d,
+`booking-service` logging `"Token is missing the \"aud\" claim"`. Added a
+second protocol mapper to the same client pointing `aud` at
+`some-unrelated-service` and repeated the call — also a clean `401`,
+this time logging the specific wrong audience. A control call with a
+real `alice` token from the normal `get-token.sh` flow reached past auth
+(`404` on the nonexistent ticket ID, not `401`), confirming the rejection
+was specifically about the audience claim, not a general token problem.
+Deleted `audience-probe-temp` via the Admin API immediately after
+(`DELETE .../clients/{id}` → `204`, confirmed via an empty follow-up
+list) — a Keycloak runtime-only change, `infra/keycloak/realm-export.json`
+untouched throughout.
+
+**Notification Service poison messages.** `app/kafka/consumers.py`'s
+`_parse_or_log` helper already claims to log-and-drop a malformed
+payload rather than enter the retry ladder, reasoning that "a malformed
+payload won't become parseable on retry" — but this had never actually
+been fired at the live consumer. Published two poison messages directly
+onto the `notifications` topic via `kafka-console-producer.sh`: one not
+valid JSON at all (`not-json-at-all-{{{garbage`), one valid JSON missing
+every required field (`{"foo":"bar","not_a_real_field":123}`). Both
+produced a clean `notification_consumer_message_invalid` error log with
+the full Pydantic validation traceback — no crash, no consumer restart,
+container stayed up throughout. Published a real, uniquely-UUID-tagged
+`NotificationMessage` immediately after: `notification_delivered` fired
+normally, confirming the manual offset commit had genuinely advanced
+past both poison messages (per `_consume_with_manual_commit`) rather
+than the consumer being stuck redelivering them forever.
+
+No bugs found in either check — both close exactly as the existing code
+already claimed; the value here is live evidence backing that claim
+rather than the code's own docstring reasoning, matching this project's
+Integrity rule. No application code changes. Updated
+`docs/report/testing-strategy.md` with a new Round 12 paragraph
+(post-launch hardening section retitled "twelve rounds") and
+`docs/report/README.md`'s Testing Strategy row and Fed-by column to
+match.
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.

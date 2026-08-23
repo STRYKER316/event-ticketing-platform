@@ -1022,25 +1022,26 @@ Frontend: 9/9 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. This
 phase's exit checklist is now fully checked off; see `docs/build-log.md`'s
 2026-08-21 entries for the walkthrough's full narrative.
 
-## Post-launch hardening: eleven rounds against the live stack ahead of deployment
+## Post-launch hardening: twelve rounds against the live stack ahead of deployment
 
 Phase 9's own CHECKPOINT closed with every exit-checklist item verified,
 but the user asked for further rounds beyond it — "run a bunch of
 testing rounds... make the system foolproof" — deliberately ahead of
 Phase 10 (AWS deployment) and with the Stripe test-mode key still
-unset. Not tied to any single numbered phase task, this became an
-eleven-round arc against the actual running `docker compose` stack
+unset. Not tied to any single numbered phase task, this became a
+twelve-round arc against the actual running `docker compose` stack
 (never mocks), each round self-verified live before being counted as
 done, per the Integrity rule. The user's standing triage instruction
 throughout: fix everything real found, rather than partial-defer for
-later. Across all eleven rounds, this surfaced and fixed 15 real bugs —
+later. Across all twelve rounds, this surfaced and fixed 15 real bugs —
 6 in the first pass alone, then one to two per subsequent round — plus
 one infrastructure defect (Kafka never actually persisting data), one
 deliberately accepted gap (a Postgres-down 500 left unfixed on
 purpose, discussed below), Round 9's real Stripe test-mode charge and
 refund round trip closing the last deferred gap, Round 10's
-genuine-concurrency and webhook-forgery checks (both clean), and Round
-11's real Stripe-minimum-charge finding.
+genuine-concurrency and webhook-forgery checks (both clean), Round
+11's real Stripe-minimum-charge finding, and Round 12's JWT-audience
+and Notification-Service poison-message checks (both clean).
 
 **Round 1 — first adversarial/sanity pass, ~36 findings.** Two parallel
 live-testing rounds (adversarial + sanity) plus a five-service
@@ -1300,17 +1301,58 @@ unauthenticated) — clean, confirming `list_events`'s "DRAFT never visible
 in the public listing" comment holds against the live list endpoint, not
 just the single-resource routes Rounds 1-2 actually tested.
 
+**Round 12 — the two angles named as still-open after Round 11, both
+closed clean.** JWT audience rejection (valid signature, wrong or
+missing `aud`) had only ever been proven by `_shared/auth`'s unit suite,
+never live against the running stack, since the only client that can do
+a password grant (`ticketing-service`) always carries the correct
+audience mapper — the public `ticketing-frontend` client is PKCE-only, so
+there was no easy way to mint a wrong-audience token through the normal
+seed clients. Created a temporary, throwaway Keycloak client
+(`audience-probe-temp`) via the Admin REST API instead — no audience
+mapper at all, then a second variant with an explicit wrong-audience
+mapper — got a real, validly-signed token for `alice` through each, and
+called `POST /bookings` on the live stack. Both correctly `401`'d
+(`"Invalid token"`), with `booking-service` logging the precise PyJWT
+reason (`"Token is missing the \"aud\" claim"` for the first, a rejected
+`some-unrelated-service` audience for the second); a control call with a
+real, correctly-scoped `alice` token from the normal seed client reached
+past auth (`404` on the nonexistent ticket, not `401`). The temporary
+client was deleted immediately after (confirmed via a follow-up list
+call returning empty) — a runtime-only Keycloak admin change, never
+touching `realm-export.json`.
+
+Second: whether Notification Service's `_parse_or_log` poison-message
+handling (`app/kafka/consumers.py`) — designed to log-and-drop a
+malformed payload rather than enter the retry ladder — actually holds
+against the live consumer, not just its own reasoning. Published two
+poison messages directly onto the `notifications` topic via
+`kafka-console-producer.sh`: one not valid JSON at all, one valid JSON
+missing every required field. Both logged a clean
+`notification_consumer_message_invalid` with the full parse traceback at
+`error` level — no crash, no consumer restart. Published a real,
+uniquely-tagged `NotificationMessage` immediately after: it was delivered
+normally (`notification_delivered`), confirming the offset had actually
+advanced past both poison messages rather than the consumer being stuck
+redelivering them. No bugs found in either check — both closed exactly
+as the code already claimed, now with live evidence backing the claim
+rather than just the code's own docstring reasoning.
+
 The five-service unit suite was re-run after each round that changed
-code (Rounds 1, 2, 5, 6, 7, 11 — Rounds 3, 4, 8, 9, 10 either made no
+code (Rounds 1, 2, 5, 6, 7, 11 — Rounds 3, 4, 8, 9, 10, 12 either made no
 application code changes or, for Round 3, changed infrastructure config
 only), green throughout with zero regressions introduced by any fix,
-ending at 67/23/52/14/9 after Round 11's fix. `_shared/auth`'s own suite
-(31/31) was confirmed separately, alongside adjacent comment-cleanup
-work in this same session, not as part of this eleven-round arc itself.
-What remained open after Round 8 — the Stripe test-mode key setup, and
-the one Payment Service idempotency branch blocked on it — was closed by
+ending at 67/23/52/14/9 after Round 11's fix — unchanged since, as Round
+12 made no application code changes. `_shared/auth`'s own suite (31/31)
+was confirmed separately, alongside adjacent comment-cleanup work in
+this same session, not as part of this twelve-round arc itself. What
+remained open after Round 8 — the Stripe test-mode key setup, and the
+one Payment Service idempotency branch blocked on it — was closed by
 Round 9 above; Round 10 closed the remaining untested angle around real
 concurrency and webhook trust; Round 11 closed a genuine validation gap
 only a real Stripe charge attempt could have surfaced, since no
 testcontainer or mock Stripe client enforces its actual minimum-charge
-business rule. Nothing further is deliberately deferred.
+business rule; Round 12 closed the two angles Round 11's summary named
+as still open (JWT audience live-verification, Notification Service
+poison-message handling), both confirmed correct. Nothing further is
+deliberately deferred.
