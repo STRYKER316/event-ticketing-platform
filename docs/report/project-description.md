@@ -1,9 +1,10 @@
 # Project Description
 
-*Status: draft, partial — Phase 0-3 and Phase 7 evidence (platform
-plumbing, the event catalog, browse/search, booking, and now the frontend).
-This section still needs Phases 4-6 (payment, cancellation, notification)
-backfilled before it describes the full product.*
+*Status: draft, covers Phases 0-7 — platform plumbing, the event catalog,
+browse/search, booking, payment, cancellation/refunds, notification, and
+the frontend. No narrative gap remains; the underlying mechanisms for
+every phase below are also documented in the Class Diagrams, Database
+Schema Design, and Testing Strategy chapters.*
 
 ## Overview
 
@@ -110,6 +111,90 @@ is exactly the pair of mechanisms the Phase 8 benchmark (this report's
 only Measured chapter) will run real concurrent load against to produce
 citable throughput/latency numbers, not synthetic ones.
 
+Phase 4 adds the fourth backend service, **Payment Service** (Postgres
+`payment_db`), and the system's one deliberate exception to Kafka-only
+cross-service communication. A customer initiates payment through Booking
+Service's ownership-scoped `POST /bookings/{id}/pay`, not by talking to
+Payment Service directly — Payment Service has no access to `booking_db`
+(§8) to verify the caller actually owns the booking being charged, so
+Booking Service makes the system's first and only synchronous
+inter-service call, forwarding the caller's JWT unmodified to Payment
+Service's charge endpoint along with the ticket's `price_cents` it
+already holds locally (§9 amendment). This is a narrow, deliberate
+exception to "cross-service data only via Kafka," justified because
+initiating a charge needs an immediate request/response result — did
+Stripe accept the attempt right now — a different shape of problem than
+the eventually-consistent facts the five Kafka integration points
+otherwise carry. The charge attempt's actual outcome is never trusted
+from that synchronous response, though: Stripe test mode often resolves
+a `PaymentIntent` synchronously, but a lost synchronous response after
+Stripe already processed the charge would be indistinguishable from a
+genuine failure, so **webhook-driven confirmation is the sole source of
+truth for a Payment's terminal status** (§9). Payment Service's webhook
+handler is idempotent the same way every Kafka consumer in this system
+is required to be (§7) — a rowcount-gated conditional `UPDATE` only
+transitions a `Payment` still `pending`, so a replayed webhook can't
+double-confirm a charge — and publishes the confirmed or declined
+outcome onto Kafka integration point #4 (`payment.outcomes`), broadened
+at implementation time to carry both `succeeded` and `failed` actions on
+one topic rather than adding a sixth integration point (§7 amendment).
+Booking Service's consumer for that topic either confirms the booking
+(`PENDING` → `CONFIRMED`, ticket `BOOKED`) or releases the hold
+immediately on failure, rather than waiting for the natural
+TTL/sweep-interval safety net — the release mechanism the Feature
+Development Process chapter's benchmark measured directly, ahead of this
+phase actually existing to drive it (§17 amendment).
+
+Phase 6 completes the booking lifecycle with **cancellation and
+refunds**, a first-class flow rather than an afterthought (§22). A
+customer cancels their own `CONFIRMED` booking, before the event's start
+time, through the same ownership-scoped pattern every other mutating
+endpoint in this system uses; the seat releases optimistically and
+immediately via a genuine third `TicketHoldStrategy` method,
+`release_booking` — not a `release_hold` reuse, since a confirmed
+booking's ticket is `BOOKED`, not `HELD`, and the two methods target
+different source states. Booking Service doesn't own payment data (§8),
+so it can't call Stripe directly: it publishes a `booking.cancelled`
+Kafka event on integration point #5, and Payment Service's first-ever
+Kafka consumer issues the refund using the same idempotency-key pattern
+already established for charges (booking ID plus "refund", §9). The
+cancellation cutoff needed a start time Booking Service's own tables
+never stored — resolved the same way Phase 4's pricing gap was, by
+adding a small reference table (`booking_db.events`) populated from the
+same Kafka message that already provisions tickets, no new integration
+point needed. If a refund fails after the seat has already been
+released, this design deliberately does not attempt saga-style rollback
+to re-lock the seat — a failed refund is logged and surfaced via
+Notification Service for manual reconciliation instead, an explicit
+scope boundary rather than an oversight (§22).
+
+Phase 5 closes the loop with **Notification Service**, the one backend
+service with no database of any kind (§17 amendment) — a documented
+decision, not a smaller schema. `NotificationManager.deliver` writes
+nothing anywhere; the delivery *is* the structured log line it emits,
+since no real email/SMS provider exists in this system's scope to
+persist a delivery record about. With no database, the retry ladder's
+state (how many attempts so far, the original message, the last error)
+has nowhere to live except the Kafka message itself: a `RetryEnvelope`
+round-trips through three topics — `notifications` (one attempt, no
+backoff) → `notification-retry` (increasing backoff, `min(2 **
+attempt, cap)`) → `notification-dlq` (terminal, visibility-only —
+nothing reprocesses out of it automatically, consistent with §17's "not
+silently dropped" rather than "automatically retried forever"). Since
+this service has no real external delivery dependency capable of a
+genuine transient failure the way Stripe's API calls are for Payment
+Service, the retry ladder is proven with a deliberate,
+honestly-documented `simulated_failure_attempts` toggle rather than a
+fabricated claim (§17 amendment) — off by default, overridden only for a
+live demo or test. This completes integration point #3 (booking/payment
+→ notification), fed by three producers across two services:
+`PaymentOutcomeConsumer`'s booking-confirmed path and Payment Service's
+own payment-confirmed and refund-failed paths, each already having
+checked ownership or used the Kafka message itself as authorization
+before publishing — the "message is the authorization" reasoning already
+established for every consumer in this system that has no independent
+way to re-check it (§8).
+
 The full current-state topology and a live-traced authentication sequence
 diagram are maintained at `docs/architecture.html` (kept current every
 phase, not redrawn at report-assembly time) and can be regenerated by
@@ -141,12 +226,10 @@ Strategy chapter's Phase 7 section for the full account.
 
 ## What this section still needs
 
-This section covers Phases 0-3 and now Phase 7's frontend, but still has
-a real gap in between: Phases 4-6 (payment, confirmation, cancellation/
-refund, and the notification retry/DLQ ladder) were built and checkpointed
-before Phase 7 but were never backfilled into this chapter — a pre-existing
-lag this phase's own scope didn't extend to closing. The full mechanism
-for all of it is already documented elsewhere (Class Diagrams, Database
-Schema Design, Testing Strategy, `docs/architecture.html`); what's missing
-here specifically is the narrative Project Description framing, still
-owed before P11 assembly.
+None remaining. This section now reads as one coherent narrative from
+Phase 0 through Phase 7 with no gap — every phase's mechanism is
+described here at the same narrative depth, with the full technical
+detail cross-referenced to Class Diagrams, Database Schema Design,
+Testing Strategy, and `docs/architecture.html` rather than duplicated.
+The only work left for this chapter is the Deployment Flow narrative,
+blocked on Phase 10 (see `docs/phases/phase-11-kickoff.md`).
