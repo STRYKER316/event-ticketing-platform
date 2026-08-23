@@ -197,27 +197,57 @@ Left untouched, explicitly, not silently skipped:
 
 ## Phase 11 (partial) exit checklist — for this content-polishing pass only
 
-- [ ] P11a — Project Description Phase 4-6 narrative gap closed; status
-      label updated.
-- [ ] P11b — Requirement Gathering benchmark cross-reference added;
-      "still needs" section closed; status label corrected.
-- [ ] P11c — Class Diagrams / Database Schema Design status labels fixed
+- [x] P11a — Project Description Phase 4-6 narrative gap closed; status
+      label updated. Evidence: three new paragraphs (Payment Service,
+      Cancellation & Refunds, Notification Service) in
+      `docs/report/project-description.md`, commit `2765c51`; status
+      line and "What this section still needs" note updated in the same
+      commit.
+- [x] P11b — Requirement Gathering benchmark cross-reference added;
+      "still needs" section closed; status label corrected. Evidence:
+      new "Non-functional requirements" section in
+      `docs/report/requirement-gathering.md` citing Feature Development
+      Process's real measured numbers, commit `9e0b343`; "still needs"
+      replaced with "None remaining."
+- [x] P11c — Class Diagrams / Database Schema Design status labels fixed
       (or genuine gaps found and fixed instead, if a closer read surfaces
-      any).
-- [ ] P11d — Stripe entry added to Technologies Used, citing Round 9's
-      live verification; status label updated.
-- [ ] Cross-doc staleness sweep across everything this pass touched
+      any). Evidence: re-read both chapters in full — all five backend
+      services genuinely present in both (confirmed by heading), no
+      content gap found; status lines and `README.md` rows corrected,
+      commit `163c112`.
+- [x] P11d — Stripe entry added to Technologies Used, citing Round 9's
+      live verification; status label updated. Evidence: new `## Stripe
+      (payment processing)` entry in `docs/report/technologies-used.md`
+      citing the 2026-08-23 Ninth-testing-round charge-and-refund round
+      trip, commit `2c8cef1`; status line and `README.md` row updated.
+- [x] Cross-doc staleness sweep across everything this pass touched
       (`docs/report/README.md`'s table stays the single source of truth
       for chapter status — no chapter file's own self-description should
-      contradict its README row after these fixes).
-- [ ] `decisions-log.md` delta check — expect none beyond the §27
-      amendment already recorded ahead of this file.
-- [ ] `CLAUDE.md` self-update check — expect none; no new convention,
-      pure content work.
-- [ ] `/pre-pr`-equivalent review of the diff (docs-only, but still worth
+      contradict its README row after these fixes). Evidence: grepped
+      `docs/` for the old stale phrasing ("P4-P6 not yet backfilled,"
+      the enumeration-style "partial" labels, the seven-table miscount)
+      after the review pass's fixes — none found outside this pass's own
+      already-corrected text; `master-development-plan.md`'s P11.T2 row
+      (real-world-framing polish, still correctly pending) needed no
+      change.
+- [x] `decisions-log.md` delta check — expect none beyond the §27
+      amendment already recorded ahead of this file. Evidence: confirmed
+      — no commit in this pass touches `decisions-log.md`.
+- [x] `CLAUDE.md` self-update check — expect none; no new convention,
+      pure content work. Evidence: confirmed — no commit in this pass
+      touches `CLAUDE.md`.
+- [x] `/pre-pr`-equivalent review of the diff (docs-only, but still worth
       a review pass given four files change) before considering this
-      partial pass done.
-- [ ] Build-log entry appended for this pass.
+      partial pass done. Evidence: adversarial review subagent (read
+      `CLAUDE.md` in full, cross-checked every new claim against
+      decisions-log/build-log/actual source) found six real accuracy
+      issues — a table-count error, a wrong-layer webhook-signature
+      claim, an overbroad idempotency claim, a stale future-tense
+      reference, a miscited section, and near-verbatim duplication — all
+      fixed, commit `004c1ba`.
+- [x] Build-log entry appended for this pass. Evidence: `docs/build-log.md`,
+      2026-08-23 "Phase 11 kickoff (partial start)" entry, commit
+      `b88a284`.
 
 **Not exit criteria for this file** — deliberately excluded, tracked in
 the "Blocked on P10" section above instead: Deployment Flow, Abstract,
