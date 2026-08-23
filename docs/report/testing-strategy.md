@@ -3,9 +3,36 @@
 *Status: draft, partial — establishes the pattern from Phase 1's first
 `testcontainers-python` suite (`shared_auth`'s mocked-JWKS unit tests were
 Phase 0's contribution; this chapter grows with every phase's test suite,
-per the DOCUMENT step in `CLAUDE.md`).*
+per the DOCUMENT step in `CLAUDE.md`). Reorganized 2026-08-23 from a
+phase-by-phase chronicle into the theme structure below — same content,
+regrouped around the tier model, the idempotency-testing pattern across
+all five Kafka integration points, and what each review-gate type caught,
+rather than one section per phase. This is also now the canonical home for
+several bug narratives previously told in full in more than one chapter
+(the Redis hold-sweep gap, the Traefik `/payments/charge` routing bypass,
+the `price_cents` bind-param overflow, and the `stripe_charge_id IS NULL`
+retry bug) — Class Diagrams, Database Schema Design, and Technologies Used
+now point here rather than re-telling each in full. No status label
+changed as part of this reorganization.*
 
-## Two tiers, deliberately different scopes
+## The tier model
+
+Testing in this project runs across four deliberately different tiers,
+each proving something the tiers around it structurally cannot: **unit
+tests** (business logic isolated from real dependencies), **integration
+tests** (`testcontainers`, real datastores/broker), **adversarial testing**
+(malicious/edge-case input driven live against the running stack), and
+**live traffic through the real stack** (a real HTTP client or browser
+driving the entire deployed system, not a single service's own test
+client). A fifth, later arc — **post-launch hardening rounds** — repeats
+and extends the adversarial/live-traffic tiers deliberately, ahead of
+deployment. A sixth concern runs across all of them rather than being its
+own tier: proving every Kafka consumer's redelivery is a safe no-op,
+required explicitly by `CLAUDE.md`'s architecture invariants (§7) at each
+of the five integration points — that gets its own section below rather
+than being scattered across each tier's description.
+
+## Tiers 1 and 2 — unit and integration tests
 
 **Unit tests** exercise business logic in isolation, with the Repository
 layer mocked out rather than hitting a real database. These target the
@@ -43,7 +70,15 @@ route-specific left to test once the dependency wiring (`Depends(...)`)
 is visually verifiable by reading the route file; testing the Manager
 directly is a more direct test of the actual contract.
 
-## A concrete bug this caught
+### Established pattern for Phases 2+
+
+Session-scoped container fixtures (one `PostgresContainer`/
+`MongoDbContainer` boot per test session, not per test — container startup
+is the expensive part), a single migration run per session, and
+table-truncation (not container restart) between individual tests for
+isolation.
+
+### A concrete bug this caught (Phase 1)
 
 Alembic's autogenerate scaffold for `migrations/env.py` unconditionally
 overwrote whatever `sqlalchemy.url` the caller configured with a URL
@@ -59,15 +94,12 @@ and fall back to `get_settings()` only when the caller didn't set one.
 Concrete example of integration tests catching an environment-coupling bug
 a mocked unit test structurally cannot.
 
-## Established pattern for Phases 2+
+**Status:** Implemented, Tested, Verified (live, against the running stack —
+not just the pytest suite). 54/54 `event-service` tests green (43 unit, 11
+integration), 18/18 `search-service` tests green, as of the pre-Phase-3
+checkpoint: `cd services/<service> && uv run pytest`.
 
-Session-scoped container fixtures (one `PostgresContainer`/
-`MongoDbContainer` boot per test session, not per test — container startup
-is the expensive part), a single migration run per session, and
-table-truncation (not container restart) between individual tests for
-isolation.
-
-## Phase 2: testing an idempotent Kafka consumer, for real
+### Testing an idempotent Kafka consumer, for real (Phase 2)
 
 Search Service's integration suite (`tests/integration/test_event_consumer_flow.py`)
 extends the session-scoped-container pattern with `testcontainers`'
@@ -99,7 +131,7 @@ the event ID as raw key bytes (not JSON-wrapped), and the exact JSON
 payload structure — rather than only asserting that `EventManager` *calls*
 the producer, which the pre-existing tests already did via a mock.
 
-## A real infrastructure bug this suite caught (not a code bug)
+### A real infrastructure bug this suite caught, not a code bug (Phase 2)
 
 Building the Kafka+Elasticsearch integration suite surfaced a genuine
 environment problem, not a flaky test: a freshly created Elasticsearch
@@ -118,75 +150,7 @@ for this project's single-node topology, plus blocking on cluster health
 before returning) rather than only a test workaround — see
 `docs/build-log.md`, P2.T3 entry, for the full diagnosis.
 
-## A third tier: adversarial testing against the live stack
-
-The two tiers above test what the code was *written* to do. Neither
-`testcontainers` unit/integration suite is adversarial by construction — the
-inputs are the developer's own idea of what a caller sends. Before Phase 3
-(Booking Service) started building on this surface, a separate pass tested
-what happens when a caller doesn't cooperate: malformed input, forged auth,
-races, and infrastructure outages, run live against the running
-`docker compose` stack (real Keycloak tokens for three seeded users, real
-Postgres/MongoDB/Elasticsearch/Kafka — no mocks) rather than through pytest.
-
-Eight rounds, roughly 130 individual checks, covering: JWT/auth forgery
-(`alg: none`, tampered-payload role escalation with the stale original
-signature, unknown `kid`, truncated tokens, real-time token expiry — 19/19
-clean, `algorithms=["RS256"]` pinning specifically blocks the RS256→HS256
-confusion attack); DTO boundary fuzzing (oversized strings, NUL bytes,
-integer overflow, malformed JSON, NaN/Infinity floats); search-query safety
-(Lucene/injection-style strings against `multi_match`); Kafka behavior under
-redelivery, malformed messages, and a real broker outage; concurrent-request
-races (publish, patch, seat-map upsert, delete); and a Postgres-outage
-comparison. Five real bugs surfaced, all in `event-service`, none in the
-Kafka/search integration point this project treats as its highest-risk
-surface (§7):
-
-- Three DTOs (`VenueCreate.name`/`address`, `EventCreate.title`, `.capacity`)
-  had no upper bound, so an over-length or over-large value crashed as an
-  unhandled `asyncpg` error (a bare 500) instead of the 422 CLAUDE.md's own
-  "DTO layer is a strict validation boundary" rule promises.
-- `DELETE /events/{id}` wasn't safe under concurrent duplicate requests: ten
-  concurrent deletes against one event returned five 204s, not one — the
-  repository used `session.delete()+flush()`, which can't distinguish "I
-  deleted it" from "it was already gone."
-- The Kafka producer had no request timeout, so a broker outage produced a
-  ~40-second hang before failing, not a fast, clean error — on top of the
-  already-documented commit-then-publish consistency risk, this made the
-  *failure mode itself* worse than expected under load.
-
-Postgres-outage behavior was tested as a comparison point and came back
-clean by contrast: a stopped Postgres container fails every dependent
-request in 10-20ms (TCP refusal, not a slow timeout), and `pool_pre_ping`
-recovers transparently on the next request with no restart needed — the
-asymmetry between the two outage modes is itself a finding worth having on
-record before Booking Service adds a third datastore (Redis) to reason
-about.
-
-All five fixes shipped with regression tests in the real suite (not just the
-adversarial scripts) and were re-verified live against the rebuilt
-containers, not just the automated suite passing.
-
-## The review pass finding a bug in its own fix
-
-The `/pre-pr` gate run on that fix commit (simplify → code-review, scoped to
-the commit's own diff rather than re-reviewing already-checkpointed history)
-is itself worth citing as evidence for why a dedicated review step earns its
-place separately from self-verification: fixing the NaN/Infinity gap above
-(`Field(allow_inf_nan=False)`) introduced a *new*, worse bug live — FastAPI's
-default validation-error handler echoes the rejected value back in the 422
-body, and Starlette's JSON encoder can't serialize `NaN`, so the rejection
-itself crashed into a 500. The review agent's own first-pass finding
-(misattributing the fix to a nonexistent aiokafka parameter) was also caught
-and retracted on its own self-verification pass before reaching this report
-— a review process that checks its own output, not just the code's.
-
-**Status:** Implemented, Tested, Verified (live, against the running stack —
-not just the pytest suite). 54/54 `event-service` tests green (43 unit, 11
-integration), 18/18 `search-service` tests green, as of the pre-Phase-3
-checkpoint: `cd services/<service> && uv run pytest`.
-
-## Phase 3: test-first for the one correctness claim the whole report leans on
+### Test-first for the one correctness claim the whole report leans on (Phase 3)
 
 Every prior tier in this chapter was build-then-test. Phase 3 is the
 deliberate exception, per `CLAUDE.md`'s explicit process note for this
@@ -279,7 +243,172 @@ finding as Phase 2's Elasticsearch disk-watermark incident: something
 live testing surfaces that no mocked or purely logical test structurally
 can.
 
-## Phase 3: two review passes, the second catching real bugs in the first pass's fixes
+**Status:** Implemented, Tested, Verified (live, both hold strategies).
+44/44 `booking-service` tests green (23 unit, 21 integration), plus
+`event-service`'s suite at 54/54 (55 prior, net -1 after this phase's
+`EventDeletedMessage`/`publish_deleted` dead-code removal — event-service now
+refuses to delete a `PUBLISHED` event outright, per the §15 Phase 3
+amendment, so the message and its producer method were never reachable).
+`cd services/booking-service && uv run pytest`.
+
+## Idempotency testing across all five Kafka integration points
+
+Every phase from Phase 2 onward built its own Kafka consumer's redelivery
+test as part of that phase's own work (the general idempotent-consumer
+rule, §7, was never a Phase 9 invention — see the tier sections above for
+each one as it was built). What Phase 9 (P9.T1) adds is the one point
+that had never gotten a literal identical-message-redelivered-twice test,
+and a single table that names all five integration points' redelivery
+test in one place rather than leaving that claim scattered across five
+phases' worth of prose:
+
+| # | Integration point (§7) | Redelivery test | What it asserts |
+|---|---|---|---|
+| 1 | Event → Search | `search-service/tests/integration/test_event_consumer_flow.py::test_publish_makes_event_searchable_and_redelivery_is_a_noop`, `::test_delete_removes_document_and_redelivered_delete_is_a_noop` | Redelivered upsert creates no duplicate ES document; redelivered delete on an already-deleted document doesn't raise |
+| 2 | Event → Booking (provisioning) | `booking-service/tests/integration/test_provisioning_consumer.py::test_redelivered_message_creates_no_duplicate_tickets` | Redelivered "event published" message provisions no duplicate `Ticket` rows |
+| 3 | Booking/Payment → Notification | `notification-service/tests/integration/test_notification_flow.py::test_redelivery_of_same_message_is_a_safe_no_op` | Redelivering the identical raw message after a successful delivery produces no second retry-ladder entry |
+| 4 | Payment → Booking (outcome) | `booking-service/tests/integration/test_payment_outcome_consumer.py::test_redelivered_succeeded_message_confirms_and_notifies_exactly_once` (added this phase) | Redelivering the identical "succeeded" message confirms the booking and notifies exactly once, not twice — the one point that previously only had a *stale cross-message* test (`test_redelivered_message_on_already_confirmed_booking_does_not_touch_a_new_holder`, a genuinely different scenario: a late "failed" arriving after a different outcome already won), not a literal same-message-twice test |
+| 5 | Booking → Payment (refund) | `payment-service/tests/integration/test_refund_flow.py::test_booking_cancelled_consumer_redelivery_is_a_safe_no_op` | Redelivering the identical "booking cancelled" message issues exactly one Stripe refund, not two |
+
+All five confirmed green against real Postgres/MongoDB/Redis/Kafka
+testcontainers at the time this test was added (`31 passed`
+booking-service — since risen to 33 with P9.T3's two additions below,
+`2 passed` search-service, `9 passed` payment-service, `6 passed`
+notification-service integration suites). Point 4's addition is the only
+new test this task added; points 1, 2, 3, and 5 already had their own
+redelivery coverage from the phase that built them and needed no new
+test, only citing. Live redelivery against the running stack (not just
+testcontainers) for all three DB-writing consumers is covered separately
+in the post-launch hardening rounds below (Round 5).
+
+### Edge cases closed in Phase 9: double-cancel and pay-after-hold-lost
+
+Two of the three edge cases the master plan names for this phase already
+had both a correctness guard and a test before this phase started: webhook
+replay (`payment-service/tests/integration/test_payment_flow.py::
+test_webhook_transitions_payment_and_replay_is_a_safe_no_op`) and the
+expired-hold race under *concurrent* acquisition
+(`booking-service/tests/integration/test_cron_hold_race.py`,
+`test_concurrency_suite.py`) — reconfirmed green, no new test needed.
+
+The other two — double-cancel and pay-after-hold-lost — had a subtler gap
+than "no test exists." Both guards already had a **unit-level** test
+proving the `BookingManager` reacts correctly when its repository layer
+*reports* a lost race (`test_booking_manager.py::
+test_cancel_booking_race_lost_409s` mocks `transition_if_confirmed` to
+return `False`; `test_pay_booking_on_non_pending_booking_409s` mocks
+`bookings.get_by_id` to return an already-CONFIRMED booking). Neither
+proved the real repository method — a genuine rowcount-gated Postgres
+`UPDATE`, or a real booking actually swept to `EXPIRED` — produces that
+signal in the first place under a real sequential re-call. Added two
+integration tests closing that gap:
+
+- `booking-service/tests/integration/test_cancel_booking_kafka.py::
+  test_double_cancel_second_call_409s_and_does_not_re_release_or_republish`
+  — cancels a real seeded CONFIRMED booking through `BookingManager`
+  (real `BookingRepository`/`TicketRepository`/`CronHoldStrategy`, a fresh
+  `AsyncSession` per call, mirroring two separate real HTTP requests),
+  then calls `cancel_booking` again on the same booking ID. Asserts the
+  second call 409s, its `BookingCancelledProducer` mock is never awaited
+  (no second `booking.cancelled` message), and the ticket/booking rows are
+  left exactly as the first call set them.
+- `booking-service/tests/integration/test_pay_booking_after_hold_expiry.py::
+  test_pay_booking_after_hold_expired_via_real_sweep_409s_without_charging`
+  — seeds a genuinely stale `PENDING` booking, runs the real sweep
+  (`BookingRepository.expire_stale_pending()`, the same call
+  `hold_sweep.py`'s scheduled job makes) so it actually transitions to
+  `EXPIRED`, then calls `pay_booking`. Asserts a 409 and that the mocked
+  `httpx` client's `post()` is never awaited — a charge is never even
+  attempted against a booking nobody can legitimately complete.
+
+Both pass against real Postgres testcontainers; full `booking-service`
+suite (unit + integration) is 80/80 after these additions (77 prior +
+1 P9.T1 redelivery test + these 2).
+
+## Tier 3 — adversarial testing against the live stack
+
+The two tiers above test what the code was *written* to do. Neither
+`testcontainers` unit/integration suite is adversarial by construction — the
+inputs are the developer's own idea of what a caller sends.
+
+### Eight rounds ahead of Booking Service: malformed input, forged auth, races, outages
+
+Before Phase 3 (Booking Service) started building on this surface, a
+separate pass tested what happens when a caller doesn't cooperate:
+malformed input, forged auth, races, and infrastructure outages, run live
+against the running `docker compose` stack (real Keycloak tokens for three
+seeded users, real Postgres/MongoDB/Elasticsearch/Kafka — no mocks) rather
+than through pytest.
+
+Eight rounds, roughly 130 individual checks, covering: JWT/auth forgery
+(`alg: none`, tampered-payload role escalation with the stale original
+signature, unknown `kid`, truncated tokens, real-time token expiry — 19/19
+clean, `algorithms=["RS256"]` pinning specifically blocks the RS256→HS256
+confusion attack); DTO boundary fuzzing (oversized strings, NUL bytes,
+integer overflow, malformed JSON, NaN/Infinity floats); search-query safety
+(Lucene/injection-style strings against `multi_match`); Kafka behavior under
+redelivery, malformed messages, and a real broker outage; concurrent-request
+races (publish, patch, seat-map upsert, delete); and a Postgres-outage
+comparison. Five real bugs surfaced, all in `event-service`, none in the
+Kafka/search integration point this project treats as its highest-risk
+surface (§7):
+
+- Three DTOs (`VenueCreate.name`/`address`, `EventCreate.title`, `.capacity`)
+  had no upper bound, so an over-length or over-large value crashed as an
+  unhandled `asyncpg` error (a bare 500) instead of the 422 CLAUDE.md's own
+  "DTO layer is a strict validation boundary" rule promises.
+- `DELETE /events/{id}` wasn't safe under concurrent duplicate requests: ten
+  concurrent deletes against one event returned five 204s, not one — the
+  repository used `session.delete()+flush()`, which can't distinguish "I
+  deleted it" from "it was already gone."
+- The Kafka producer had no request timeout, so a broker outage produced a
+  ~40-second hang before failing, not a fast, clean error — on top of the
+  already-documented commit-then-publish consistency risk, this made the
+  *failure mode itself* worse than expected under load.
+
+Postgres-outage behavior was tested as a comparison point and came back
+clean by contrast: a stopped Postgres container fails every dependent
+request in 10-20ms (TCP refusal, not a slow timeout), and `pool_pre_ping`
+recovers transparently on the next request with no restart needed — the
+asymmetry between the two outage modes is itself a finding worth having on
+record before Booking Service adds a third datastore (Redis) to reason
+about.
+
+All five fixes shipped with regression tests in the real suite (not just the
+adversarial scripts) and were re-verified live against the rebuilt
+containers, not just the automated suite passing.
+
+### The review pass finding a bug in its own fix
+
+The `/pre-pr` gate run on that fix commit (simplify → code-review, scoped to
+the commit's own diff rather than re-reviewing already-checkpointed history)
+is itself worth citing as evidence for why a dedicated review step earns its
+place separately from self-verification: fixing the NaN/Infinity gap above
+(`Field(allow_inf_nan=False)`) introduced a *new*, worse bug live — FastAPI's
+default validation-error handler echoes the rejected value back in the 422
+body, and Starlette's JSON encoder can't serialize `NaN`, so the rejection
+itself crashed into a 500. The review agent's own first-pass finding
+(misattributing the fix to a nonexistent aiokafka parameter) was also caught
+and retracted on its own self-verification pass before reaching this report
+— a review process that checks its own output, not just the code's.
+
+## Review gates: self-verification, dedicated adversarial review, and CHECKPOINT `/pre-pr` — what each catches
+
+This project runs three distinct review gates on different schedules:
+self-verification (live testing before claiming a task done) runs on
+every phase; a dedicated adversarial `/code-review` pass runs
+additionally on only P3 and P8, the two phases whose correctness or
+measurement claims the whole report leans on; the routine `/pre-pr` gate
+(simplify → code-review → verify) runs at every CHECKPOINT regardless.
+None of the three substitutes for the others — the sections below are the
+direct evidence for that, not just an assertion: Phase 3's own second
+adversarial pass caught bugs the first pass's fixes introduced, Phase 5's
+second CHECKPOINT round caught a bug the first round's own fix
+introduced, and Phase 4's and Phase 6's routine CHECKPOINT gates each
+caught a real security or correctness bug self-verification's live
+walkthrough had missed.
+
+### Phase 3 — two review passes, the second catching real bugs in the first pass's fixes
 
 Self-verification (live testing before claiming done) is the default review
 gate for every phase; P3 is one of two phases (with P8) that additionally
@@ -310,7 +439,9 @@ the Booking row it doesn't know about, so one abandoned checkout under
 (`uq_bookings_active_ticket` blocks it forever). That last one is worth
 flagging specifically: it meant the two hold strategies weren't actually
 behaviorally equivalent, which would have quietly undercut the P8 benchmark
-comparison this phase exists to set up.
+comparison this phase exists to set up — see the Class Diagrams and
+Database Schema Design chapters for the resulting fix's design and schema
+consequences.
 
 **Pass 2** (a dedicated adversarial `/code-review`, run after Pass 1's fixes
 were applied) found four more defects — all introduced or left incomplete by
@@ -361,13 +492,10 @@ Redis, not just the test suite.
 
 **Status:** Implemented, Tested, Verified (live, both hold strategies).
 44/44 `booking-service` tests green (23 unit, 21 integration), plus
-`event-service`'s suite at 54/54 (55 prior, net -1 after this phase's
-`EventDeletedMessage`/`publish_deleted` dead-code removal — event-service now
-refuses to delete a `PUBLISHED` event outright, per the §15 Phase 3
-amendment, so the message and its producer method were never reachable).
-`cd services/booking-service && uv run pytest`.
+`event-service`'s suite at 54/54, as captured in the Tiers 1/2 section
+above.
 
-## Phase 4 — Payment Service, no dedicated adversarial pass, but a live-testing bug caught anyway
+### Phase 4 — a live-testing bug, then a CHECKPOINT gate catching a real security bug
 
 Only P3 and P8 get a dedicated adversarial `/code-review` pass on top of
 self-verification (`CLAUDE.md`) — Phase 4 relies on self-verification plus
@@ -394,7 +522,9 @@ added alongside the existing replay test to lock the distinction in. This
 is exactly the kind of defect self-verification's "live testing before
 claiming done" step exists to catch — a purely mocked test suite would have
 had no reason to construct a `Payment` row with `stripe_charge_id=None`
-unless someone already suspected the bug.
+unless someone already suspected the bug. See the Database Schema Design
+chapter's `payment_db` section for the resulting schema-level reasoning
+(why a `NULL` charge ID is a meaningful state, not an incidental one).
 
 **A second, unrelated regression surfaced during the same live pass**: the
 `price_cents` migration (Class Diagrams/Database Schema Design chapters)
@@ -434,7 +564,9 @@ discipline) found six real issues, most severe first:
    §9 assumed away ("Payment Service only needs to know the caller presented a
    valid Keycloak token... since Booking Service already verified
    ownership") without anything actually enforcing that only Booking
-   Service could reach it. Fixed by narrowing the Traefik router rule.
+   Service could reach it. Fixed by narrowing the Traefik router rule — see
+   the Class Diagrams chapter's Payment Service section for the resulting
+   architectural fact.
 2. Webhook handling committed the terminal status *before* publishing to
    Kafka — a publish failure could strand a Payment permanently, since
    Stripe's own retry would hit the already-terminal idempotency guard and
@@ -471,19 +603,20 @@ defer rather than provide one). Everything up to Stripe's own API boundary
 (auth, ownership, the synchronous call chain, idempotency at the DB level)
 is live-verified; the genuine charge → webhook → confirm round trip is
 Tested (mocked/integration) but not yet Verified against the real Stripe
-API. Recorded on Phase 4's exit checklist as an open item, not glossed over.
+API. Recorded on Phase 4's exit checklist as an open item, not glossed over
+— closed by Round 9 of the post-launch hardening arc below.
 
 **Status:** Implemented, Tested, Verified (live, except the real-Stripe
-leg above). Final counts, after both self-verification's live-testing
-fixes and the CHECKPOINT `/pre-pr` code-review fixes above:
-`payment-service`: 7/7 unit, 5/5 integration (+2 concurrency tests from the
-CHECKPOINT review). `booking-service`: 36/36 unit (+12 from Phase 3's 24),
-24/24 integration (+3). `event-service`: 44/44 unit, 11/11 integration
-(unaffected, spot-checked). `search-service`: 16/16 unit (unaffected —
-silently ignores the new `price_cents` field on `event.events` it doesn't
-need, pydantic's default `extra="ignore"`).
+leg above, later closed — see Round 9 below). Final counts, after both
+self-verification's live-testing fixes and the CHECKPOINT `/pre-pr`
+code-review fixes above: `payment-service`: 7/7 unit, 5/5 integration (+2
+concurrency tests from the CHECKPOINT review). `booking-service`: 36/36
+unit (+12 from Phase 3's 24), 24/24 integration (+3). `event-service`:
+44/44 unit, 11/11 integration (unaffected, spot-checked). `search-service`:
+16/16 unit (unaffected — silently ignores the new `price_cents` field on
+`event.events` it doesn't need, pydantic's default `extra="ignore"`).
 
-## Phase 6 — Cancellation & Refunds, no dedicated adversarial pass, but a test finds a three-phase-old infrastructure bug anyway
+### Phase 6 — a Kafka-transport test finds a three-phase-old bug, then CHECKPOINT catches a fail-open bug
 
 Same review posture as Phase 4: no dedicated adversarial `/code-review`
 pass (only P3 and P8 get one, `CLAUDE.md`), self-verification plus the
@@ -530,17 +663,16 @@ hold strategies**: created real events/seat maps, booked and reached
 `CONFIRMED` via the self-signed-webhook technique Phase 4 established
 (local dev had only a placeholder Stripe key at this point in the
 project, so this was the only way to reach a genuinely `CONFIRMED`
-booking without a real account — see the post-Phase-9 hardening
-section's Round 9 for the later real-Stripe verification), then
-cancelled through the real `POST /bookings/{id}/cancel` route. Under
-`cron`: seat released `BOOKED` → `AVAILABLE`, confirmed by direct query,
-immediately rebookable; non-owner 404 (existence hidden, not just 403);
-repeat-cancel 409; past-cutoff 409
-(moved a real `Event.start_time` into the past and confirmed the
-rejection). Under `redis`: identical sequence, with `Ticket.status`
-confirmed to stay `AVAILABLE` throughout — the documented hold-strategy
-asymmetry, not a bug. The refund half: `payment-service`'s own logs showed
-`booking.cancelled` consumed and a genuine `POST
+booking without a real account — see Round 9 of the post-launch hardening
+arc below for the later real-Stripe verification), then cancelled through
+the real `POST /bookings/{id}/cancel` route. Under `cron`: seat released
+`BOOKED` → `AVAILABLE`, confirmed by direct query, immediately rebookable;
+non-owner 404 (existence hidden, not just 403); repeat-cancel 409;
+past-cutoff 409 (moved a real `Event.start_time` into the past and
+confirmed the rejection). Under `redis`: identical sequence, with
+`Ticket.status` confirmed to stay `AVAILABLE` throughout — the documented
+hold-strategy asymmetry, not a bug. The refund half: `payment-service`'s
+own logs showed `booking.cancelled` consumed and a genuine `POST
 https://api.stripe.com/v1/refunds` reaching Stripe's actual API boundary
 (401 on the placeholder key, the same expected failure mode Phase 4's
 charge flow hits, not a bypass or a mock); the refund-failure branch
@@ -563,7 +695,7 @@ the "already-refunded redelivery is a no-op" claim against a genuinely
 `SUCCEEDED` Stripe refund rather than a mocked one. Everything up to
 Stripe's own API boundary is live-verified; the genuine refund round trip
 is Tested (mocked/integration) but not yet Verified against the real
-Stripe API.
+Stripe API — closed by Round 9 below.
 
 **The routine `/pre-pr` gate at CHECKPOINT found a real fail-open bug
 self-verification's live walkthrough had missed** — the same lesson Phase
@@ -627,14 +759,14 @@ proving `refund_payment` doesn't raise when the notification publish
 itself fails.
 
 **Status:** Implemented, Tested, Verified (live, except the real-Stripe
-refund leg above, and except the `kafka_container` infrastructure fix,
-which is Verified in the sense that it now demonstrably works, not merely
-patched). Final counts, after both self-verification's live-testing and
-the CHECKPOINT `/pre-pr` review above: `booking-service` 72/72 (unit +
-integration, up from 60 before this phase); `payment-service` 22/22 (up
-from 12 before this phase).
+refund leg above, later closed — see Round 9 below — and except the
+`kafka_container` infrastructure fix, which is Verified in the sense that
+it now demonstrably works, not merely patched). Final counts, after both
+self-verification's live-testing and the CHECKPOINT `/pre-pr` review
+above: `booking-service` 72/72 (unit + integration, up from 60 before
+this phase); `payment-service` 22/22 (up from 12 before this phase).
 
-## Phase 5 — Notification Service, no dedicated adversarial pass, but a two-round CHECKPOINT review earns its keep
+### Phase 5 — a two-round CHECKPOINT review, the second round catching the first round's own regression
 
 Same review posture as Phases 4 and 6: no dedicated adversarial
 `/code-review` pass (only P3 and P8 get one, `CLAUDE.md`), self-
@@ -756,7 +888,7 @@ unchanged in count from Phase 6 (this phase's changes to both were covered
 by existing tests plus updated mocks/assertions, not new test cases).
 `pyflakes` clean on every file touched across both review rounds.
 
-## A fifth test tier this phase (Phase 7): live traffic through the real stack finds what mocks and unit-level fakes structurally cannot
+## Tier 4 — live traffic through the real stack (Phase 7)
 
 Every prior phase's testing tiers — unit tests against fakes, `testcontainers`
 integration tests against real datastores, adversarial `/code-review`
@@ -890,93 +1022,23 @@ Frontend: 9/9 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. This
 phase's exit checklist is now fully checked off; see `docs/build-log.md`'s
 2026-08-21 entries for the walkthrough's full narrative.
 
-## Phase 9 — Kafka idempotency coverage matrix
-
-Every phase from Phase 2 onward built its own Kafka consumer's redelivery
-test as part of that phase's own work (see the phase sections above) —
-the general idempotent-consumer rule (§7) was never a Phase 9 invention.
-What Phase 9 (P9.T1) adds is the one point that had never gotten a
-literal identical-message-redelivered-twice test, and a single table that
-names all five integration points' redelivery test in one place rather
-than leaving that claim scattered across five phases' worth of prose:
-
-| # | Integration point (§7) | Redelivery test | What it asserts |
-|---|---|---|---|
-| 1 | Event → Search | `search-service/tests/integration/test_event_consumer_flow.py::test_publish_makes_event_searchable_and_redelivery_is_a_noop`, `::test_delete_removes_document_and_redelivered_delete_is_a_noop` | Redelivered upsert creates no duplicate ES document; redelivered delete on an already-deleted document doesn't raise |
-| 2 | Event → Booking (provisioning) | `booking-service/tests/integration/test_provisioning_consumer.py::test_redelivered_message_creates_no_duplicate_tickets` | Redelivered "event published" message provisions no duplicate `Ticket` rows |
-| 3 | Booking/Payment → Notification | `notification-service/tests/integration/test_notification_flow.py::test_redelivery_of_same_message_is_a_safe_no_op` | Redelivering the identical raw message after a successful delivery produces no second retry-ladder entry |
-| 4 | Payment → Booking (outcome) | `booking-service/tests/integration/test_payment_outcome_consumer.py::test_redelivered_succeeded_message_confirms_and_notifies_exactly_once` (added this phase) | Redelivering the identical "succeeded" message confirms the booking and notifies exactly once, not twice — the one point that previously only had a *stale cross-message* test (`test_redelivered_message_on_already_confirmed_booking_does_not_touch_a_new_holder`, a genuinely different scenario: a late "failed" arriving after a different outcome already won), not a literal same-message-twice test |
-| 5 | Booking → Payment (refund) | `payment-service/tests/integration/test_refund_flow.py::test_booking_cancelled_consumer_redelivery_is_a_safe_no_op` | Redelivering the identical "booking cancelled" message issues exactly one Stripe refund, not two |
-
-All five confirmed green against real Postgres/MongoDB/Redis/Kafka
-testcontainers at the time this test was added (`31 passed`
-booking-service — since risen to 33 with P9.T3's two additions below,
-`2 passed` search-service, `9 passed` payment-service, `6 passed`
-notification-service integration suites). Point 4's addition is the only
-new test this task added; points 1, 2, 3, and 5 already had their own
-redelivery coverage from the phase that built them and needed no new
-test, only citing.
-
-## Phase 9 — Edge cases: double-cancel and pay-after-hold-lost
-
-Two of the three edge cases the master plan names for this phase already
-had both a correctness guard and a test before this phase started: webhook
-replay (`payment-service/tests/integration/test_payment_flow.py::
-test_webhook_transitions_payment_and_replay_is_a_safe_no_op`) and the
-expired-hold race under *concurrent* acquisition
-(`booking-service/tests/integration/test_cron_hold_race.py`,
-`test_concurrency_suite.py`) — reconfirmed green, no new test needed.
-
-The other two — double-cancel and pay-after-hold-lost — had a subtler gap
-than "no test exists." Both guards already had a **unit-level** test
-proving the `BookingManager` reacts correctly when its repository layer
-*reports* a lost race (`test_booking_manager.py::
-test_cancel_booking_race_lost_409s` mocks `transition_if_confirmed` to
-return `False`; `test_pay_booking_on_non_pending_booking_409s` mocks
-`bookings.get_by_id` to return an already-CONFIRMED booking). Neither
-proved the real repository method — a genuine rowcount-gated Postgres
-`UPDATE`, or a real booking actually swept to `EXPIRED` — produces that
-signal in the first place under a real sequential re-call. Added two
-integration tests closing that gap:
-
-- `booking-service/tests/integration/test_cancel_booking_kafka.py::
-  test_double_cancel_second_call_409s_and_does_not_re_release_or_republish`
-  — cancels a real seeded CONFIRMED booking through `BookingManager`
-  (real `BookingRepository`/`TicketRepository`/`CronHoldStrategy`, a fresh
-  `AsyncSession` per call, mirroring two separate real HTTP requests),
-  then calls `cancel_booking` again on the same booking ID. Asserts the
-  second call 409s, its `BookingCancelledProducer` mock is never awaited
-  (no second `booking.cancelled` message), and the ticket/booking rows are
-  left exactly as the first call set them.
-- `booking-service/tests/integration/test_pay_booking_after_hold_expiry.py::
-  test_pay_booking_after_hold_expired_via_real_sweep_409s_without_charging`
-  — seeds a genuinely stale `PENDING` booking, runs the real sweep
-  (`BookingRepository.expire_stale_pending()`, the same call
-  `hold_sweep.py`'s scheduled job makes) so it actually transitions to
-  `EXPIRED`, then calls `pay_booking`. Asserts a 409 and that the mocked
-  `httpx` client's `post()` is never awaited — a charge is never even
-  attempted against a booking nobody can legitimately complete.
-
-Both pass against real Postgres testcontainers; full `booking-service`
-suite (unit + integration) is 80/80 after these additions (77 prior +
-1 P9.T1 redelivery test + these 2).
-
-## Post-Phase-9 hardening: nine adversarial and failure-injection rounds against the live stack
+## Post-launch hardening: nine rounds against the live stack ahead of deployment
 
 Phase 9's own CHECKPOINT closed with every exit-checklist item verified,
 but the user asked for further rounds beyond it — "run a bunch of
 testing rounds... make the system foolproof" — deliberately ahead of
 Phase 10 (AWS deployment) and with the Stripe test-mode key still
-unset. Not tied to any single numbered phase task, this became an
-eight-round arc against the actual running `docker compose` stack
+unset. Not tied to any single numbered phase task, this became a
+nine-round arc against the actual running `docker compose` stack
 (never mocks), each round self-verified live before being counted as
 done, per the Integrity rule. The user's standing triage instruction
 throughout: fix everything real found, rather than partial-defer for
-later. Across all eight rounds, this surfaced and fixed 14 real bugs —
+later. Across all nine rounds, this surfaced and fixed 14 real bugs —
 6 in the first pass alone, then one to two per subsequent round — plus
-one infrastructure defect (Kafka never actually persisting data) and
-one deliberately accepted gap (a Postgres-down 500 left unfixed on
-purpose, discussed below).
+one infrastructure defect (Kafka never actually persisting data), one
+deliberately accepted gap (a Postgres-down 500 left unfixed on
+purpose, discussed below), and Round 9's real Stripe test-mode charge
+and refund round trip, closing the last deferred gap.
 
 **Round 1 — first adversarial/sanity pass, ~36 findings.** Two parallel
 live-testing rounds (adversarial + sanity) plus a five-service
