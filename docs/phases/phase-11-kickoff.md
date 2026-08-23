@@ -195,6 +195,21 @@ Left untouched, explicitly, not silently skipped:
 
 ---
 
+## Phase 11 overall status
+
+- [ ] **Phase 11 is NOT complete.** The partial-pass checklist immediately
+      below is fully checked off, but it covers only P11a-P11d — the
+      content-polishing tasks that don't depend on P10. Everything in
+      the "Blocked on P10" section above (the Deployment Flow chapter,
+      the Abstract, Conclusion's takeaways, the template/formatting
+      handoff to the Claude.ai Project, and the demo script) is still
+      outstanding and cannot start until Phase 10 (AWS Elastic Beanstalk
+      Deployment) finishes and produces its evidence. Leave this box
+      unchecked until a follow-up session picks up the blocked items
+      once P10 closes and Phase 11 is actually done end to end.
+
+---
+
 ## Phase 11 (partial) exit checklist — for this content-polishing pass only
 
 - [x] P11a — Project Description Phase 4-6 narrative gap closed; status
