@@ -4903,3 +4903,60 @@ of this file, left over from the previous entry's edit.
 
 Decisions-log delta: none — pure documentation, no decision content
 changed. `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Ninth testing round: a real Stripe test-mode charge and refund round trip, closing the last deferred gap
+
+User set up a real Stripe test-mode secret key in `.env` and logged the
+Stripe CLI in, unblocking the one thing every round through Round 8 had
+to work around: the actual Stripe API. Brought up `stripe listen
+--forward-to localhost:80/payments/webhook` to forward real webhook
+deliveries to `payment-service` through Traefik. The CLI's own
+browser-OAuth login (`stripe login`) was never actually completed
+(`stripe config --list` showed no `api_key`), so `stripe listen` was
+instead pointed at the API directly via `--api-key`, using the same
+`STRIPE_SECRET_KEY` already configured for `payment-service` in `.env`.
+The signing secret it printed on startup matched `.env`'s
+`STRIPE_WEBHOOK_SECRET` exactly, confirming that value had been set up
+correctly ahead of time — no restart needed.
+
+Fetched an alice token via `get-token.sh`, created a real booking
+against an available seat on the seeded "Wandering Notes: Reunion Tour"
+event, then called `POST /bookings/{id}/pay`. This drove a genuine
+`stripe.PaymentIntent.create_async` call (`pm_card_visa`, Stripe's
+always-succeeds test payment method) — the first time this exact path
+ran without the synthetic-`payment.outcomes`-message substitute used in
+every prior round. The real webhook round-tripped back through Traefik
+within about a second; `payment-service` logs showed `charge.succeeded`
+→ `payment_intent.succeeded` → `payment_outcome_published`, and
+`booking-service` logs showed `payment_outcome_applied` →
+`booking_confirmed`. Confirmed via `GET
+/bookings/events/{id}/tickets`: the seat's status moved from
+`available` to `booked`.
+
+Cancelled the same booking through `POST /bookings/{id}/cancel`. This
+drove a genuine `stripe.Refund.create_async` call; `payment_db`
+confirmed `status = REFUNDED` with both `stripe_charge_id` and
+`stripe_refund_id` populated. Then published a synthetic redelivery of
+the same `{"booking_id": ...}` message directly onto the
+`booking.cancelled` topic via `kafka-console-producer.sh`, to exercise
+the one branch flagged as untested since the third testing round
+(2026-08-22 entry above): `refund_payment`'s `stripe_refund_id is not
+None` replay-no-op guard. It fired correctly — a clean
+`refund_replay_no_op` log line, no second call to Stripe's `/v1/refunds`
+endpoint. This is the idempotency gate working against a real,
+already-populated refund ID rather than a simulated one; it had never
+been exercised this way before.
+
+No bugs found. No code changes — a live-verification round only.
+Updated `docs/report/testing-strategy.md` with a new Round 9 paragraph
+in the post-Phase-9 hardening section (retitled "nine adversarial and
+failure-injection rounds"), corrected the closing paragraph's "what
+remains open" claim (the Stripe key and the blocked idempotency branch
+are no longer open), and softened a now-stale present-tense claim
+earlier in the chapter ("local dev has only a placeholder Stripe key...
+remains the only way") to past tense with a forward pointer to this
+round. Updated `docs/report/README.md`'s Testing Strategy row and
+Fed-by column to match. Stopped the background `stripe listen` process
+once verification was complete.
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.

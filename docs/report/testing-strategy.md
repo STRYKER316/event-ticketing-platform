@@ -528,8 +528,10 @@ fixture to the same proven combination (`confluentinc/cp-kafka:7.6.0` +
 **Live-verified end to end, through the real HTTP/Kafka path, under both
 hold strategies**: created real events/seat maps, booked and reached
 `CONFIRMED` via the self-signed-webhook technique Phase 4 established
-(local dev has only a placeholder Stripe key, so this remains the only way
-to reach a genuinely `CONFIRMED` booking without a real account), then
+(local dev had only a placeholder Stripe key at this point in the
+project, so this was the only way to reach a genuinely `CONFIRMED`
+booking without a real account — see the post-Phase-9 hardening
+section's Round 9 for the later real-Stripe verification), then
 cancelled through the real `POST /bookings/{id}/cancel` route. Under
 `cron`: seat released `BOOKED` → `AVAILABLE`, confirmed by direct query,
 immediately rebookable; non-owner 404 (existence hidden, not just 403);
@@ -959,7 +961,7 @@ Both pass against real Postgres testcontainers; full `booking-service`
 suite (unit + integration) is 80/80 after these additions (77 prior +
 1 P9.T1 redelivery test + these 2).
 
-## Post-Phase-9 hardening: eight adversarial and failure-injection rounds against the live stack
+## Post-Phase-9 hardening: nine adversarial and failure-injection rounds against the live stack
 
 Phase 9's own CHECKPOINT closed with every exit-checklist item verified,
 but the user asked for further rounds beyond it — "run a bunch of
@@ -1138,16 +1140,43 @@ correctly in `GET /search` within seconds of publishing, confirming
 the event→search Kafka integration point still holds after this
 session's accumulated changes.
 
+**Round 9 — a real Stripe test-mode charge and refund round trip,
+closing the last deferred gap.** The user set up a real Stripe
+test-mode secret key and logged in the Stripe CLI, unblocking the one
+path every round through Round 8 had to work around: everything
+downstream of an actual Stripe API call. `stripe listen --forward-to
+localhost:80/payments/webhook`, authenticated directly against the
+configured test key (the CLI's own browser-OAuth login was never
+separately completed, so `--api-key` was used instead — its signing
+secret matched `.env`'s already-configured `STRIPE_WEBHOOK_SECRET`
+exactly, confirming that value was set up correctly ahead of time), ran
+alongside the stack to forward real webhook deliveries. Booked and paid
+for a real seat (`pm_card_visa`, Stripe's always-succeeds test payment
+method) through the actual `POST /bookings/{id}/pay` route: a genuine
+`PaymentIntent` reached Stripe, the real webhook round-tripped back
+through Traefik, and the booking reached `CONFIRMED` — the first time
+this exact path ran without the synthetic-outcome substitute Phase 4
+established for local dev. Cancelled the booking through the real
+`POST /bookings/{id}/cancel` route: a genuine Stripe `Refund` was
+issued, and `payment_db` confirmed `status = REFUNDED` with both
+`stripe_charge_id` and `stripe_refund_id` populated. Finally,
+published a synthetic redelivery of the same `booking.cancelled`
+message directly to Kafka to exercise the one branch no prior round
+could reach: `refund_payment`'s `stripe_refund_id is not None`
+replay-no-op guard fired correctly — a clean `refund_replay_no_op` log
+line, no second Stripe API call attempted, confirming the idempotency
+gate holds against a real, already-populated refund ID and not just a
+simulated one. No bugs found; the last deliberately-open item from
+Rounds 1-8 is now closed.
+
 The five-service unit suite was re-run after each round that changed
-code (Rounds 1, 2, 5, 6, 7 — Rounds 3, 4, 8 either made no application
-code changes or, for Round 3, changed infrastructure config only), green
-throughout with zero regressions introduced by any fix, ending at
-65/23/52/14/9 after Round 7's fixes — unchanged since, as no round after
-it touched application code. `_shared/auth`'s own suite (31/31) was
-confirmed separately, alongside adjacent comment-cleanup work in this
-same session, not as part of this eight-round arc itself. What remains
-deliberately open, unchanged
-by this arc: the Stripe test-mode key setup (explicitly deferred by the
-user), and, blocked on it, the one Payment Service idempotency branch
-that needs a real successful charge-then-refund round trip to exercise
-(`refund_payment`'s `stripe_refund_id is not None` replay-no-op guard).
+code (Rounds 1, 2, 5, 6, 7 — Rounds 3, 4, 8, 9 either made no
+application code changes or, for Round 3, changed infrastructure config
+only), green throughout with zero regressions introduced by any fix,
+ending at 65/23/52/14/9 after Round 7's fixes — unchanged since, as no
+round after it touched application code. `_shared/auth`'s own suite
+(31/31) was confirmed separately, alongside adjacent comment-cleanup
+work in this same session, not as part of this nine-round arc itself.
+What remained open after Round 8 — the Stripe test-mode key setup, and
+the one Payment Service idempotency branch blocked on it — was closed
+by Round 9 above; nothing further is deliberately deferred.
