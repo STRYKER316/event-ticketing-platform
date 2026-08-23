@@ -5058,3 +5058,66 @@ takeaways, the template/formatting handoff to the Claude.ai Project, and
 the demo script. Next: Phase 10 (AWS Elastic Beanstalk Deployment), still
 next in the locked build order; the blocked P11 items resume once P10's
 evidence exists.
+
+## 2026-08-23 — Report content-quality pass: de-duplication and testing-strategy reorganization
+
+Requested directly by the user, not tied to a phase task: a content-quality
+review of all seven then-drafted report chapters, run first as an
+analysis-only pass, then implemented once the user confirmed the findings.
+The review (a background subagent) found three chapters — Requirement
+Gathering, Feature Development Process, Technologies Used — genuinely fine
+as-is (short because focused, not thin), and two real problems: the same
+five to six bug narratives told in full in more than one chapter, and
+`testing-strategy.md` organized as a phase-by-phase chronicle rather than a
+synthesized narrative, which was both the largest single chapter (10,304
+words) and the source of most of the duplication.
+
+**De-duplication.** Five bug narratives previously told in full in more
+than one chapter — the Redis hold-strategy Booking-row sweep gap (in
+Class Diagrams, Database Schema Design, and Testing Strategy), the
+Traefik `/payments/charge` routing bypass (Class Diagrams and Testing
+Strategy), the `price_cents` bind-param overflow (Database Schema Design
+and Testing Strategy), and the `stripe_charge_id IS NULL` retry bug
+(Database Schema Design and Testing Strategy) — were reduced to one
+canonical telling each in `testing-strategy.md`, with Class Diagrams and
+Database Schema Design trimmed to keep only what's relevant to their own
+subject (the resulting class/method shape, or the resulting schema
+column/constant) plus a one-sentence pointer. Verified before trimming
+that nothing removed from the non-canonical chapters was missing from
+Testing Strategy's version. `class-diagrams.md`: 5329 → 5247 words.
+`database-schema-design.md`: 3084 → 2989 words. The requirement-gathering.md
+instance of the Traefik-bypass story was left untouched — already
+concise and scoped to its own roles-table narrative purpose, not a full
+duplicate.
+
+**Testing Strategy reorganization.** Rewrote `testing-strategy.md` from
+one `##` section per phase (Phase 1, Phase 2, pre-Phase-3, Phase 3, Phase
+4, Phase 6, Phase 5, Phase 7, Phase 9, post-Phase-9) into a theme
+structure: the tier model (unit/integration, adversarial, live-traffic,
+post-launch hardening); Tiers 1/2 content grouped together (including
+Phase 3's test-first `TicketHoldStrategy` methodology); a standalone
+section for the idempotency-testing pattern across all five Kafka
+integration points (the P9 coverage matrix plus its edge-case tests); Tier
+3 (the pre-Phase-3 adversarial arc); a "review gates" section grouping
+Phase 3's two-pass review, Phase 4's and Phase 6's CHECKPOINT-caught bugs,
+and Phase 5's two-round CHECKPOINT review under one theme — what
+self-verification, dedicated adversarial review, and the routine
+`/pre-pr` gate each catches that the others don't; Tier 4 (Phase 7's
+live-traffic findings); and the post-Phase-9 hardening arc. No content
+was cut — every phase's findings, bug narratives, and status lines moved
+to a theme section rather than being removed, and this chapter absorbed
+the bug narratives trimmed from Class Diagrams/Database Schema Design
+above, which is why its own word count grew rather than shrank:
+10,304 → 10,876 words. No status label was upgraded or downgraded as
+part of the reorganization — every `**Status:**` line was carried over
+unchanged.
+
+Final accuracy check: re-read every edited chapter and confirmed each of
+the five trimmed bug narratives is still fully tellable by reading its
+new canonical section in Testing Strategy; confirmed every
+"see the Testing Strategy chapter's ... section" pointer added or already
+present in Class Diagrams, Database Schema Design, and Technologies Used
+resolves to a real heading in the reorganized file; confirmed no status
+label changed. `docs/report/README.md`'s chapter-status table rows for
+Testing Strategy, Class Diagrams, Database Schema Design, and Technologies
+Used updated to match. Decisions-log delta: none. `CLAUDE.md` delta: none.

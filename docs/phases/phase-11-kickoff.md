@@ -208,6 +208,18 @@ Left untouched, explicitly, not silently skipped:
       unchecked until a follow-up session picks up the blocked items
       once P10 closes and Phase 11 is actually done end to end.
 
+**Note, 2026-08-23:** a separate, user-requested content-quality pass ran
+after the P11a-P11d tasks above closed — a review of all seven then-drafted
+report chapters for thinness/depth/redundancy, followed by a
+de-duplication pass (five bug narratives previously told in full in more
+than one chapter, reduced to one canonical telling each in
+`testing-strategy.md`) and a reorganization of `testing-strategy.md` from
+a phase-by-phase chronicle into a theme structure. Real work, but not on
+this kickoff doc's own task list (P11a-P11d) and not itself part of the
+"Blocked on P10" items above — see `docs/build-log.md`'s same-dated "Report
+content-quality pass" entry for the full account. Does not change the
+unchecked box above.
+
 ---
 
 ## Phase 11 (partial) exit checklist — for this content-polishing pass only
