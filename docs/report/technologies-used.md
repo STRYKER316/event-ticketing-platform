@@ -2,8 +2,11 @@
 
 *Status: draft, running list — appended each phase per the DOCUMENT step.
 "Real-world framing" polish pass happens at P11.T2; until then this is
-accurate but unpolished. Entries below cover what Phases 0-3, 8, and now
-7 actually introduced and verified running.*
+accurate but unpolished. Entries below cover what Phases 0-4, 6, 8, and 7
+actually introduced and verified running — Stripe (Phase 4, verified live
+Phase 9) is the one entry that took until this session to have a real,
+non-placeholder-credential live verification behind it. AWS/Elastic
+Beanstalk remains correctly absent, pending Phase 10.*
 
 Each entry: what it is, why it was chosen over the alternatives considered,
 and its status in this build.
@@ -361,6 +364,68 @@ the same suite — Booking Service's correctness claims span three real
 datastores at once (Postgres, Redis, and the Kafka broker the
 provisioning consumer reads from), so the integration tier needed all
 three running simultaneously, not sequentially.
+
+## Stripe (payment processing)
+
+**What:** a third-party payment processor, integrated here via
+`stripe-python`'s async client, in test mode throughout — real API calls
+against Stripe's sandbox, never a mocked HTTP layer, but never real money
+or a production account.
+
+**Why:** rather than hand-rolling a payment gateway (a security-sensitive,
+PCI-scope-heavy problem well outside this project's actual scope), Stripe
+lets the project demonstrate a real, production-shaped payment integration:
+a genuine `PaymentIntent` charge attempt, a genuine webhook delivery
+carrying the authoritative outcome, and a genuine refund call — the same
+shapes a real production integration would use, just against test-mode
+credentials and Stripe's always-succeeding test payment method
+(`pm_card_visa`) rather than a live card network.
+
+**Idempotency-key pattern, shared by charges and refunds** (§9): both
+`PaymentManager.create_charge` and `refund_payment` pass Stripe's own
+`idempotency_key` parameter as a backstop against a duplicate submission
+racing past this system's own application-level guard — `create_charge`
+keys on the booking ID itself, `refund_payment` keys on
+`{booking_id}-refund`, so a charge and its later refund for the same
+booking can never collide on the same key. The primary defense in both
+cases is still application-level (a resubmission gate keyed on whether
+the provider-side ID column — `stripe_charge_id`/`stripe_refund_id` — is
+still `NULL`, see the Database Schema Design chapter's Payment Service
+section); Stripe's key is the second, independent layer, not the only one.
+
+**Webhook-driven confirmation is the sole source of truth for a Payment's
+terminal status** (§9), not `create_charge`'s synchronous response — even
+though Stripe test mode often resolves a `PaymentIntent` synchronously, a
+lost synchronous response after Stripe already processed the charge would
+otherwise be indistinguishable from a genuine failure. `handle_webhook_event`
+verifies Stripe's signature before touching any `Payment` row and is
+idempotent the same way every Kafka consumer in this system is required to
+be (§7) — a rowcount-gated conditional `UPDATE` only transitions a
+`Payment` still `pending`.
+
+**Status:** Implemented, Tested, Verified (live) — a real Stripe test-mode
+charge-and-refund round trip, not just the placeholder-credential failure
+mode every earlier phase had to work around. Once the user configured a
+real Stripe test-mode secret key and the Stripe CLI's `stripe listen`
+forwarded real webhook deliveries through Traefik to `payment-service`,
+a real booking's `POST /bookings/{id}/pay` drove a genuine
+`stripe.PaymentIntent.create_async` call; the real webhook round-tripped
+back within about a second (`charge.succeeded` → `payment_intent.succeeded`
+→ `payment_outcome_published` in `payment-service`'s logs, `payment_outcome
+_applied` → `booking_confirmed` in `booking-service`'s), and the seat's
+status moved from `available` to `booked`. Cancelling the same booking
+drove a genuine `stripe.Refund.create_async` call, confirmed via
+`payment_db`: `status = REFUNDED` with both `stripe_charge_id` and
+`stripe_refund_id` populated. A synthetic redelivery of the same
+`booking.cancelled` message then exercised `refund_payment`'s
+`stripe_refund_id is not None` replay-no-op guard against a real,
+already-populated refund ID — a clean `refund_replay_no_op` log line, no
+second call to Stripe's `/v1/refunds` endpoint — closing the one
+idempotency branch every prior round could only prove against a mocked
+Stripe response, not a real one. See `docs/build-log.md`'s 2026-08-23
+"Ninth testing round" entry for the full session, and the Class Diagrams
+and Database Schema Design chapters' Payment Service sections for the
+mechanism this verified.
 
 ## Redis (`redis.asyncio`)
 
