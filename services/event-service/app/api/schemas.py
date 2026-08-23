@@ -173,3 +173,22 @@ class SeatMapUpsert(BaseModel):
         if total > MAX_SEAT_MAP_SEATS:
             raise ValueError(f"seat map has {total} seats, exceeding the {MAX_SEAT_MAP_SEATS} limit")
         return self
+
+    @model_validator(mode="after")
+    def no_duplicate_seats(self) -> "SeatMapUpsert":
+        # (section, row, label) is booking-service's own unique constraint
+        # (bulk_upsert_available's ON CONFLICT DO NOTHING) — that constraint
+        # silently drops a duplicate rather than erroring, so without this
+        # check here a seat map claiming N seats provisions fewer than N
+        # real, sellable tickets with no warning to the organizer. Caught at
+        # the DTO boundary instead, per this project's own DTO-as-strict-
+        # validation-boundary convention.
+        seen: set[tuple[str, str, str]] = set()
+        for section in self.sections:
+            for row in section.rows:
+                for seat in row.seats:
+                    key = (section.name, row.name, seat.label)
+                    if key in seen:
+                        raise ValueError(f"duplicate seat: section {section.name!r}, row {row.name!r}, label {seat.label!r}")
+                    seen.add(key)
+        return self

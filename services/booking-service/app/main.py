@@ -6,8 +6,10 @@ import shared_auth
 import structlog
 from aiokafka import AIOKafkaConsumer
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
+from redis.exceptions import RedisError
 
 from app.api import bookings, health
 from app.core import (
@@ -104,6 +106,21 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(bookings.router)
     Instrumentator().instrument(app).expose(app)
+
+    @app.exception_handler(RedisError)
+    async def redis_error_handler(request: Request, exc: RedisError) -> JSONResponse:
+        # RedisHoldStrategy (§6) has no clean way to signal "the backend
+        # itself is unreachable" through TicketHoldStrategy's bool-returning
+        # interface without conflating it with "seat unavailable" — caught
+        # here instead, at the ASGI boundary, so every route reachable
+        # through the hold strategy (create_booking, list_tickets_for_event,
+        # cancel_booking) gets one clean 503 rather than each needing its own
+        # try/except. Kafka consumers calling the same strategy are
+        # unaffected — this handler only wraps the HTTP request/response
+        # cycle, so PaymentOutcomeConsumer's own _run_with_retry still sees
+        # the raw exception and retries as designed.
+        logger.error("hold_backend_unreachable", error=str(exc))
+        return JSONResponse(status_code=503, content={"detail": "hold service unavailable"})
 
     return app
 

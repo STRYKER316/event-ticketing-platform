@@ -206,6 +206,40 @@ def test_seat_rejects_infinity_y():
         Seat(label="A1", x=0, y=float("inf"))
 
 
+def test_seat_map_upsert_rejects_a_duplicate_seat_label_within_one_row():
+    with pytest.raises(ValidationError):
+        SeatMapUpsert(
+            sections=[
+                SeatMapSection(
+                    price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="1", x=0, y=0), Seat(label="1", x=1, y=0)])]
+                )
+            ]
+        )
+
+
+def test_seat_map_upsert_rejects_a_duplicate_seat_label_across_sections_sharing_a_row_name():
+    with pytest.raises(ValidationError):
+        SeatMapUpsert(
+            sections=[
+                SeatMapSection(price_cents=2500, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="1", x=0, y=0)])]),
+                SeatMapSection(price_cents=3000, name="A", rows=[SeatMapRow(name="1", seats=[Seat(label="1", x=5, y=5)])]),
+            ]
+        )
+
+
+def test_seat_map_upsert_accepts_the_same_label_in_different_rows():
+    upsert = SeatMapUpsert(
+        sections=[
+            SeatMapSection(
+                price_cents=2500,
+                name="A",
+                rows=[SeatMapRow(name="1", seats=[Seat(label="1", x=0, y=0)]), SeatMapRow(name="2", seats=[Seat(label="1", x=0, y=1)])],
+            )
+        ]
+    )
+    assert sum(len(row.seats) for section in upsert.sections for row in section.rows) == 2
+
+
 def test_event_create_rejects_too_many_performer_ids():
     with pytest.raises(ValidationError):
         EventCreate(

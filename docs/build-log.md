@@ -4486,3 +4486,126 @@ Decisions-log delta: none — the booking-ownership fix corrects behavior
 against `CLAUDE.md`'s already-locked "ownership scoping, not just role
 checks" invariant, the same category as the earlier DRAFT-event fix,
 not a new architectural decision. `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Sixth testing round: an unblocked double-cancel race, search-service's own redelivery idempotency, a real Redis-down 500, and a silent seat-count mismatch
+
+User asked to keep queuing rounds. Realized mid-round that the
+double-cancel-on-a-CONFIRMED-booking test, tracked since the P9
+CHECKPOINT audit as blocked on a real Stripe key, was never actually
+blocked — `architecture.html`'s own reproduce-yourself walkthrough
+already documents reaching a genuine `CONFIRMED` booking locally via a
+synthetic `payment.outcomes` message (the same technique used for this
+round's earlier `PaymentOutcomeConsumer` idempotency check), and
+`cancel_booking` itself never touches Stripe directly — only the
+Kafka-triggered refund downstream in payment-service does. Unblocked it.
+
+**Double-cancel race, live, real HTTP.** Created a booking, confirmed it
+via the synthetic-outcome technique, fired 15 simultaneous
+`POST /bookings/{id}/cancel` requests. Exactly one 200, fourteen 409s
+— all fourteen losers hit the pre-transition status check
+(`cancel_booking_not_confirmed`), not the rowcount-gated
+`transition_if_confirmed` race path itself (`cancel_booking_race_lost`:
+0 occurrences), meaning the winner's commit landed before the other
+fourteen's fetch — either path is a correct guard, this just tells us
+which one this concurrency level actually exercised. Booking ended
+`CANCELLED`, ticket `AVAILABLE`, and — the part that actually proves no
+double-refund-trigger — exactly one `refund_payment_not_found` line in
+payment-service's logs for this booking ID, confirming only the winning
+request's commit-then-publish actually reached `booking.cancelled`.
+
+**search-service's `EventConsumer` redelivery idempotency**, the one
+DB-writing (well, ES-writing) consumer this project has that had never
+been checked this way. Same technique as `ProvisioningConsumer` earlier
+this round: stopped the service, reset the `search-service` group's
+`event.events` offset to earliest, restarted. All three seed events
+re-logged `search_index_upserted`; Elasticsearch doc count unchanged at
+3. Elasticsearch's own upsert-by-ID semantics make this closer to
+inherently idempotent than booking-service's `ON CONFLICT DO NOTHING`,
+but "closer to inherently" isn't the same as verified, hence checking it
+for real instead of assuming.
+
+**Real bug — Redis-down crashed to a bare, unstructured 500 on every
+route that touches the hold strategy under `HOLD_STRATEGY=redis`,
+including the public, unauthenticated seat-map route.** Confirmed `cron`
+strategy is genuinely unaffected by Redis being down (`/healthz` 200,
+`POST /bookings` 201) — expected, since `CronHoldStrategy` never touches
+Redis. Flipped to `redis`, stopped Redis
+(`docker compose stop redis` then `up -d --no-deps` for booking-service,
+since a plain `up -d` re-satisfies the `depends_on: service_healthy`
+condition and silently brings Redis back — caught this on the first
+attempt before it could produce a false negative): `POST /bookings`
+crashed to a bare `Internal Server Error` 500, full traceback in the
+logs down to `redis.exceptions.ConnectionError`, no `HTTPException`
+anywhere in the chain. Worse: `GET /bookings/events/{id}/tickets` — the
+public, unauthenticated seat-map composition route, `list_tickets_for_event`
+→ `_resolve_ticket_status` → `is_held()` per ticket — hit the exact same
+unhandled crash on the single most heavily-trafficked read route in the
+system. `TicketHoldStrategy`'s bool-returning interface has no clean way
+to distinguish "backend unreachable" from "seat unavailable" without
+conflating the two at the call site, and duplicating a try/except across
+all four call sites (`create_booking`, `list_tickets_for_event`,
+`cancel_booking`'s `_transition_and_release`, the `IntegrityError`
+compensation path) seemed like exactly the kind of premature-abstraction
+sprawl CLAUDE.md warns against. Fixed instead with a single
+`@app.exception_handler(RedisError)` in `app/main.py`, the same pattern
+`event-service` already established for `RequestValidationError` — one
+registration, every HTTP route covered, clean `503
+{"detail":"hold service unavailable"}` instead of a bare 500. Confirmed
+by construction (not just live-tested) that this doesn't touch
+`PaymentOutcomeConsumer`'s Kafka-consumer path: FastAPI/Starlette
+exception handlers only wrap the ASGI request/response cycle, never a
+plain `asyncio.Task`, so `_run_with_retry`'s bare `except Exception` still
+sees the raw `RedisError` and retries it exactly like a DB failure — read
+the retry wrapper's code to confirm this rather than trying to
+live-time a race against its 1s backoff. Live-verified the fix on both
+routes (`POST /bookings` and the seat-map route each cleanly 503 with
+Redis down, both recover to normal behind Redis coming back). No
+existing test coverage for the analogous `event-service` handler either
+— live verification matches this repo's own established bar for this
+class of fix, not a gap introduced here.
+
+**Real bug — a seat map with a duplicate `(section, row, label)` seat
+silently produces fewer real tickets than the organizer's map claims, no
+error anywhere in the chain.** Found while checking whether
+`upsert_seat_map`'s already-correct "immutable once published" guard
+(§ decisions-log, existing) covered every seat-map edge case worth
+checking — it does for the case it targets (mutating a live seat map),
+but a *first* upload with an internally duplicate seat was never
+checked at all. Live-reproduced: uploaded a seat map with two seats
+sharing `(section="A", row="1", label="1")` at different `x`/`y` —
+`SeatMapUpsert` accepted it (200), publish succeeded (200),
+`ProvisioningConsumer` logged `seats_in_message: 2, tickets_inserted: 1`
+— `bulk_upsert_available`'s `ON CONFLICT DO NOTHING` (its own
+`(event_id, section, row_name, seat_label)` unique constraint) silently
+absorbed the duplicate as designed, which is exactly the right behavior
+for a genuine Kafka redelivery but the wrong behavior for a first-ever
+upload with bad data — the organizer now has one fewer sellable seat
+than their own seat map shows, with nothing telling them so. Fixed at
+the DTO boundary per this project's own DTO-as-strict-validation-
+convention: `SeatMapUpsert` gets a second `@model_validator` rejecting
+any duplicate `(section.name, row.name, seat.label)` tuple with a clean
+422 naming the exact offending seat, rather than letting it reach
+`bulk_upsert_available`'s constraint several service-hops downstream.
+Three new unit tests (duplicate within one row, duplicate across two
+same-named sections/rows, same label legitimately reused across two
+*different*-named rows — confirming the fix doesn't over-reject).
+Live-reverified against the rebuilt service: the identical duplicate
+payload that silently succeeded before now 422s with
+`"duplicate seat: section 'A', row '1', label '1'"`.
+
+Temporary `docker-compose.yml` `HOLD_STRATEGY: redis` override (needed
+to reach the Redis-down bug) reverted to the committed `cron` baseline
+afterward; `booking-service` recreated clean; `make reset` run to clear
+every artifact this round generated (the double-cancel test booking,
+the two duplicate-seat test events, the Redis-down test bookings).
+
+Full five-service unit suite re-run after all fixes: 65/23/52/14/9, all
+green — two new tests in `event-service` (65 vs. the prior round's 62,
+plus the 3 new duplicate-seat tests already counted in that 65), no
+regressions elsewhere.
+
+Decisions-log delta: none — both fixes correct behavior against
+already-locked conventions (the app-level-exception-handler pattern
+`event-service` already established; the DTO-as-strict-validation-
+boundary rule already in `CLAUDE.md`'s Conventions section), not new
+architectural decisions. `CLAUDE.md` delta: none.
