@@ -4821,4 +4821,85 @@ the markdown/HTML changes.
 Decisions-log delta: none — pure prose clarity, no decision content
 changed. `CLAUDE.md` delta: none.
 
+## 2026-08-23 — Eighth testing round: JWT edge cases, cancellation cutoff, event→search indexing, all clean
+
+Three more live rounds against the running stack, chosen to cover
+ground not yet exercised this session. No bugs found in any of them.
+
+**JWT/auth edge-case robustness.** Live `curl` calls against
+`POST /events` (organizer-only) and `GET /events` (public) through
+Traefik: no `Authorization` header, a garbage-string token, a
+real token with its last character flipped (tampered signature), the
+`Basic` scheme instead of `Bearer`, and an empty `Bearer ` value — all
+five correctly 401. A real, valid token against the public route
+correctly 200s. A real token for `alice` (role `user`, not
+`organizer`) against `POST /events` correctly 403s. Token-expiry
+rejection was not re-tested live (would have meant a ~5-minute wait for
+Keycloak's default access-token TTL) since it's already covered by a
+forged-and-signed-with-a-test-key unit test,
+`_shared/auth/tests/unit/test_dependencies.py::test_expired_token_rejected`,
+confirmed present and passing.
+
+**Cancellation-cutoff enforcement (decisions-log §22 amendment #2).**
+Not live-tested before this round. Created an event with `start_time`
+~25s in the future, published it, held its one ticket as `alice`, then
+published a synthetic `payment.outcomes` Kafka message directly
+(`{"action":"succeeded", ...}`) to drive `PENDING`→`CONFIRMED` without
+a real Stripe call — the same technique `architecture.html` already
+documents for reaching a genuine `CONFIRMED` booking locally without a
+configured Stripe key. Waited past `start_time`, then called
+`POST /bookings/{id}/cancel`: correctly 409 (`"event has already
+started"`). Control case: same flow against a second event with
+`start_time` 30 days out — cancel correctly 200s and the ticket
+correctly reverts to `available`.
+
+**Event→search Kafka indexing (integration point #1).** Both events
+created during the cutoff-enforcement round above showed up correctly
+in `GET /search?q=...` within a couple seconds of publishing, unprompted
+confirmation that this integration point still works end-to-end after
+this session's accumulated changes.
+
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Report staleness: post-Phase-9 hardening arc written into `testing-strategy.md`
+
+User asked whether any staleness sweeps or testing rounds were still
+worth doing. Checked: the eight post-Phase-9 hardening rounds above
+(2026-08-22/23) were never folded into `docs/report/testing-strategy.md`
+— that chapter's content, and its status-table entry in
+`docs/report/README.md`, stopped at P9.T1's Kafka idempotency coverage
+matrix. All 14 real bugs, the Kafka-persistence infrastructure fix, and
+the accepted Postgres-down gap from the eight rounds existed only in
+this diary, invisible to the actual report chapter meant to carry them
+— a real gap against CLAUDE.md's own phase-end checklist (report
+chapters + status table kept current) and cross-doc staleness
+requirements, even though this arc wasn't a numbered phase task with
+its own kickoff-doc checklist forcing the update.
+
+Wrote a new `testing-strategy.md` section synthesizing all eight rounds
+(one paragraph each), condensing the diary's blow-by-blow into
+report-appropriate prose while preserving every concrete technical
+claim — bug descriptions, exact fixes, and live-verification specifics
+— rather than a vague summary, since that specificity is what gives the
+chapter its evidentiary value. Updated the chapter-status table's
+Testing Strategy row and Fed-by column to reference the new section and
+its build-log entries.
+
+Caught and corrected one accuracy issue in my own first draft before
+committing: the closing paragraph originally claimed the five-service
+suite (plus `_shared/auth`) was "re-run after every round," which
+overstates it — Rounds 3, 4, and 8 either made no application-code
+change or (Round 3) changed infrastructure config only, so there was no
+suite to re-run for those, and `_shared/auth`'s 31/31 was confirmed
+separately alongside adjacent comment-cleanup work, not as part of this
+arc. Reworded to state precisely which rounds re-ran the suite (1, 2,
+5, 6, 7) and where the `_shared/auth` number actually came from —
+Integrity rule applies to this chapter same as any Verified/Measured
+claim elsewhere in the report.
+
+Also fixed a stray duplicated closing line
+("Decisions-log delta: none. `CLAUDE.md` delta: none.") at the very end
+of this file, left over from the previous entry's edit.
+
+Decisions-log delta: none — pure documentation, no decision content
+changed. `CLAUDE.md` delta: none.

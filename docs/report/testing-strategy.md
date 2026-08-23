@@ -958,3 +958,196 @@ integration tests closing that gap:
 Both pass against real Postgres testcontainers; full `booking-service`
 suite (unit + integration) is 80/80 after these additions (77 prior +
 1 P9.T1 redelivery test + these 2).
+
+## Post-Phase-9 hardening: eight adversarial and failure-injection rounds against the live stack
+
+Phase 9's own CHECKPOINT closed with every exit-checklist item verified,
+but the user asked for further rounds beyond it — "run a bunch of
+testing rounds... make the system foolproof" — deliberately ahead of
+Phase 10 (AWS deployment) and with the Stripe test-mode key still
+unset. Not tied to any single numbered phase task, this became an
+eight-round arc against the actual running `docker compose` stack
+(never mocks), each round self-verified live before being counted as
+done, per the Integrity rule. The user's standing triage instruction
+throughout: fix everything real found, rather than partial-defer for
+later. Across all eight rounds, this surfaced and fixed 14 real bugs —
+6 in the first pass alone, then one to two per subsequent round — plus
+one infrastructure defect (Kafka never actually persisting data) and
+one deliberately accepted gap (a Postgres-down 500 left unfixed on
+purpose, discussed below).
+
+**Round 1 — first adversarial/sanity pass, ~36 findings.** Two parallel
+live-testing rounds (adversarial + sanity) plus a five-service
+adversarial code review, on top of a full docs staleness sweep. Six
+significant correctness bugs, one per service: `booking-service`'s
+`list_tickets_for_event` sourced BOOKED/HELD status from the raw
+`tickets.status` column, which `RedisHoldStrategy` never writes — every
+held/booked seat under `HOLD_STRATEGY=redis` reported as AVAILABLE
+(fixed to source BOOKED from `Booking.status` and HELD from the
+strategy's own `is_held()`); a `SUCCEEDED` payment outcome racing an
+already-EXPIRED booking silently dropped a real charge with no refund
+path (now republishes to `booking.cancelled`). `event-service` had no
+visibility scoping at all on DRAFT events — any caller could `GET`
+another organizer's unpublished event or seat map (fixed with a 404,
+not 403, existence-hiding check); separately, `seed.py` wrote raw DB
+rows directly, so `make reset`'s demo data never reached Kafka, leaving
+`booking_db` and the search index empty after every reset (rewritten to
+route through the real create/publish path). `payment-service`: a
+webhook reporting SUCCEEDED after an earlier FAILED webhook for the
+same charge was silently dropped, since the rowcount-gated transition
+only matched a PENDING source state (widened to accept PENDING or
+FAILED). `notification-service`: a whitespace-only exception message
+crashed the fallback-to-`repr()` truthiness check in its error-text
+helper. `search-service`: its Kafka consumer was still on `aiokafka`'s
+default auto-commit — the one consumer in the codebase not yet on the
+manual-commit-plus-bounded-retry convention every other consumer
+follows, meaning a crash mid-write could silently lose an index update
+(brought in line).
+
+**Round 2 — a second existence-oracle bug, one verb away from the
+first.** The DRAFT-event visibility fix above correctly hid a DRAFT
+event from `GET` by a non-owner (404), but the separate method backing
+every *mutation* route (`PATCH`/`DELETE`/`/publish`/seat-map `PUT`)
+still returned 403 for the same non-owner — reopening the exact
+enumeration oracle the read-side fix had just closed, via a different
+verb. Fixed to match: 404 while DRAFT, 403 only once PUBLISHED (existence
+is already public by then). A related log-level inconsistency one hop
+upstream in `booking-service` was also corrected to match its sibling.
+Regression suite: 74/25/87/24/15 across the five services, all green.
+
+**Round 3 — security/injection fuzzing (clean), and a real
+infrastructure bug.** JWT tampering (bad signature, `alg=none` even
+with a valid `kid`, expired token, malformed/empty bearer), ES/Lucene
+injection via `/search`, SQLi-shaped event titles, a 100KB title, and
+malformed/extra-field JSON bodies all handled correctly — no findings.
+A real 5,000-seat seat-map upload exercised the shared `chunked()`
+bind-param batching helper at genuine scale (not just unit-tested): all
+5,000 `Ticket` rows provisioned correctly. Failure-injection testing
+then surfaced a real, previously-undocumented infrastructure defect:
+Kafka's data volume was mounted at a path `apache/kafka:3.8.0`'s
+KRaft-mode default log directory never actually wrote to, so every
+container recreate silently wiped every topic and consumer offset —
+invisible because `KAFKA_AUTO_CREATE_TOPICS_ENABLE` let topics
+reappear empty rather than erroring. Confirmed via a genuine
+crash-redelivery test that replayed 5 stale messages for already-purged
+`event_id`s, creating 397 orphaned `Ticket` rows. Fixed with an
+explicit `KAFKA_LOG_DIRS` override, live-verified against the actual
+named Docker volume; `make reset` was also updated to explicitly clear
+all six Kafka topics and restart every consuming service afterward,
+closing a related zero-partition-assignment gap found while fixing it.
+
+**Round 4 — the two checks Round 3 deferred, both clean.** With
+Kafka now genuinely persisting, the DLQ live exercise (a real
+`payment_confirmed` message pushed through 3 failed retries, real
+2s/4s/8s backoff observed via structured logs, landing in the DLQ
+end-to-end in ~30 seconds) and a Kafka-down degradation check (all five
+`/healthz` stayed 200, a DB-only route kept serving real data, all four
+consumers logged only internal reconnect-retry noise with no busy-loop,
+and all four auto-reconnected cleanly once Kafka came back) both came
+back clean. This closed out the arc that began right after the Phase 9
+CHECKPOINT.
+
+**Round 5 — Kafka redelivery idempotency proven live, a second
+ownership-existence oracle, and both hold strategies under real
+concurrency.** `CLAUDE.md`'s own architecture invariant requires every
+Kafka consumer's idempotency to be explicitly tested, which prior
+phases had only done via testcontainers, never a live duplicate
+delivery against the running stack. Verified for all three
+DB-writing consumers by resetting each consumer group's offset to
+earliest and replaying real messages: `booking-service`'s
+`ProvisioningConsumer` (392 tickets unchanged, `tickets_inserted: 0` on
+replay), its `PaymentOutcomeConsumer` (a synthetic `succeeded` message
+replayed produced no second confirmation or notification), and
+`payment-service`'s `BookingCancelledConsumer` (a duplicate cancellation
+ID produced two clean no-op warnings, no crash). Separately, the same
+ownership-scoping sweep that found the DRAFT-event oracle in Round 2 had
+never been run against `booking-service`: `_fetch_owned_booking_in_status`
+(backing both `/pay` and `/cancel`) returned 403 for a real-but-not-owned
+booking and 404 for a nonexistent one, letting any authenticated user
+enumerate real booking IDs. Unlike the event case, a booking has no
+publicly visible state at all, so every non-owner access now hides
+existence (404) uniformly. Finally, 20 simultaneous `POST /bookings`
+requests against the same ticket (real HTTP through Traefik, real
+Keycloak tokens) produced exactly one 201 and nineteen 409s under both
+`cron` and `redis` hold strategies, and hold-expiry was independently
+confirmed live under both (a held ticket correctly reverts to
+AVAILABLE and its booking to EXPIRED once the TTL lapses, under a
+temporarily shortened TTL/sweep interval for a fast check).
+
+**Round 6 — an unblocked concurrency race, and two more real bugs.**
+The double-cancel-on-a-CONFIRMED-booking test, tracked since Phase 9 as
+blocked on a real Stripe key, turned out not to be blocked at all — a
+synthetic `payment.outcomes` message reaches a genuine CONFIRMED
+booking without Stripe, and cancellation itself never calls Stripe
+directly. 15 simultaneous cancel requests against the same booking
+produced exactly one 200 and fourteen 409s, with exactly one
+downstream refund-trigger log line confirming no double-refund path was
+reached. `search-service`'s own Kafka consumer was checked the same
+live-redelivery way as Round 5's — index count unchanged after a
+replay. Two real bugs: Redis being down crashed every route touching
+the hold strategy — including the public, unauthenticated seat-map
+route — to a bare, unstructured 500, fixed with a single
+`@app.exception_handler(RedisError)` (mirroring `event-service`'s
+existing `RequestValidationError` pattern) rather than duplicating a
+try/except across four call sites, yielding a clean `503`. And a seat
+map with an internally duplicated `(section, row, label)` seat silently
+produced fewer real tickets than the organizer's own map claimed — the
+provisioning consumer's `ON CONFLICT DO NOTHING` correctly absorbed it
+as a *redelivery* guard, but nothing rejected it on a genuine *first*
+upload. Fixed at the DTO boundary with a second validator on
+`SeatMapUpsert`, rejecting the exact offending seat with a 422 before
+it ever reaches the database.
+
+**Round 7 — completing the external-dependency-down sweep.**
+Postgres, Elasticsearch, and MongoDB were each stopped in turn against
+the live stack. Postgres down: `/healthz` correctly 503s on the three
+Postgres-backed services and stays 200 on the two that aren't, but a
+real business route crashes to a bare 500 — deliberately left unfixed,
+since the underlying exception here is a bare `socket.gaierror` (an
+`OSError` subclass), and an app-level `except OSError` broad enough to
+catch it risks silently reclassifying unrelated errors, a worse
+trade-off than the 500 it would fix given a full Postgres outage is
+already a full system outage either way. Elasticsearch down: a real
+bug, `GET /search` crashed to a bare 500; fixed with the same
+exception-handler pattern as the Redis fix, this time on the properly
+scoped `elastic_transport.TransportError`, yielding a clean 503.
+MongoDB down: a real bug, `/healthz` took 30+ seconds to report
+unhealthy because the Mongo client used PyMongo's default 30-second
+server-selection timeout; fixed by setting an explicit 5-second
+timeout, cutting the same correct 503 down to ~5 seconds. A
+malformed-input spot-check (non-UUID IDs, truncated JSON, empty
+bodies, an unsigned webhook POST) and an inspection of the synchronous
+booking→payment HTTP call's existing timeout/error handling both came
+back clean, no changes needed.
+
+**Round 8 — JWT edge cases, live cancellation-cutoff enforcement, and
+event→search indexing, all clean.** Five malformed/missing-auth
+variants (no header, garbage token, tampered signature, wrong auth
+scheme, empty bearer value) against a real endpoint all correctly
+401'd; a valid token against a public route 200'd; a non-organizer
+token against an organizer-only route correctly 403'd. Token-expiry
+rejection was not re-exercised live here — it is already covered by a
+forged-and-signed unit test — but the cancellation cutoff
+(decisions-log §22 amendment #2) had never been live-tested before this
+round: an event created with a near-future `start_time`, its one ticket
+held and confirmed via the same synthetic-outcome technique used in
+Rounds 5–6, cancelled correctly with a 409 once `start_time` passed,
+and correctly succeeded (releasing the ticket) against a control event
+30 days out. Both events created during this check also appeared
+correctly in `GET /search` within seconds of publishing, confirming
+the event→search Kafka integration point still holds after this
+session's accumulated changes.
+
+The five-service unit suite was re-run after each round that changed
+code (Rounds 1, 2, 5, 6, 7 — Rounds 3, 4, 8 either made no application
+code changes or, for Round 3, changed infrastructure config only), green
+throughout with zero regressions introduced by any fix, ending at
+65/23/52/14/9 after Round 7's fixes — unchanged since, as no round after
+it touched application code. `_shared/auth`'s own suite (31/31) was
+confirmed separately, alongside adjacent comment-cleanup work in this
+same session, not as part of this eight-round arc itself. What remains
+deliberately open, unchanged
+by this arc: the Stripe test-mode key setup (explicitly deferred by the
+user), and, blocked on it, the one Payment Service idempotency branch
+that needs a real successful charge-then-refund round trip to exercise
+(`refund_payment`'s `stripe_refund_id is not None` replay-no-op guard).
