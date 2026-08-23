@@ -1022,23 +1022,24 @@ Frontend: 9/9 Vitest tests, `tsc -b`/`oxlint`/`vite build` all clean. This
 phase's exit checklist is now fully checked off; see `docs/build-log.md`'s
 2026-08-21 entries for the walkthrough's full narrative.
 
-## Post-launch hardening: nine rounds against the live stack ahead of deployment
+## Post-launch hardening: ten rounds against the live stack ahead of deployment
 
 Phase 9's own CHECKPOINT closed with every exit-checklist item verified,
 but the user asked for further rounds beyond it — "run a bunch of
 testing rounds... make the system foolproof" — deliberately ahead of
 Phase 10 (AWS deployment) and with the Stripe test-mode key still
 unset. Not tied to any single numbered phase task, this became a
-nine-round arc against the actual running `docker compose` stack
+ten-round arc against the actual running `docker compose` stack
 (never mocks), each round self-verified live before being counted as
 done, per the Integrity rule. The user's standing triage instruction
 throughout: fix everything real found, rather than partial-defer for
-later. Across all nine rounds, this surfaced and fixed 14 real bugs —
+later. Across all ten rounds, this surfaced and fixed 14 real bugs —
 6 in the first pass alone, then one to two per subsequent round — plus
 one infrastructure defect (Kafka never actually persisting data), one
 deliberately accepted gap (a Postgres-down 500 left unfixed on
-purpose, discussed below), and Round 9's real Stripe test-mode charge
-and refund round trip, closing the last deferred gap.
+purpose, discussed below), Round 9's real Stripe test-mode charge and
+refund round trip closing the last deferred gap, and Round 10's
+genuine-concurrency and webhook-forgery checks, both clean.
 
 **Round 1 — first adversarial/sanity pass, ~36 findings.** Two parallel
 live-testing rounds (adversarial + sanity) plus a five-service
@@ -1231,14 +1232,52 @@ gate holds against a real, already-populated refund ID and not just a
 simulated one. No bugs found; the last deliberately-open item from
 Rounds 1-8 is now closed.
 
+**Round 10 — genuine concurrent-request angles the sequential replays in
+Rounds 1-9 couldn't reach, all clean.** Every prior round's "concurrent"
+tests either raced HTTP requests against a hold/cancel decision (Rounds
+5-6) or replayed Kafka messages one at a time; none had fired truly
+simultaneous requests at the one synchronous, external-API-calling path
+in the system — Payment Service's Stripe charge submission — nor probed
+the webhook endpoint as an attacker rather than as Stripe itself. Four
+checks, real HTTP through Traefik, real Keycloak tokens, the real
+(now-configured) Stripe test key: a forged `Stripe-Signature` header and
+a request with the header omitted entirely both 400'd cleanly at
+`stripe.Webhook.construct_event`, no crash, no `payment_db` row written
+for either — payment-service's webhook endpoint correctly does not trust
+its own caller by default, only a signature Stripe itself could have
+produced. Five genuinely simultaneous `POST /bookings/{id}/pay` calls
+against the same PENDING booking (real concurrent HTTP, not sequential)
+exercised `_resolve_payment_row`'s `IntegrityError` race-loser path under
+real load: all five reached `_submit_to_stripe` with the same
+booking-ID-derived idempotency key (the local unique-index guard only
+dedupes the `Payment` row, not the outbound Stripe call itself, since the
+losers' re-queried row still had a null `stripe_charge_id` at the moment
+they checked it), producing four real `409 Conflict` responses from
+Stripe's own idempotency-key locking followed by a retry-and-converge on
+all five — confirmed live, for the first time, that Stripe's key-level
+locking is what actually closes this race, not application code alone.
+`payment_db` ended with exactly one `Payment` row and one real
+`stripe_charge_id` shared by all five responses; no double charge.
+Separately, a booking whose hold was allowed to expire (real TTL sweep,
+temporarily shortened to 15s/5s via a `docker-compose.yml` override
+reverted immediately after the check, the same technique Round 5 used)
+correctly 409'd on a `/pay` attempt against the now-EXPIRED booking, with
+the ticket already back to AVAILABLE and no stray `Payment` row created;
+and a `/cancel` attempt against a booking still PENDING (charged but not
+yet webhook-confirmed) correctly 409'd rather than being treated as
+already-CONFIRMED. No bugs found.
+
 The five-service unit suite was re-run after each round that changed
-code (Rounds 1, 2, 5, 6, 7 — Rounds 3, 4, 8, 9 either made no
+code (Rounds 1, 2, 5, 6, 7 — Rounds 3, 4, 8, 9, 10 either made no
 application code changes or, for Round 3, changed infrastructure config
 only), green throughout with zero regressions introduced by any fix,
 ending at 65/23/52/14/9 after Round 7's fixes — unchanged since, as no
 round after it touched application code. `_shared/auth`'s own suite
 (31/31) was confirmed separately, alongside adjacent comment-cleanup
-work in this same session, not as part of this nine-round arc itself.
+work in this same session, not as part of this ten-round arc itself.
 What remained open after Round 8 — the Stripe test-mode key setup, and
-the one Payment Service idempotency branch blocked on it — was closed
-by Round 9 above; nothing further is deliberately deferred.
+the one Payment Service idempotency branch blocked on it — was closed by
+Round 9 above; Round 10 then closed the remaining untested angle (real
+concurrency, not sequential replay, against the Stripe-calling path and
+the webhook endpoint's own trust boundary). Nothing further is
+deliberately deferred.

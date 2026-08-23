@@ -5121,3 +5121,60 @@ resolves to a real heading in the reorganized file; confirmed no status
 label changed. `docs/report/README.md`'s chapter-status table rows for
 Testing Strategy, Class Diagrams, Database Schema Design, and Technologies
 Used updated to match. Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Tenth testing round: real concurrency against the Stripe-calling path, and webhook forgery, both clean
+
+User asked for more testing rounds "from any other angles" now that
+Round 9 closed the last deliberately-open gap. Reviewed all nine prior
+rounds first (`testing-strategy.md`'s hardening section) to avoid
+repeating coverage, then picked four angles none of them had actually
+reached: every prior "concurrent" test either raced a hold/cancel
+decision or replayed one Kafka message at a time, never fired truly
+simultaneous requests at the one path that calls an external API
+synchronously (`payment-service`'s charge submission), and no round had
+approached the webhook endpoint as a forger rather than as Stripe.
+
+Stack was already up from Round 9's session. Forged-signature test: `POST
+/payments/webhook` with a garbage `Stripe-Signature` header, and
+separately with the header omitted entirely — both 400'd cleanly
+(`webhook_signature_invalid`, no crash), confirmed via `payment_db` that
+neither wrote a row.
+
+Concurrency test: created a real booking, then fired five genuinely
+simultaneous `POST /bookings/{id}/pay` requests (backgrounded `curl`
+processes, not sequential) against it. All five returned `200` with the
+same `payment_id`. Logs showed all five actually reached
+`stripe.PaymentIntent.create_async` with the same booking-ID-derived
+idempotency key — `_resolve_payment_row`'s unique-index guard dedupes the
+local `Payment` row but not the outbound Stripe call itself, since a
+race-losing request's re-queried row still has `stripe_charge_id = NULL`
+at the moment it checks it — and Stripe's own idempotency-key locking
+returned `409 Conflict` to four of the five, each retried once and
+converged on the same `PaymentIntent`. `payment_db` confirmed exactly one
+`Payment` row with one real `stripe_charge_id` shared by all five
+responses. This is the first live confirmation that Stripe's key-level
+locking, not application code alone, is what closes this race under real
+concurrency — Round 9's charge/refund calls were single-request.
+
+Hold-expiry test: temporarily overrode `booking-service`'s
+`HOLD_TTL_SECONDS`/`HOLD_SWEEP_INTERVAL_SECONDS` to 15/5 in
+`infra/docker-compose.yml` (same technique Round 5 used), recreated the
+container, booked a seat, waited for the sweep to expire it, then called
+`/pay` — correct `409 Conflict` ("booking is not pending payment"), seat
+already back to `AVAILABLE`, no stray `Payment` row. Reverted
+`docker-compose.yml` via `git checkout` and recreated the container back
+to the normal 600/30 settings immediately after.
+
+Fourth check: attempted `POST /bookings/{id}/cancel` on a booking that
+had been charged (Round 9-style real Stripe call) but not yet
+webhook-confirmed, still `PENDING` — correct `409 Conflict` ("booking is
+not confirmed"), not silently treated as cancellable.
+
+No bugs found. No application code changes — a live-verification round
+only; the `docker-compose.yml` TTL override was reverted before this
+entry, confirmed via `git status`. Updated `docs/report/testing-strategy.md`
+with a new Round 10 paragraph (post-launch hardening section retitled
+"ten rounds") and `docs/report/README.md`'s Testing Strategy row and
+Fed-by column to match.
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.
