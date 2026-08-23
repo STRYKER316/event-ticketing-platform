@@ -5213,6 +5213,13 @@ green. Rebuilt and restarted `event-service`, live-reverified: a 1-cent
 seat map upload now `422`s with `"Input should be greater than or equal
 to 50"`; a 50-cent upload still succeeds.
 
+Also spot-checked the one angle Rounds 1-2's existence-oracle fixes never
+actually reached: created a real, never-published DRAFT event and
+confirmed it does not leak into `GET /events` (real HTTP, both as a
+non-owner and unauthenticated) — clean, `list_events`'s "DRAFT never
+visible in the public listing" comment holds against the live list
+endpoint, not just the single-resource routes Rounds 1-2 tested.
+
 Updated `docs/report/testing-strategy.md` with a new Round 11 paragraph
 (post-launch hardening section retitled "eleven rounds," bug count
 14 → 15, unit-suite tally 65/23/52/14/9 → 67/23/52/14/9) and

@@ -1292,7 +1292,13 @@ of at charge time with an opaque `502`. Live-reverified after rebuilding
 and restarting `event-service`: a 1-cent seat map upload now `422`s with
 `"Input should be greater than or equal to 50"`, and a 50-cent upload
 still succeeds. Two new unit tests added at the boundary (49 rejected, 50
-accepted); `event-service`'s suite: 65 → 67, still green.
+accepted); `event-service`'s suite: 65 → 67, still green. Also spot-checked
+one angle Rounds 1-2's existence-oracle fixes never actually exercised: a
+real never-published DRAFT event, created during this round, correctly
+never appeared in `GET /events` (real HTTP, both as a non-owner and
+unauthenticated) — clean, confirming `list_events`'s "DRAFT never visible
+in the public listing" comment holds against the live list endpoint, not
+just the single-resource routes Rounds 1-2 actually tested.
 
 The five-service unit suite was re-run after each round that changed
 code (Rounds 1, 2, 5, 6, 7, 11 — Rounds 3, 4, 8, 9, 10 either made no
