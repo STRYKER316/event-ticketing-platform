@@ -4960,3 +4960,101 @@ Fed-by column to match. Stopped the background `stripe listen` process
 once verification was complete.
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Phase 11 kickoff (partial start): P11a-P11d content-polishing pass
+
+Started Phase 11 (Report Assembly & Demo) ahead of Phase 10, per
+decisions-log §27's 2026-08-23 amendment and `docs/phases/phase-11-kickoff.md`
+— the deliberate partial start scoping only the four tasks that don't
+depend on P10's evidence. Read the existing kickoff doc as the completed
+PLAN step (no re-planning) and went straight to IMPLEMENT, one task at a
+time, four small commits.
+
+**P11a — Project Description Phase 4-6 narrative backfill.** Wrote three
+new paragraphs into `docs/report/project-description.md` covering Payment
+Service (§9 amendment's synchronous `/pay` call, webhook-driven
+confirmation, Kafka integration point #4), Cancellation & Refunds (§22,
+the `release_booking` third `TicketHoldStrategy` method, integration
+point #5, the cancellation-cutoff `booking_db.events` table), and
+Notification Service (§17 amendment's no-DB decision, the `RetryEnvelope`
+three-topic retry/DLQ ladder), matching the existing Phase 0-3/7 sections'
+voice. Updated the chapter's status line, closed its "What this section
+still needs" note, and updated `docs/report/README.md`'s row.
+
+**P11b — Requirement Gathering benchmark cross-reference.** Added a new
+"Non-functional requirements" section citing the Hold-Mechanism
+Benchmark's real measured numbers (Feature Development Process chapter)
+— 30/30 successful bookings under 300-way contention, p50/p95/p99
+hold-acquisition latency, passive vs. immediate-trigger release latency
+— closed the chapter's own "still needs" note, and corrected its status
+label and `README.md` row.
+
+**P11c — Class Diagrams / Database Schema Design stale labels.**
+Re-checked both chapters against their actual content (all five backend
+services genuinely present in both, confirmed by heading) and updated
+both chapters' status lines and `README.md` rows to drop the
+service-enumeration "partial" framing that read as incomplete. No
+content gap found — label-only fix, as the kickoff doc's own pre-read
+audit anticipated.
+
+**P11d — Technologies Used: Stripe entry.** Added a full `## Stripe
+(payment processing)` entry — idempotency-key pattern shared by charges
+and refunds (§9), webhook-driven confirmation as the sole source of
+truth, and the real Round 9 (2026-08-23) charge-and-refund round trip as
+live verification. Updated `README.md`'s row.
+
+**Review pass.** Ran a `/pre-pr`-equivalent adversarial review on the
+full diff (docs-only, four report files plus `README.md`'s status table)
+via a subagent instructed to read `CLAUDE.md` in full and cross-check
+every new factual claim against decisions-log, build-log, and the actual
+source. Found six real issues, all fixed before this checkpoint:
+
+1. Requirement Gathering claimed "seven" roles/permissions tables — the
+   chapter actually has six (Event, Booking, Payment, Cancellation,
+   Notification, the Phase 7 route). The miscount originated in this
+   kickoff doc's own pre-read audit and P11b prompt, propagated into two
+   report files unchecked. Fixed in `requirement-gathering.md`,
+   `README.md`, and the kickoff doc itself (with a note explaining the
+   correction, not a silent edit).
+2. The new Stripe entry claimed `handle_webhook_event` verifies Stripe's
+   signature — it doesn't; the route does (`stripe.Webhook.construct_event`
+   in `payments.py`), before the manager ever sees the event. Fixed to
+   attribute the check to the correct layer.
+3. Both the new Stripe entry and the Project Description backfill claimed
+   the webhook handler's idempotency guard "only transitions a `Payment`
+   still `pending`" — true only of the failure branch
+   (`transition_if_pending`); the success branch
+   (`transition_to_succeeded`) deliberately also matches `failed`, since
+   a genuine success can arrive after an earlier failed webhook. Fixed
+   both passages to describe both branches correctly.
+4. Project Description cited §8 (Database Topology) for the "message is
+   the authorization" reasoning — §8 contains no such reasoning; the
+   established citation for that reasoning (per Requirement Gathering's
+   own Notification Service section) is §8/§22 together. Fixed the
+   citation.
+5. Project Description's dual-hold-strategy paragraph still described the
+   Phase 8 benchmark in future tense ("will run") despite the same
+   commit's closing note declaring the chapter gap-free. Fixed to past
+   tense with a forward pointer to the results.
+6. The webhook-idempotency passage was near-verbatim duplicated between
+   Project Description and the new Technologies Used Stripe entry — the
+   one place the narrative chapter read as copy-paste rather than a
+   genuinely higher altitude. Trimmed Project Description's version to a
+   summary with a forward pointer, leaving the mechanism-level detail to
+   Technologies Used alone.
+
+Cross-doc staleness sweep: grepped `docs/` for the old stale phrasing
+("P4-P6 not yet backfilled," "partial — Event/Search/Booking/Payment,"
+the old seven-table count) — none found outside what this pass already
+fixed. `master-development-plan.md`'s P11.T2 task-table row (real-world
+framing polish, still correctly pending) needed no change.
+
+Decisions-log delta: none, as the kickoff doc anticipated. `CLAUDE.md`
+delta: none — pure content work, no new convention.
+
+Deliberately untouched this pass, per the kickoff doc's "Blocked on P10"
+section: the Deployment Flow chapter, the Abstract, Conclusion's
+takeaways, the template/formatting handoff to the Claude.ai Project, and
+the demo script. Next: Phase 10 (AWS Elastic Beanstalk Deployment), still
+next in the locked build order; the blocked P11 items resume once P10's
+evidence exists.
