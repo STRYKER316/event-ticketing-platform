@@ -370,7 +370,7 @@ Build sequenced into 12 dependency-ordered phases (P0–P11); full detail in
   end of September's 3rd week, at whatever completeness (~50–60% expected). Full
   completion ~early-to-mid November — September is a presentable-partial checkpoint.
 - Locked build order (report-first): P0 → P1 → P2 → P3 → P8 → P4 → P6 → P5 → P7 →
-  P10 → P9/P11. Benchmark (P8) runs immediately after Booking (P3), ahead of
+  P9 → P10 → P11. Benchmark (P8) runs immediately after Booking (P3), ahead of
   Payment, because it is the report's only Measured chapter and needs only Booking's
   two hold strategies — securing it early puts the report centerpiece in the
   showcase window.
@@ -382,3 +382,54 @@ Build sequenced into 12 dependency-ordered phases (P0–P11); full detail in
   (draft the report section + log deltas) → CHECKPOINT (tag/merge).
 - Capacity basis: 2 hrs/evening from 2026-08-13; ~163 hr reference (true ~170–185);
   the "testing + report" line is under-budgeted, mitigated by continuous drafting.
+
+**Correction (Phase 11 kickoff, 2026-08-23):** the build-order bullet above
+originally read "P10 → P9/P11," transposing P9 and P10 and ambiguously
+grouping P9 with P11 — never actually followed (Phase 9 ran to full
+completion, exit checklist and all, before Phase 10 began) and
+contradicted by `master-development-plan.md`'s own per-phase detail, which
+states Phase 10's entry dep as P9 and Phase 11's as P10 explicitly. A
+transcription error in this summary bullet, not a re-derivation of the
+plan — corrected in place above to match the detailed plan, which remains
+the authoritative source per this section's own opening line.
+
+**Amendment (Phase 11 kickoff, 2026-08-23):** P11's entry dep is locked to
+P10 (`master-development-plan.md` §Phase 11 — the Deployment Flow chapter
+needs P10.T1–T4's evidence, and P11.T4's formatting pass needs every
+chapter present). The user asked to start P11 *work*, explicitly not P11
+*completion*, ahead of P10. Resolved by splitting P11's five tasks along
+what genuinely depends on P10 versus what doesn't, rather than either
+blocking the whole phase on P10 or silently ignoring the locked
+dependency:
+
+- **Startable now, no P10 dependency:** the gap-filling half of P11.T1
+  ("fill any gaps" in already-drafted chapters — Project Description's
+  P4-P6 backfill, a pass over every chapter's status label since several
+  say "partial" for reasons that may no longer be current), a first draft
+  of P11.T2 (Technologies Used — every non-AWS technology already has a
+  full phase of real usage behind it), and a first draft of P11.T3's
+  Limitations/Future Work half (§26's pull-list already exists and
+  doesn't depend on how P10 goes) — held as a draft, revisited once P10
+  is done in case it surfaces new limitations worth adding.
+- **Blocked on P10, not started:** the Deployment Flow chapter itself
+  (P10.T1–T4 haven't produced its evidence yet); the Abstract
+  (P11.T1 — by design written last, once the whole report is present);
+  P11.T3's Conclusion takeaways (need the finished report to take stock
+  of); P11.T5's demo script and recorded walkthrough (the graded demo
+  runs against the deployed instance, per Phase 10's own goal).
+- **Not this session's job at all, P10-independent:** P11.T1's literal
+  "stitch into the template" step and all of P11.T4 (Times New Roman,
+  14pt/12pt, margins, per-chapter figure/table numbering, the 40-page
+  check) — this repo has no copy of the institution's actual submission
+  template, and Claude Code produces Markdown, not a formatted
+  Word/PDF document. That physical assembly pass belongs to the
+  separate Claude.ai Project the user has set up for this MS program
+  specifically, once handed the finished, gap-free `docs/report/*.md`
+  files plus the real template — mirroring how `docs/report/README.md`
+  already describes this repo's chapters as "source material... not the
+  final formatted document."
+
+This is a workflow resequencing, not an architecture or scope change —
+§1–26 remain untouched, and every content claim these early P11 tasks
+produce still carries its honest status label per the Integrity rule,
+same as every other chapter.
