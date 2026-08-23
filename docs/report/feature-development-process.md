@@ -225,7 +225,8 @@ more data.
 correct** (P3.T7, and reconfirmed by this run's exact 30/30 successful
 allocation under both strategies, all three runs each), and cron requires
 no second infrastructure dependency (no Redis container, one fewer moving
-part in the deployed system, per the cost-management priorities in §12), the
+part in the deployed system, per the resource-budget consolidation reasoning
+in §12), the
 measured evidence in this report mildly favors `cron` as the default for
 the current single-instance deployment target (§12: AWS Elastic
 Beanstalk, one instance) — not because it demonstrably outperforms redis
