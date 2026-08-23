@@ -4375,3 +4375,114 @@ blocked on it (double-cancel on a CONFIRMED booking, which needs a real
 successful charge to reach CONFIRMED in the first place).
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-23 — Fifth testing round: Kafka redelivery idempotency, a real booking-ownership existence-oracle bug, and both hold strategies live under a 20-way concurrency race
+
+User asked to queue up further rounds beyond the DLQ/Kafka-down pair
+above. Picked the highest-value remaining gaps: `CLAUDE.md`'s own
+architecture invariant explicitly requires every Kafka consumer's
+idempotency to be "explicitly tested," which prior phases only did via
+testcontainers unit tests, not a live duplicate-delivery against the
+running stack; and the ownership-scoping sweep that found the DRAFT-event
+oracle bug earlier had only ever been run against event-service, never
+booking-service.
+
+**Redelivery idempotency, live, all three consumers with a DB write in
+their path:**
+
+- `booking-service`'s `ProvisioningConsumer` (`event.events`, group
+  `booking-service`): stopped the service, reset the consumer group's
+  offset to earliest via `kafka-consumer-groups.sh --reset-offsets`,
+  restarted — all three seed events reprocessed, each logging
+  `tickets_provisioned` with `tickets_inserted: 0` (the upsert recognized
+  every seat as already present). `booking_db.tickets` count unchanged at
+  392 before and after. Confirms `bulk_upsert_available`'s upsert is
+  genuinely idempotent under a real redelivery, not just a rowcount
+  assertion in a unit test.
+- `booking-service`'s `PaymentOutcomeConsumer` (`payment.outcomes`):
+  created a real booking via the API (`POST /bookings` as `alice`, no
+  Stripe needed at this step), published a synthetic `succeeded`
+  `PaymentOutcomeMessage` directly to the topic — booking transitioned
+  `PENDING` → `CONFIRMED`, ticket → `BOOKED`, notification published.
+  Republished the identical message: no second `payment_outcome_applied`
+  log line, no second notification, state unchanged — `transition_if_pending`'s
+  rowcount-gated UPDATE correctly matched zero rows on the replay.
+- `payment-service`'s `BookingCancelledConsumer` (`booking.cancelled`):
+  published the same booking's ID twice in a row (this booking has no
+  `payment_db` row, since it never went through a real charge) — both
+  deliveries logged a clean `refund_payment_not_found` warning and
+  returned, no crash, no duplicate side effect. The deeper "redelivery
+  after a real refund already succeeded" replay-no-op branch
+  (`stripe_refund_id is not None`) remains untested — same Stripe-key
+  blocker as everything else requiring a real charge.
+
+**Real bug — booking-ownership existence oracle, the same bug class as
+the earlier DRAFT-event one, just never checked here before.**
+`BookingManager._fetch_owned_booking_in_status` (backing both `/pay` and
+`/cancel`) returned 403 for a real-but-not-owned booking and 404 for a
+genuinely nonexistent one — live-confirmed: `bob` cancelling `alice`'s
+real `CONFIRMED` booking got `403 {"detail":"not your booking"}`, a
+made-up booking ID got `404 {"detail":"booking not found"}`, distinguishing
+the two lets any authenticated user enumerate whether a given booking ID
+is real. Checked `decisions-log.md` first for any prior explicit ruling
+on this — none exists, so this was a genuine gap, not a deliberate
+carve-out. Unlike the event case, there is no PUBLISHED-equivalent
+carve-out to preserve here: a booking has no publicly visible state at
+all (no `GET /bookings/{id}` route, no public listing), so every
+non-owner access should hide existence, not just some of them. Fixed by
+changing the ownership-mismatch branch in
+`_fetch_owned_booking_in_status` to 404. Two existing unit tests
+(`test_pay_booking_by_non_owner_403s`, `test_cancel_booking_by_non_owner_403s`)
+renamed and updated to assert 404; full `booking-service` unit suite
+(52 tests) still green. Live-reverified post-fix against the running
+stack: the same `bob`-cancels-`alice`'s-booking request now 404s.
+Cross-doc staleness sweep for this one (current-state docs only —
+historical `phase-4-kickoff.md`/`phase-6-kickoff.md` and old build-log
+entries left as the historical record they are, per this project's own
+convention): `docs/architecture.html`'s reproduce-yourself walkthrough
+(both the `/pay` and `/cancel` non-owner examples, plus the endpoint
+summary list), and the report chapters describing this behavior as fact
+— `docs/report/requirement-gathering.md` (both roles/permissions tables
+and their live-verification prose), `docs/report/testing-strategy.md`,
+`docs/report/class-diagrams.md` — all updated from 403 to 404 with the
+existence-hiding rationale stated explicitly, per the Integrity rule
+(a report claiming "Verified" behavior that no longer matches the code
+would itself be a violation of that rule, not just stale prose).
+
+**Concurrent double-booking race, live, both hold strategies.** Fired 20
+simultaneous `POST /bookings` requests (real HTTP through Traefik, real
+Keycloak-issued tokens, `asyncio.gather`) at the same available ticket.
+Under `cron`: exactly one 201, nineteen 409s, exactly one `bookings` row
+and the ticket correctly `HELD` afterward. Flipped
+`infra/docker-compose.yml`'s `HOLD_STRATEGY` to `redis` (the documented
+"flip and repeat" step from `architecture.html`'s own walkthrough),
+repeated against a fresh ticket: identical split, one winner, nineteen
+losers, no crashes either way. Confirms P3's core double-booking
+guarantee still holds at this concurrency level under both strategies,
+not just at whatever level the original P3 benchmark exercised.
+
+**Hold-expiry correctness, live, both hold strategies.** Same temporary
+`docker-compose.yml` edit also set `HOLD_TTL_SECONDS: 8` and
+`HOLD_SWEEP_INTERVAL_SECONDS: 5` (both env-overridable, no code change)
+for a fast live check instead of waiting out the real 600s/30s defaults.
+Under `redis`: a held ticket's booking transitioned to `EXPIRED` on its
+own within a few seconds of the TTL lapsing (Redis key expiry, no sweep
+needed for this strategy), and a second user (`bob`) successfully booked
+the same ticket immediately after — a real 201, not just an unlocked
+row. Under `cron`: booked a fresh ticket (confirmed `HELD` immediately
+after), watched `_sweep_cron_holds_once`'s 5s-interval log lines, and
+after the TTL lapsed confirmed via direct query the ticket was back to
+`AVAILABLE` and the booking `EXPIRED`. Both hold strategies verified
+live, not just via the existing unit/integration suites. Temporary
+`docker-compose.yml` overrides (`HOLD_STRATEGY: redis`→`cron`,
+`HOLD_TTL_SECONDS`, `HOLD_SWEEP_INTERVAL_SECONDS`) fully reverted to the
+committed baseline afterward, `booking-service` restarted clean, and
+`make reset` run to clear every test artifact this round generated.
+
+Full five-service unit suite re-run after all fixes: 62/23/52/14/9,
+all green, no regressions.
+
+Decisions-log delta: none — the booking-ownership fix corrects behavior
+against `CLAUDE.md`'s already-locked "ownership scoping, not just role
+checks" invariant, the same category as the earlier DRAFT-event fix,
+not a new architectural decision. `CLAUDE.md` delta: none.

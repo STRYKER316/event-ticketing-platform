@@ -633,7 +633,8 @@ leg — see below) — reflects the actual class structure under
 Phase 4. Live-verified against the real running stack: a real
 venue/event/seat-map created and published through the organizer API
 carried `price_cents` through Kafka into a real `Ticket` row; `/pay`'s
-403/404/409 paths and the full synchronous call chain into Payment
+404/409 paths (a non-owner's request 404s, existence hidden, not 403) and
+the full synchronous call chain into Payment
 Service's own auth check and a genuine HTTPS call to Stripe all verified
 live (failing only at Stripe's own `401 Invalid API Key`, since no real
 Stripe test-mode credentials were available this session — a real, tracked

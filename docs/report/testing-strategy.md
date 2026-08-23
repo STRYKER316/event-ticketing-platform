@@ -532,7 +532,8 @@ hold strategies**: created real events/seat maps, booked and reached
 to reach a genuinely `CONFIRMED` booking without a real account), then
 cancelled through the real `POST /bookings/{id}/cancel` route. Under
 `cron`: seat released `BOOKED` → `AVAILABLE`, confirmed by direct query,
-immediately rebookable; non-owner 403; repeat-cancel 409; past-cutoff 409
+immediately rebookable; non-owner 404 (existence hidden, not just 403);
+repeat-cancel 409; past-cutoff 409
 (moved a real `Event.start_time` into the past and confirmed the
 rejection). Under `redis`: identical sequence, with `Ticket.status`
 confirmed to stay `AVAILABLE` throughout — the documented hold-strategy

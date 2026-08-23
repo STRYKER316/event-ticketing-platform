@@ -887,14 +887,14 @@
         <li><span class="check">✓</span> hold-mechanism benchmark <strong>measured</strong> — cron vs. redis, identical 300-request load profile, real numbers archived (§08)</li>
         <li><span class="check">✓</span> release-latency measured both ways — passive (sweep/TTL) vs. simulated immediate trigger (§17), ~3 orders of magnitude apart, both strategies</li>
         <li><span class="check">✓</span> a fourth service (payment-service) coexists behind Traefik, its own Postgres — <code>payment_db</code></li>
-        <li><span class="check">✓</span> <code>POST /bookings/{id}/pay</code> — ownership-scoped (403/404/409), the system's one synchronous inter-service call, forwarding the caller's JWT</li>
+        <li><span class="check">✓</span> <code>POST /bookings/{id}/pay</code> — ownership-scoped (404/409, existence hidden from a non-owner rather than 403), the system's one synchronous inter-service call, forwarding the caller's JWT</li>
         <li><span class="check">✓</span> Stripe test-mode charge attempt, idempotency key = booking ID — real submission to Stripe's API verified live (failed only at Stripe's own auth boundary, no real test credentials available this session)</li>
         <li><span class="check">✓</span> idempotent-replay bug (stuck on a never-submitted charge) found and fixed via live testing, not just the test suite</li>
         <li><span class="check">✓</span> <code>POST /payments/webhook</code> — signature-verified, idempotent, rejects a bad signature with 400 before touching any row</li>
         <li><span class="check">✓</span> Kafka #4 (<code>payment.outcomes</code>, one topic/two outcomes) — live-verified both branches: <code>succeeded</code> → <code>Booking</code> <code>CONFIRMED</code> + <code>Ticket</code> <code>BOOKED</code>; <code>failed</code> → <code>Booking</code> <code>EXPIRED</code> + immediate hold release; redelivery a proven no-op that doesn't touch a later booking's legitimate hold</li>
         <li><span class="check">✓</span> per-section ticket pricing, organizer-set, carried through Kafka #2 into <code>Ticket.price_cents</code> — live-verified end to end</li>
         <li><span class="check">✓</span> CHECKPOINT <code>/pre-pr</code> code review found and fixed a real authz bypass on <code>/payments/charge</code> (was publicly reachable, letting any user submit an arbitrary <code>amount_cents</code>) plus a webhook publish-ordering bug, a non-atomic idempotency guard, an unhandled concurrent-insert race, a shared Kafka consumer group id, and a misleading error mapping — all fixed and live-verified, see <code>build-log.md</code>'s 2026-08-17 CHECKPOINT entry</li>
-        <li><span class="check">✓</span> <code>POST /bookings/{id}/cancel</code> — ownership-scoped (403/404/409), CONFIRMED-only, rejects a cancel attempt past the event's start time, seat immediately rebookable, live-verified under both hold strategies</li>
+        <li><span class="check">✓</span> <code>POST /bookings/{id}/cancel</code> — ownership-scoped (404/409, existence hidden from a non-owner rather than 403), CONFIRMED-only, rejects a cancel attempt past the event's start time, seat immediately rebookable, live-verified under both hold strategies</li>
         <li><span class="check">✓</span> a genuine third <code>TicketHoldStrategy</code> method (<code>release_booking</code>), not a <code>release_hold</code> reuse — same deliberate cron/redis asymmetry as the other three methods</li>
         <li><span class="check">✓</span> Kafka #5 (<code>booking.cancelled</code>) — booking-service's first-ever producer, payment-service's first-ever consumer; live-verified end to end through the real HTTP/Kafka path, reaching a genuine Stripe refund API call (failed only at the placeholder-key boundary, same as the charge flow)</li>
         <li><span class="check">✓</span> refund-failure path — logged, <code>Payment.status</code> stays <code>SUCCEEDED</code> (no re-lock, §22), publishes to a new <code>notifications</code> topic — verified live with a throwaway Kafka console consumer</li>
@@ -1030,10 +1030,11 @@ curl -X POST localhost/bookings -H "Authorization: Bearer $TOKEN" \
 curl -X DELETE localhost/events/&lt;bob's event id&gt; -H "Authorization: Bearer $TOKEN"
 <span class="out">{"detail":"cannot delete a published event"}</span>          <span class="fail">409</span>
 
-<span class="c"># Phase 4: alice tries to pay for a booking that isn't hers — ownership-scoped, not just role</span>
+<span class="c"># Phase 4: alice tries to pay for a booking that isn't hers — ownership-scoped, and its
+# existence stays hidden from a non-owner (404, not 403) the same way a DRAFT event's does</span>
 BOB_TOKEN=$(./get-token.sh bob)
 curl -X POST localhost/bookings/&lt;alice's booking id&gt;/pay -H "Authorization: Bearer $BOB_TOKEN"
-<span class="out">{"detail":"not your booking"}</span>                        <span class="fail">403</span>
+<span class="out">{"detail":"booking not found"}</span>                       <span class="fail">404</span>
 
 <span class="c"># alice pays her own PENDING booking — the one synchronous inter-service call in this system:
 # booking-service forwards her JWT + the ticket's price_cents to payment-service, which
@@ -1055,9 +1056,10 @@ docker exec -it postgres psql -U booking_service -d booking_db \
 uv run --package payment-service python produce_outcome.py &lt;booking id&gt; &lt;ticket id&gt; succeeded
 <span class="out">no second "payment_outcome_applied" log line; booking/ticket unchanged</span>
 
-<span class="c"># Phase 6: bob (not the owner) tries to cancel alice's CONFIRMED booking — ownership-scoped</span>
+<span class="c"># Phase 6: bob (not the owner) tries to cancel alice's CONFIRMED booking — ownership-scoped,
+# same existence-hiding 404</span>
 curl -X POST localhost/bookings/&lt;alice's confirmed booking id&gt;/cancel -H "Authorization: Bearer $BOB_TOKEN"
-<span class="out">{"detail":"not your booking"}</span>                        <span class="fail">403</span>
+<span class="out">{"detail":"booking not found"}</span>                       <span class="fail">404</span>
 
 <span class="c"># alice cancels her own CONFIRMED booking — releases the seat and publishes Kafka #5
 # (booking.cancelled), which payment-service consumes and calls Stripe's refund API</span>

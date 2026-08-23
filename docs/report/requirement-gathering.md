@@ -120,7 +120,7 @@ events, which can never have provisioned tickets, still delete freely.
 
 | Endpoint | Anonymous | `user` (non-owner) | `user` (owner, booking `PENDING`) |
 |---|---|---|---|
-| `POST /bookings/{id}/pay` (Booking Service) | 401 | **403** | Allow (initiates a Stripe charge) |
+| `POST /bookings/{id}/pay` (Booking Service) | 401 | **404** (existence hidden) | Allow (initiates a Stripe charge) |
 | `POST /payments/charge` (Payment Service, internal) | 401 | Allow* | Allow* |
 | `POST /payments/webhook` (Payment Service) | Allow (Stripe signature is the auth) | — | — |
 
@@ -146,14 +146,19 @@ reflects the corrected, enforced state.
 ownership-scoped route** (§15's pattern): the booking's stored
 `user_subject` compared against the caller's JWT `subject`, not just a role
 check — `organizer` has no special standing here, same as booking itself
-(§15 delta, Phase 3). Additionally checks the booking is currently
-`PENDING` (409 otherwise) — a state precondition on top of the
-authorization check, not a substitute for it.
+(§15 delta, Phase 3). A booking has no publicly visible state at all (no
+`GET` route, no public listing), so a non-owner's request answers **404**,
+not 403 — its existence stays hidden the same way a `DRAFT` event's does,
+rather than merely blocking the action while confirming the booking is
+real. Additionally checks the booking is currently `PENDING` (409
+otherwise) — a state precondition on top of the authorization check, not a
+substitute for it.
 
 **Status:** Implemented, Tested, Verified (live, except a real Stripe
 success). Every cell above except the internal `/payments/charge` "Allow*"
 rows was exercised live against the running stack with real seed users:
-`bob` attempting `alice`'s booking → 403; a nonexistent booking ID → 404;
+`bob` attempting `alice`'s booking → 404 (indistinguishable from a
+nonexistent booking ID, also 404);
 `alice` on her own `PENDING` booking → the full chain through to Payment
 Service's own auth check and a genuine Stripe API call, failing only at
 Stripe's placeholder-credential boundary (401 from Stripe itself, not from
@@ -165,13 +170,14 @@ real idempotency bug this testing caught and fixed.
 
 | Endpoint | Anonymous | `user` (non-owner) | `user` (owner, `CONFIRMED`, before event start) | `user` (owner, past cutoff / not `CONFIRMED`) |
 |---|---|---|---|---|
-| `POST /bookings/{id}/cancel` (Booking Service) | 401 | **403** | Allow (cancels + releases seat + triggers refund) | **409** |
+| `POST /bookings/{id}/cancel` (Booking Service) | 401 | **404** (existence hidden) | Allow (cancels + releases seat + triggers refund) | **409** |
 
 **Ownership scoping works the same way as `/pay`** (§15's pattern, applied
 a third time in this system): the booking's stored `user_subject` compared
 against the caller's JWT `subject`, not a role check — `organizer` has no
 special standing over a booking it didn't make, same as booking and
-payment before it. Two state preconditions stack on top of the
+payment before it. Same existence-hiding 404, not 403, for the same reason
+as `/pay`. Two state preconditions stack on top of the
 authorization check, both independently checked and independently
 returning 409: the booking must currently be `CONFIRMED` (cancelling a
 still-`PENDING`, already-`CANCELLED`, or `EXPIRED` booking is rejected),
@@ -187,7 +193,8 @@ ownership before publishing it (§8: Payment Service has no access to
 **Status:** Implemented, Tested, Verified (live, except a real Stripe
 refund succeeding). Every cell above was exercised live against the
 running stack with real seed users, under **both** hold strategies: `bob`
-attempting `alice`'s booking → 403; cancelling an unknown booking → 404;
+attempting `alice`'s booking → 404 (indistinguishable from cancelling an
+unknown booking, also 404);
 `alice` cancelling her own `CONFIRMED` booking → 200, seat immediately
 rebookable; a repeat cancel on the now-`CANCELLED` booking → 409; a cancel
 attempt against an event whose `start_time` had passed → 409. The refund
