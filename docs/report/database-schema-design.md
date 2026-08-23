@@ -1,9 +1,9 @@
 # Database Schema Design
 
-*Status: draft, Event Service (Phase 1), Search Service's Elasticsearch
-index (Phase 2), Booking Service's `booking_db` (Phase 3), Payment
-Service's `payment_db` (Phase 4), and Notification Service's deliberate
-absence of one (Phase 5) evidence so far.*
+*Status: draft — all five backend services covered (Event Service's
+`event_db`/seat-map Mongo docs, Search Service's Elasticsearch index,
+Booking Service's `booking_db`, Payment Service's `payment_db`, and
+Notification Service's deliberate absence of a schema of its own).*
 
 ## `event_db` (Postgres) — ER diagram
 

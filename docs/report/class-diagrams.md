@@ -1,7 +1,8 @@
 # Class Diagrams
 
-*Status: draft, Event Service (Phase 1), Search Service (Phase 2), Booking
-Service (Phase 3), and Payment Service (Phase 4) evidence so far.*
+*Status: draft — all five backend services covered (Event Service Phase 1,
+Search Service Phase 2, Booking Service Phase 3/4/6/7, Payment Service
+Phase 4/6, Notification Service Phase 5).*
 
 ## Event Service — Manager + Repository per feature
 
