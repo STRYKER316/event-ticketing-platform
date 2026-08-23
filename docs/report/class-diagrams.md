@@ -357,14 +357,11 @@ already applied to the async-provisioning eventual-consistency window (§7,
 **The Redis strategy still needs a sweep — just for a different row than the
 cron strategy's.** `BookingManager` creates a `Booking` row (status
 `PENDING`) the moment a hold is acquired, under either strategy (§21) — and
-Redis's key expiry knows nothing about that Postgres row. Found during this
-phase's dedicated review: an abandoned hold under `HOLD_STRATEGY=redis`
-correctly freed the Redis key, but left the `PENDING` Booking row in place
-forever, and `uq_bookings_active_ticket` (a partial unique index treating
-`PENDING`/`CONFIRMED` as "active") then permanently blocked any future
-booking on that seat — the two strategies were not actually behaviorally
-equivalent, which would have quietly undercut the Phase 8 benchmark
-comparison. Fixed with `BookingRepository.expire_stale_pending()`, an
+Redis's key expiry knows nothing about that Postgres row. A Phase 3 review
+found this row was never being swept under the Redis strategy, permanently
+blocking the seat once a hold was abandoned — see the Testing Strategy
+chapter's Phase 3 review-gate section for the full finding and live
+verification. Fixed with `BookingRepository.expire_stale_pending()`, an
 age-based sweep (`created_at` vs. `hold_ttl_seconds`, since there's no
 `Ticket`-side expiry column to key off of under this strategy) run on its
 own APScheduler job — `hold_sweep.py` now branches on the active
@@ -588,24 +585,18 @@ this phase, not a hypothetical, see `build-log.md`'s 2026-08-17 entry), and
 Stripe's own `idempotency_key` (the booking ID) is the backstop if two
 requests somehow race past that check simultaneously.
 
-**A genuine authorization bypass in that design was found at CHECKPOINT,
-not by self-verification** — the routine `/pre-pr` code-review pass, not
-the initial self-verification, is what caught it. "`PaymentManager` trusts
-the caller already did the ownership check" is only actually true if
-`/payments/charge` is *unreachable* except from Booking Service — and it
-wasn't: Traefik's original `PathPrefix('/payments')` rule routed the whole
-service publicly, so any authenticated end user could `POST
-/payments/charge` directly with an arbitrary `booking_id` and
-`amount_cents`, bypassing both checks `BookingManager.pay_booking` exists
-to enforce. Fixed by narrowing the Traefik rule to
-`PathPrefix('/payments/webhook')` only (`infra/docker-compose.yml`) —
-`/payments/charge` is now reachable exclusively over the internal Docker
-network, which is how Booking Service already called it. Live-verified
-post-fix both directions: `POST localhost/payments/charge` through Traefik
-now 404s; the internal call from `booking-service` still succeeds. See
-`build-log.md`'s 2026-08-17 CHECKPOINT entry for the full list — this was
-the most severe of six findings that session, all fixed before this
-checkpoint closed.
+**`/payments/charge` is reachable only over the internal Docker network,
+not through Traefik** — a CHECKPOINT `/pre-pr` code-review pass, not the
+initial self-verification, found that the original Traefik rule
+(`PathPrefix('/payments')`) routed the whole service publicly, letting any
+authenticated end user call `/payments/charge` directly with an arbitrary
+`booking_id`/`amount_cents` and bypass the ownership check
+`BookingManager.pay_booking` exists to enforce. Fixed by narrowing the
+Traefik rule to `PathPrefix('/payments/webhook')` only
+(`infra/docker-compose.yml`), live-verified both directions post-fix — see
+the Testing Strategy chapter's Phase 4 review-gate section for the full
+finding; this was the most severe of six issues that same CHECKPOINT pass
+caught.
 
 **Webhook-driven confirmation is the sole source of truth for a Payment's
 terminal status** (§9) — `create_charge`'s synchronous Stripe response is

@@ -276,15 +276,11 @@ abandoned checkout whose hold was never explicitly released — permanently
 blocks that seat from ever being booked again, independent of whether
 `Ticket.status` itself ever changes. Under the cron strategy this can't
 happen: `CronHoldStrategy.release_expired()` transitions the matching
-`Booking` row to `expired` in the same sweep that frees the ticket. Found
-during this phase's review: under the Redis strategy, nothing did this at
-all — Redis's own key expiry frees the *lock*, but has no way to touch this
-Postgres row, so an abandoned Redis-strategy checkout used to leave the seat
-permanently unbookable. Fixed with an independent, age-based sweep
-(`BookingRepository.expire_stale_pending()`, keyed on `created_at` vs.
-`hold_ttl_seconds` rather than any `Ticket` column) — see the Class Diagrams
-chapter's "Why this shape" section for the full mechanism and the Testing
-Strategy chapter for how it was found and verified live.
+`Booking` row to `expired` in the same sweep that frees the ticket. The
+Redis strategy needed a separate fix for this exact gap — see the Testing
+Strategy chapter's Phase 3 review-gate section for the finding and the
+Class Diagrams chapter's "Why this shape" section for the resulting
+`BookingRepository.expire_stale_pending()` mechanism.
 
 `Ticket.status` carries different meaning depending on which hold
 strategy is configured — see the Class Diagrams chapter's "Why this
@@ -295,21 +291,19 @@ Redis strategy for the ticket's whole held lifetime (Redis's `SET NX EX`
 is that strategy's lock instead), and both strategies write `booked`
 identically once payment confirms in Phase 4.
 
-**Phase 4's `price_cents` migration surfaced a real bug in an existing bind-
-param-batching assumption**, not just a schema addition. `TicketRepository
-.bulk_upsert_available`'s multi-row `INSERT` binds 7 params per row once
-`price_cents` is added — 6 explicit columns plus `status`, whose Python-side
-default SQLAlchemy still applies as a real bind param on a Core-level
-`values()` insert even though it never appears in the row dict. A stale code
-comment had undercounted this at 5 even before this phase (never accounting
-for the `status` default at all); at the old `BIND_PARAM_SAFE_BATCH_SIZE` of
-5000, `5000 × 7 = 35,000` overflows Postgres's ~32,767-bind-param cap.
-Caught live by `tests/integration/test_provisioning_consumer.py`'s existing
-6000-seat two-batch regression test, which started failing the moment
-`price_cents` landed — not a hypothetical, a real green-to-red test result.
-Fixed by lowering the shared constant (`app/db/chunking.py`) to 4000
-(`4000 × 7 = 28,000`, safe with headroom) and correcting both stale
-comments to state the real, now-verified param count.
+**Phase 4's `price_cents` migration exposed a latent bind-param-batching
+bug, not just a schema addition.** Adding a sixth column pushed
+`TicketRepository.bulk_upsert_available`'s per-row bind-param count to 7 —
+6 explicit columns plus `status`, whose Python-side default SQLAlchemy
+still applies as a real bind param on a Core-level `values()` insert even
+though it never appears in the row dict — overflowing Postgres's
+~32,767-bind-param cap at the previous `BIND_PARAM_SAFE_BATCH_SIZE` of
+5000 (`5000 × 7 = 35,000`). Caught live by an existing regression test
+flipping from green to red the moment the column landed, not a
+hypothetical — see the Testing Strategy chapter's Phase 4 section for the
+full account. Fixed by lowering the shared constant (`app/db/chunking.py`)
+to 4000 (`4000 × 7 = 28,000`, safe with headroom) and correcting a stale
+comment that had undercounted the param count even before this phase.
 
 **Status:** Implemented, Tested, Verified (live). Migration
 (`2ab7ccc49f4d`) applies cleanly against a real Postgres instance; both
@@ -388,15 +382,13 @@ booking.
 
 **`stripe_charge_id` being `NULL` is a meaningful, not incidental, state** —
 it means a charge attempt was recorded locally but never actually reached
-Stripe (a submission error, not a decline). This distinction is what a real
-live-testing bug turned on this phase: `create_charge`'s idempotent
-short-circuit originally checked "does a `Payment` row exist for this
-booking" rather than "does a `Payment` row exist *with a `stripe_charge_id`
-set*" — so a booking whose first attempt never reached Stripe could never
-be retried, permanently stuck replaying the same `NULL`-charge-ID row.
-Fixed to check `stripe_charge_id is not None` specifically; see the Class
-Diagrams chapter's Payment Service section for the full mechanism and
-`build-log.md`'s 2026-08-17 entry for how it was found.
+Stripe (a submission error, not a decline), not merely "not yet
+processed." A live-testing bug this phase turned on exactly that
+distinction: `create_charge`'s idempotent short-circuit originally didn't
+check it, so a booking whose first attempt never reached Stripe could
+never be retried — see the Testing Strategy chapter's Phase 4 section for
+the full account. Fixed to check `stripe_charge_id is not None`
+specifically.
 
 **Status:** Implemented, Tested, Verified (live, except the final real-Stripe
 leg). Migration (`afbcf34047ba`) applies cleanly against a real Postgres
