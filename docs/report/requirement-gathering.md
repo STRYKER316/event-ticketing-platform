@@ -1,6 +1,6 @@
 # Requirement Gathering
 
-*Status: draft, all seven roles/permissions tables (Event, Booking, Payment,
+*Status: draft, all six roles/permissions tables (Event, Booking, Payment,
 Cancellation, Notification, the Phase 7 ticket-status route) plus the
 Phase 8 benchmark's non-functional-requirements cross-reference in place.
 This draft covers what's actually enforced in the codebase today, not

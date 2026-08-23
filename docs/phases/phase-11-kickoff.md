@@ -48,9 +48,11 @@ concrete content gaps were found:
   Testing Strategy, `architecture.html`) — what's missing is Project
   Description's own prose account of it, in the same voice as its
   existing Phase 0-3/7 sections.
-- **Requirement Gathering** — label says "partial," but all seven
+- **Requirement Gathering** — label says "partial," but all six
   roles/permissions tables (Event, Booking, Payment, Cancellation,
-  Notification, the Phase 7 ticket-status route) are actually present
+  Notification, the Phase 7 ticket-status route — miscounted as "seven"
+  in this doc's original pre-read audit and P11b prompt below, corrected
+  during P11b's own review pass) are actually present
   and complete. The chapter's own "What this chapter still needs"
   section names the real remaining gap precisely: the Hold-Mechanism
   Benchmark's throughput/latency targets (already measured, Phase 8)
@@ -115,7 +117,7 @@ section or build-log entry, and the status label in
 > once closed, or replace it with an honest "none remaining" note if that
 > reads better structurally. Correct the status label in
 > `docs/report/README.md` from "partial" to something that doesn't imply
-> missing roles tables — all seven are already present.
+> missing roles tables — all six are already present.
 
 **Done when:** the benchmark numbers are cited from this chapter with a
 citation back to the Feature Development Process chapter, and the status

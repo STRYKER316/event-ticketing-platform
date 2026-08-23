@@ -108,8 +108,9 @@ assumed, by a shared test suite exercised against both real
 implementations, including 25 simulated clients racing one seat under
 each mechanism with the assertion that exactly one ever wins — and this
 is exactly the pair of mechanisms the Phase 8 benchmark (this report's
-only Measured chapter) will run real concurrent load against to produce
-citable throughput/latency numbers, not synthetic ones.
+only Measured chapter) ran real concurrent load against to produce
+citable throughput/latency numbers, not synthetic ones — see the Feature
+Development Process and Requirement Gathering chapters for the results.
 
 Phase 4 adds the fourth backend service, **Payment Service** (Postgres
 `payment_db`), and the system's one deliberate exception to Kafka-only
@@ -126,16 +127,15 @@ initiating a charge needs an immediate request/response result — did
 Stripe accept the attempt right now — a different shape of problem than
 the eventually-consistent facts the five Kafka integration points
 otherwise carry. The charge attempt's actual outcome is never trusted
-from that synchronous response, though: Stripe test mode often resolves
-a `PaymentIntent` synchronously, but a lost synchronous response after
-Stripe already processed the charge would be indistinguishable from a
-genuine failure, so **webhook-driven confirmation is the sole source of
-truth for a Payment's terminal status** (§9). Payment Service's webhook
-handler is idempotent the same way every Kafka consumer in this system
-is required to be (§7) — a rowcount-gated conditional `UPDATE` only
-transitions a `Payment` still `pending`, so a replayed webhook can't
-double-confirm a charge — and publishes the confirmed or declined
-outcome onto Kafka integration point #4 (`payment.outcomes`), broadened
+from that synchronous response, though — **webhook-driven confirmation
+is the sole source of truth for a Payment's terminal status instead**
+(§9); the Technologies Used chapter's Stripe entry covers the full
+mechanism, including a real Stripe test-mode charge-and-refund round
+trip verified live in this project. Payment Service's webhook handler is
+idempotent the same way every Kafka consumer in this system is required
+to be (§7), and publishes the
+confirmed or declined outcome onto Kafka integration point #4
+(`payment.outcomes`), broadened
 at implementation time to carry both `succeeded` and `failed` actions on
 one topic rather than adding a sixth integration point (§7 amendment).
 Booking Service's consumer for that topic either confirms the booking
@@ -193,7 +193,8 @@ own payment-confirmed and refund-failed paths, each already having
 checked ownership or used the Kafka message itself as authorization
 before publishing — the "message is the authorization" reasoning already
 established for every consumer in this system that has no independent
-way to re-check it (§8).
+way to re-check it (§8/§22, per the Requirement Gathering chapter's
+Notification Service section).
 
 The full current-state topology and a live-traced authentication sequence
 diagram are maintained at `docs/architecture.html` (kept current every
@@ -231,5 +232,3 @@ Phase 0 through Phase 7 with no gap — every phase's mechanism is
 described here at the same narrative depth, with the full technical
 detail cross-referenced to Class Diagrams, Database Schema Design,
 Testing Strategy, and `docs/architecture.html` rather than duplicated.
-The only work left for this chapter is the Deployment Flow narrative,
-blocked on Phase 10 (see `docs/phases/phase-11-kickoff.md`).

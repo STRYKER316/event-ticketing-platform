@@ -397,11 +397,16 @@ section); Stripe's key is the second, independent layer, not the only one.
 terminal status** (§9), not `create_charge`'s synchronous response — even
 though Stripe test mode often resolves a `PaymentIntent` synchronously, a
 lost synchronous response after Stripe already processed the charge would
-otherwise be indistinguishable from a genuine failure. `handle_webhook_event`
-verifies Stripe's signature before touching any `Payment` row and is
+otherwise be indistinguishable from a genuine failure. The route verifies
+Stripe's own webhook signature (`stripe.Webhook.construct_event`) before
+`handle_webhook_event` ever sees the event, and the handler itself is
 idempotent the same way every Kafka consumer in this system is required to
-be (§7) — a rowcount-gated conditional `UPDATE` only transitions a
-`Payment` still `pending`.
+be (§7): a rowcount-gated conditional `UPDATE` transitions `Payment` on
+the outcome — `transition_if_pending` for the `failed` branch, only
+matching a row still `pending`; `transition_to_succeeded` for the
+`succeeded` branch, deliberately matching `pending` **or** `failed` too,
+since a genuine success can still arrive after an earlier failed webhook
+for the same payment.
 
 **Status:** Implemented, Tested, Verified (live) — a real Stripe test-mode
 charge-and-refund round trip, not just the placeholder-credential failure
