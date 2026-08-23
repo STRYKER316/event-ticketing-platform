@@ -4302,3 +4302,76 @@ Decisions-log delta: none — both fixes correct a config/script bug
 against an already-locked design (Kafka is not a source of truth, §8;
 `make reset` already existed as a P9.T4 deliverable), not a new
 architectural decision. `CLAUDE.md` delta: none.
+
+## 2026-08-22 — Fourth testing round: the two deferred checks (DLQ live exercise, Kafka-down degradation), both clean
+
+Followed up directly on the two checks the third round deferred once
+Docker Desktop and the stack were brought back up (a full restart, not
+just `docker compose stop/start` — confirmed the Kafka-persistence fix
+from the previous round survives a genuine Docker Desktop restart too:
+all seven topics and `__consumer_offsets` were still present, and
+`booking_db` still held its 392-ticket baseline, immediately after
+`docker compose up -d`).
+
+While reading `notification-service/app/logic/helpers/backoff.py` and
+`payment-service/app/db/payment_repository.py` to plan the DLQ exercise,
+found two more leftover `(found in code review)`-style phrases the
+previous round's comment sweep missed — both because the phrase was
+line-wrapped across a docstring line break, so a plain-text grep for the
+phrase never matched. Re-ran the sweep with whitespace normalized before
+matching (`re.sub(r'\s+', ' ', text)`) rather than trusting a single-line
+grep, which is what should have been used the first time. Rewrote both
+docstrings to drop the process-reference phrasing while keeping the
+technical content, verified affected unit tests
+(`test_backoff.py`, `payment-service/tests/unit`) still pass.
+
+**DLQ live exercise.** Stopped the baseline `notification-service`
+container, brought up an isolated `docker compose run` instance with
+`SIMULATED_FAILURE_ATTEMPTS=5` (comfortably past `retry_max_attempts=3`)
+so it wouldn't split partition assignment with the baseline container
+inside the same consumer groups, confirmed all three consumer groups
+(`-notifications`, `-retry`, `-dlq`) joined, then published a real
+`payment_confirmed` `NotificationMessage` directly to `notifications`.
+Observed the full ladder live via structured logs: attempt 1 fails
+(`notification_delivery_failed`) off the initial topic, retries climb
+through attempts 2–4 on `notification-retry` with the real
+2s/4s/8s-then-capped backoff between each, attempt 4 exceeds
+`retry_max_attempts` and routes to the DLQ (`notification_routed_to_dlq`),
+and `DlqConsumer` logs the landing (`notification_landed_in_dlq`) —
+end-to-end in about 30 seconds, matching the same behavior already
+proven once in Phase 5 (`docs/build-log.md`'s P5.T3/P5.T4 entries), now
+re-confirmed against the current code post the intervening booking/
+payment-manager fixes. Demo container removed, baseline
+`notification-service` restarted with the default `SIMULATED_FAILURE_ATTEMPTS: 0`
+and confirmed all three consumer groups rejoined cleanly.
+
+**Kafka-down graceful-degradation check.** Confirmed all five services'
+`/healthz` at 200 before stopping Kafka, then `docker compose stop kafka`.
+With Kafka down: all five `/healthz` endpoints stayed 200 (health checks
+don't depend on broker reachability), `GET /events` through Traefik
+(a DB-only route) kept returning real data, and all four Kafka-consuming
+services' logs showed only aiokafka's own internal
+`NodeNotReadyError`/"Unable connect to node" reconnect-retry noise — no
+consumer task's `_log_if_died` callback fired, and `docker stats` showed
+2-4% CPU on each, ruling out a busy-loop. Restarted Kafka
+(`docker compose start kafka`, not a topic delete, so no repeat of the
+zero-partition-assignment case the `make reset` fix addresses): all four
+consumers auto-reconnected and resumed without needing a manual restart
+this time, confirmed both by a real published message
+(`booking_confirmed`, delivered and logged normally on first attempt)
+and by `kafka-consumer-groups.sh --describe --all-groups` showing `LAG=0`
+on every group. Post-recovery data integrity: `booking_db` still at 392
+tickets, Elasticsearch still at 3 docs — no loss, no duplication.
+`make reset` run afterward to clear the live test messages this round
+generated (the DLQ-landed message, the two functional-check messages)
+before handing the stack back in a clean baseline state.
+
+No bugs found this round — both checks came back clean, unlike the third
+round's Kafka-persistence bug. This closes out the testing-sweep work
+that began after Phase 9 CHECKPOINT; remaining before Phase 10 is the
+Stripe test-mode key setup (deliberately deferred by the user to a later
+session) and, once that's in place, the one adversarial test still
+blocked on it (double-cancel on a CONFIRMED booking, which needs a real
+successful charge to reach CONFIRMED in the first place).
+
+Decisions-log delta: none. `CLAUDE.md` delta: none.

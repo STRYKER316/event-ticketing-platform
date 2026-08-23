@@ -23,10 +23,9 @@ class PaymentRepository(BaseRepository[Payment]):
     async def transition_if_pending(self, stripe_charge_id: str, new_status: PaymentStatus) -> bool:
         """Rowcount-gated conditional UPDATE, same "only transition if
         currently in state X" shape as BookingRepository.transition_if_pending
-        — a concurrent duplicate webhook delivery can't both win this (found
-        in code review: the previous read-then-write version could let two
-        overlapping deliveries both pass the PENDING check before either
-        committed)."""
+        — a concurrent duplicate webhook delivery can't both win this, unlike
+        a read-then-write version where two overlapping deliveries could both
+        pass the PENDING check before either committed."""
         result = await self._session.execute(
             sa_update(Payment)
             .where(Payment.stripe_charge_id == stripe_charge_id, Payment.status == PaymentStatus.PENDING)
