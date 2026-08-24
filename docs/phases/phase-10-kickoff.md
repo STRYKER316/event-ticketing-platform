@@ -461,11 +461,30 @@ as this session ends.
       Elastic Beanstalk. No new coding convention needed — the ASG/stop
       finding is an operational fact, fully recorded in decisions-log §13,
       not a code pattern.
-- [ ] Phase-end checklist item 7 (`/pre-pr`) run against the diff since
-      this phase's starting commit.
-- [ ] Phase-end checklist item 8 (cross-doc staleness sweep) run against
-      what this phase's diff actually touched.
-- [ ] This file's own exit checklist checked off with evidence notes, per
+- [x] Phase-end checklist item 7 (`/pre-pr`) run against the diff since
+      this phase's starting commit (`a3cf7d6..HEAD`). Simplify: 3 fixes
+      (postdeploy redundant container lookup, dead `.git` exclude,
+      inconsistent env-check style). Code-review (Opus): found a real bug
+      the simplify pass introduced (oidcConfig's check needed to stay
+      falsy, not `=== undefined` — Docker's `ENV VITE_X=${VITE_X}` turns an
+      unset arg into `""`, not `undefined`), a `.env` gap in the EB bundle
+      exclude list, two stale doc references, and a batch of commit-message
+      rule violations (task IDs crept back in, a `refactor:`/`fix:` prefix
+      this repo doesn't use) — all fixed, commit history rewritten clean.
+      Verify: local stack rebuilt and re-tested end to end after all fixes
+      stacked up — all green, no regressions.
+- [x] Phase-end checklist item 8 (cross-doc staleness sweep) run against
+      what this phase's diff actually touched. Grepped for the renamed
+      `realm-export.json`→`.json.template` and the old `VITE_KEYCLOAK_ISSUER`
+      var across every doc/script. Historical hits (`build-log.md`,
+      `decisions-log.md`'s dated Phase 7 amendment, `phase-7-kickoff.md`,
+      `testing-strategy.md`'s past-tense narrative) correctly left alone —
+      they describe what was true when written, not current state. One real
+      gap found and fixed: `infra/README.md`'s frontend row still described
+      the pre-fix `http://localhost`-baked URLs; also added a section
+      documenting `build-eb-bundle.sh`, previously undocumented there
+      entirely.
+- [x] This file's own exit checklist checked off with evidence notes, per
       CLAUDE.md's phase-end checklist item 9.
 
 **Report evidence captured this phase (§16):** Deployment Flow chapter
