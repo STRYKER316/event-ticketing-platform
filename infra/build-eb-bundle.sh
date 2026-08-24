@@ -18,15 +18,19 @@ set -eu
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${1:?usage: build-eb-bundle.sh <output-dir>}"
 
+case "$OUT_DIR" in
+  /|"$REPO_ROOT") echo "refusing to rm -rf $OUT_DIR" >&2; exit 1 ;;
+esac
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
-# Same noise .gitignore already excludes from version control -- a stray
-# local .venv/node_modules would otherwise bloat every deploy bundle and
-# slow eb create/deploy for no reason (each service's Dockerfile does its
-# own npm ci / uv sync inside the build, these host-side copies are dead
-# weight).
-EXCLUDES="--exclude=.venv --exclude=__pycache__ --exclude=*.pyc --exclude=.pytest_cache --exclude=.mypy_cache --exclude=.ruff_cache --exclude=*.egg-info --exclude=node_modules --exclude=dist --exclude=build"
+# Same noise .gitignore already excludes from version control, plus .env
+# itself (frontend/README.md's own npm-run-dev instructions create
+# frontend/.env locally -- harmless in the bundle since Vite's build-arg env
+# always wins, but it has no reason to ship). .env.example is kept, same as
+# .gitignore's own !.env.example negation -- the --include must come before
+# the broader --exclude=.env.* for rsync to honor it.
+EXCLUDES="--exclude=.venv --exclude=__pycache__ --exclude=*.pyc --exclude=.pytest_cache --exclude=.mypy_cache --exclude=.ruff_cache --exclude=*.egg-info --exclude=node_modules --exclude=dist --exclude=build --exclude=.env --include=.env.example --exclude=.env.*"
 
 # shellcheck disable=SC2086
 rsync -a $EXCLUDES "$REPO_ROOT/services/" "$OUT_DIR/services/"

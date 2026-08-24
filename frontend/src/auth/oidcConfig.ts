@@ -1,27 +1,22 @@
 import type { AuthProviderProps } from 'react-oidc-context'
 
-// Same "fail loudly at startup" reasoning as api/client.ts's
-// SERVICE_BASE_URLS check — an unset port/realm would otherwise resolve
-// OIDC discovery to a broken URL and break login with no useful error.
+// Falsy check, not just undefined: an unset Dockerfile ARG passed through
+// `ENV VITE_X=${VITE_X}` becomes "" here, not undefined, and unlike
+// api/client.ts's SERVICE_BASE_URLS, "" is never a valid port/realm.
 const keycloakPort = import.meta.env.VITE_KEYCLOAK_PORT
 const keycloakRealm = import.meta.env.VITE_KEYCLOAK_REALM
-if (keycloakPort === undefined) throw new Error('Missing VITE_KEYCLOAK_PORT')
-if (keycloakRealm === undefined) throw new Error('Missing VITE_KEYCLOAK_REALM')
+if (!keycloakPort) throw new Error('Missing VITE_KEYCLOAK_PORT')
+if (!keycloakRealm) throw new Error('Missing VITE_KEYCLOAK_REALM')
 
-// Unlike the three service URLs in api/client.ts, Keycloak isn't proxied
-// through Traefik (infra/docker-compose.yml's keycloak service has no
-// traefik.* labels — it publishes its own host port directly), so it can't
-// be resolved as a same-origin relative path. The port and realm are the
-// same in every environment; only the host differs, so it's read from
-// wherever the page is actually running rather than baked in at build
-// time — this is what makes the same built image work unchanged against
-// localhost and the EB public address, with no rebuild.
+// Keycloak isn't proxied through Traefik, so unlike client.ts's relative
+// URLs, only the host can vary by environment -- resolved from
+// window.location instead of baked in, so one build works everywhere.
 const issuer = `${window.location.protocol}//${window.location.hostname}:${keycloakPort}/realms/${keycloakRealm}`
 
 // Authorization Code + PKCE against the realm's public `ticketing-frontend`
 // client (standardFlowEnabled: true, directAccessGrantsEnabled: false —
-// see infra/keycloak/realm-export.json). redirect_uri must match one of
-// that client's registered redirectUris exactly.
+// see infra/keycloak/realm-export.json.template). redirect_uri must match
+// one of that client's registered redirectUris exactly.
 export const oidcConfig: AuthProviderProps = {
   authority: issuer,
   client_id: 'ticketing-frontend',

@@ -4,10 +4,10 @@ const SERVICE_BASE_URLS = {
   booking: import.meta.env.VITE_BOOKING_SERVICE_URL,
 } as const
 
-// Fail loudly at startup rather than resolving fetch URLs to "undefined/..."
-// if a build/deploy forgot to set one of these. An empty string is a
-// deliberate, valid value (relative/same-origin, via Traefik) -- only an
-// unset build arg (undefined) is the actual failure case.
+// Fail loudly rather than resolving fetch URLs to "undefined/...". Catches
+// a missing key in the standalone npm-run-dev .env file -- the Docker build
+// (frontend/Dockerfile's ENV VITE_X=${VITE_X}) always yields "" for an
+// unset ARG, never undefined, and "" is the deliberate relative-URL value.
 for (const [service, url] of Object.entries(SERVICE_BASE_URLS)) {
   if (url === undefined) throw new Error(`Missing VITE_${service.toUpperCase()}_SERVICE_URL`)
 }
