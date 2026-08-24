@@ -144,6 +144,41 @@ Minimal functional React UI, not a polished product build. Five screens: event l
 - Set an AWS Budgets alert (e.g. at $20) on day one as a safety net.
 - Note: AWS's free-tier structure changed July 15, 2025 — accounts created after that date get $100–200 in credits valid 6 months rather than a 12-month EC2 free tier. At this revised usage level (~$7-12 total, compute plus storage), either free-tier structure comfortably covers the whole project.
 
+**Amendment (Phase 10, 2026-08-24, P10.T4):** "stop, not terminate" as
+originally written above assumed a plain `aws ec2 stop-instances` would
+just pause the instance. Live-tested and found false: every Elastic
+Beanstalk environment — single-instance tier included — is backed by an
+Auto Scaling Group with `HealthCheck`/`ReplaceUnhealthy` processes active
+by default. Those processes see a directly-stopped instance as an EC2
+health-check failure, not an intentional pause, and **replace it** —
+terminate the stopped instance and launch a fresh one from the
+environment's stored application version. Confirmed via
+`aws autoscaling describe-scaling-activities`: "an instance was taken out
+of service in response to an EC2 health check indicating it has been
+terminated or stopped." The fresh instance gets a new EBS root volume, so
+every container-local data volume (Postgres, Mongo, Elasticsearch, Redis,
+Kafka) is wiped — live-verified by seat-1-2's booking (made during T3)
+vanishing and the seed script's idempotent re-run producing the same 3
+event titles under entirely new UUIDs. The environment's CNAME and
+Elastic IP survive the replacement (EB re-associates the EIP with the new
+instance automatically), so §12/§13's CNAME-stability claim holds, but the
+"avoids re-provisioning overhead" half of the stop-vs-terminate reasoning
+did not, as executed.
+
+**Corrected procedure**: suspend the ASG's `HealthCheck`,
+`ReplaceUnhealthy`, and `AZRebalance` processes
+(`aws autoscaling suspend-processes --auto-scaling-group-name <asg>
+--scaling-processes HealthCheck ReplaceUnhealthy AZRebalance`) before
+every `aws ec2 stop-instances`, and resume them after the matching
+`start-instances` (not required to resume immediately — leaving them
+suspended between sessions is harmless for a single-instance environment
+with no real auto-scaling to begin with). Live-verified this actually
+works: a second stop/start cycle with processes suspended kept the same
+instance ID and the same (post-replacement) event UUIDs intact — a true
+pause/resume, matching what this section originally intended. Every future
+session's stop/start should use this corrected procedure, not the bare
+EC2 API calls this section originally described.
+
 ## 14. Kubernetes — Deferred
 
 Explicitly out of scope for the build (see §2); may be mentioned in the report's Future Work as a natural next step.

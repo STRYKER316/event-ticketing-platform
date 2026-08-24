@@ -340,6 +340,64 @@ needed here.
 AWS billing console numbers, not an estimate. Report evidence: Cost
 writeup.
 
+**Done (2026-08-24), with a real correction to §13 found along the way.**
+
+A plain `aws ec2 stop-instances` on this environment did **not** just pause
+it — the environment's Auto Scaling Group (present even in single-instance
+tier) treated the stop as a health-check failure and replaced the instance
+outright (terminated the old one, launched a fresh one with a new EBS
+volume, wiping all container-local data). Live-verified via
+`aws autoscaling describe-scaling-activities` and by watching the seed
+data's event UUIDs change after the "stop." Full finding and the corrected
+procedure — suspend `HealthCheck`/`ReplaceUnhealthy`/`AZRebalance` on the
+ASG before stopping — recorded as a §13 amendment in `decisions-log.md`,
+since this corrects a locked decision's stated reasoning, not just a
+build-log note. The corrected procedure was then live-verified for real:
+a second stop/start cycle with processes suspended kept the same instance
+ID and the same (post-replacement) data intact — a true pause/resume.
+
+**CNAME stability**: confirmed identical
+(`event-ticketing-env.eba-uvwm2tcf.ap-south-1.elasticbeanstalk.com`)
+across both the accidental replacement and the corrected stop/start —
+holds regardless of which instance is behind it, exactly as §12/§13
+claimed (EB re-associates the environment's Elastic IP automatically).
+
+**Leftover-resource sweep** (prompted mid-task, worth recording since nothing
+in the original plan called for it): checked for anything the accidental
+replacement might have stranded — no orphaned EBS volume (old one
+auto-deleted on termination), no orphaned Elastic IP (correctly
+re-associated with the replacement instance), no stray snapshots, no
+unattached network interfaces. Clean.
+
+**Cost writeup.** AWS Cost Explorer has a documented ~24-48h billing-data
+lag, so today's usage doesn't appear there yet — confirmed by querying it
+directly (`aws ce get-cost-and-usage` for today returns no line items).
+The figure below is computed from actual measured EC2 runtime
+(`aws autoscaling describe-scaling-activities` + `describe-instances`
+timestamps, not an estimate) against the confirmed real on-demand rate
+(AWS Pricing API, $0.1792/hr t3.xlarge in `ap-south-1`) — real inputs, just
+not sourced from the console itself, which isn't populated yet. Should be
+spot-checked against the console in a day or two once it catches up.
+
+- Instance 1 (`i-0259e0afad0822908`, the original `eb create` launch
+  through all of T1–T3's testing): 15:08:27–15:44:21 UTC ≈ 35m54s
+- Instance 2 (`i-042877e8a95e2a68f`, the accidental replacement, across
+  both the uninformed stop/start and the corrected one):
+  15:44:23–~15:52:11 UTC (≈7m48s) + 15:53:10–15:57:34 UTC (≈4m24s) ≈ 12m12s
+- **Total EC2 runtime this phase: ≈48 minutes (≈0.80 hrs)**
+- Compute: 0.80 hr × $0.1792/hr ≈ **$0.14**
+- EBS (8GB gp3, ≈50 min wall-clock existence so far): ≈$0.001
+- S3 (deployment bundles/logs, ~1.7MB): negligible
+- **Total this phase so far: ≈$0.15** — far under the ~$7–12 all-in
+  baseline (expected: that baseline covers the whole project's lifecycle,
+  not one session), and nowhere near the `Budget-of-Cost` alert's $6/$8
+  thresholds.
+
+Full termination remains deferred until the project is submitted and
+graded (§13) — not done now. The instance is stopped (ASG replacement
+processes left suspended, harmless for a single-instance environment)
+as this session ends.
+
 ---
 
 ## Phase 10 exit checklist (all must pass before P11 resumes)
@@ -362,8 +420,12 @@ writeup.
       `held`→`booked` confirmed via API after a real Stripe test-mode
       charge + webhook, see T3's "Done" note above; 5 screenshots at
       `docs/report/assets/deployment-flow/`.
-- [ ] P10.T4 — instance stopped; CNAME stability live-verified across the
-      stop/restart; real cost writeup against the baseline.
+- [x] P10.T4 — instance stopped; CNAME stability live-verified across the
+      stop/restart; real cost writeup against the baseline. Evidence: T4's
+      "Done" note above — includes a real §13 correction (ASG replaces a
+      directly-stopped instance unless its processes are suspended first),
+      live-verified fix, and a leftover-resource sweep, all beyond the
+      original task scope.
 - [ ] Credentials used throughout this phase were an IAM user (with
       `AdministratorAccess`) — not root account keys; confirmed, not
       assumed. The access key was not pasted into any chat or committed to
