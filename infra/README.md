@@ -67,7 +67,7 @@ index are repopulated too, since the seed script goes through the real
 the Kafka provisioning/indexing points — only `payment_db` legitimately
 starts empty). Deliberately does not touch
 Keycloak — its realm/user data is imported configuration
-(`keycloak/realm-export.json`), not demo-accumulated state. See
+(`keycloak/realm-export.json.template`), not demo-accumulated state. See
 `reset-demo-state.sh` for the exact commands.
 
 ## Ports (host-mapped, from `.env`)
@@ -79,7 +79,7 @@ Keycloak — its realm/user data is imported configuration
 | Redis | `redis` | `REDIS_PORT` (6379) | booking-service's Redis-TTL `TicketHoldStrategy` only (§6, §8) — idle unless `HOLD_STRATEGY=redis` |
 | Elasticsearch | `elasticsearch` | `ELASTICSEARCH_PORT` (9200) | single-node, security disabled, heap capped at 512m (§24) |
 | Kafka | `kafka` | `KAFKA_PORT` (9092) | KRaft mode, single broker, no Zookeeper (§7, §24) |
-| Keycloak | `keycloak` | `KEYCLOAK_PORT` (8081) | dev mode, embedded DB, imports `keycloak/realm-export.json` on startup (§5, §12, §15) |
+| Keycloak | `keycloak` | `KEYCLOAK_PORT` (8081) | dev mode, embedded DB, imports `keycloak/realm-export.json.template` (rendered to `realm-export.json` by `entrypoint.sh`) on startup (§5, §12, §15) |
 | event-service | `event-service` | routed via Traefik only (no direct host port) | events/venues/seat-maps API (§8, §15); `/healthz`, `/metrics`, `/events`, `/venues`, `/events/{id}/seat-map`, `/events/{id}/publish` |
 | search-service | `search-service` | routed via Traefik only (no direct host port) | public `GET /search` over Elasticsearch, populated via Kafka (§7.1, §8); `/healthz`, `/metrics` |
 | booking-service | `booking-service` | routed via Traefik only (no direct host port) | ticket provisioning consumer (Kafka #2, §7.2) + payment-outcome consumer (Kafka #4, §7.4) + `POST /bookings`/`POST /bookings/{id}/pay`/`POST /bookings/{id}/cancel` over `booking_db` and (if `HOLD_STRATEGY=redis`) Redis (§6, §8); publishes Kafka #5 (`booking.cancelled`, its first-ever producer, §22); `/healthz`, `/metrics` |

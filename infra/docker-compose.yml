@@ -99,14 +99,27 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
+    # entrypoint.sh renders realm-export.json from its template (substituting
+    # APP_ORIGIN into the placeholder redirectUris/webOrigins) before handing
+    # off to the image's own start-dev --import-realm entrypoint -- see the
+    # script for why.
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     command: start-dev --import-realm
     environment:
       KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER}
       KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      APP_ORIGIN: ${APP_ORIGIN}
     ports:
       - "${KEYCLOAK_PORT}:8080"
     volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      # Mounted outside /opt/keycloak/data/import on purpose: Docker
+      # auto-creates a bind mount's parent directory as root:root, and the
+      # image's non-root `keycloak` user (uid 1000) can't write into it --
+      # entrypoint.sh creates /opt/keycloak/data/import itself instead
+      # (writable, since /opt/keycloak/data is group-writable by root/gid 0,
+      # which uid 1000 belongs to) and renders the realm file there.
+      - ./keycloak/realm-export.json.template:/tmp/realm-export.json.template:ro
+      - ./keycloak/entrypoint.sh:/entrypoint.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080"]
       interval: 10s
@@ -132,7 +145,10 @@ services:
       MONGO_EVENT_DB_NAME: event_service
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       EVENTS_TOPIC: event.events
-      AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
+      # Must match the `iss` claim Keycloak actually stamps on tokens, which
+      # it derives from whatever host the browser used to reach it -- not
+      # the Docker-internal `keycloak` hostname used below for JWKS fetches.
+      AUTH_KEYCLOAK_ISSUER: ${APP_ORIGIN}:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
       AUTH_EXPECTED_AUDIENCE: ticketing-services
       AUTH_JWKS_URI_OVERRIDE: http://keycloak:8080/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
     depends_on:
@@ -192,7 +208,7 @@ services:
       NOTIFICATIONS_TOPIC: notifications
       HOLD_STRATEGY: cron
       PAYMENT_SERVICE_URL: http://payment-service:8004
-      AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
+      AUTH_KEYCLOAK_ISSUER: ${APP_ORIGIN}:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
       AUTH_EXPECTED_AUDIENCE: ticketing-services
       AUTH_JWKS_URI_OVERRIDE: http://keycloak:8080/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
     depends_on:
@@ -230,7 +246,7 @@ services:
       NOTIFICATIONS_TOPIC: notifications
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET}
-      AUTH_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
+      AUTH_KEYCLOAK_ISSUER: ${APP_ORIGIN}:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
       AUTH_EXPECTED_AUDIENCE: ticketing-services
       AUTH_JWKS_URI_OVERRIDE: http://keycloak:8080/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs
     depends_on:
@@ -286,12 +302,21 @@ services:
       context: ../frontend
       args:
         # Vite bakes these into the bundle at build time (frontend/Dockerfile).
-        # None of the backend services publish their own host port — only
-        # Traefik does — so every one of these always resolves through it.
-        VITE_EVENT_SERVICE_URL: http://localhost
-        VITE_SEARCH_SERVICE_URL: http://localhost
-        VITE_BOOKING_SERVICE_URL: http://localhost
-        VITE_KEYCLOAK_ISSUER: http://localhost:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}
+        # Empty (relative/same-origin) rather than an absolute host: Traefik
+        # serves the frontend and proxies every backend API from the same
+        # origin/port, so a relative fetch always resolves correctly whether
+        # that origin is localhost or the EB public address -- no rebuild
+        # needed per environment. Only Keycloak is genuinely
+        # environment-specific (its own port, not proxied through Traefik at
+        # all -- see the keycloak service above), so its issuer is resolved
+        # at runtime from window.location instead of baked here; see
+        # frontend/src/auth/oidcConfig.ts. VITE_KEYCLOAK_PORT/_REALM are
+        # baked because they're the same across environments, unlike the host.
+        VITE_EVENT_SERVICE_URL: ""
+        VITE_SEARCH_SERVICE_URL: ""
+        VITE_BOOKING_SERVICE_URL: ""
+        VITE_KEYCLOAK_PORT: ${KEYCLOAK_PORT}
+        VITE_KEYCLOAK_REALM: ${KEYCLOAK_REALM}
     labels:
       traefik.enable: "true"
       # event-service keeps its locked PathPrefix('/') catch-all as-is

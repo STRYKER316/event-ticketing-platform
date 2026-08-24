@@ -61,7 +61,7 @@ def _env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
-# Seed users from infra/keycloak/realm-export.json (§5). Organizer role
+# Seed users from infra/keycloak/realm-export.json.template (§5). Organizer role
 # needed to create/publish the benchmark event; the booker identity just
 # needs to be authenticated -- POST /bookings has no role requirement.
 # One shared booker token is reused across every synthetic client rather

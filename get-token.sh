@@ -3,7 +3,7 @@
 # against services behind Traefik.
 #
 # Usage: ./get-token.sh [username] [password]
-#   defaults to the seed user alice/changeme (see infra/keycloak/realm-export.json)
+#   defaults to the seed user alice/changeme (see infra/keycloak/realm-export.json.template)
 set -euo pipefail
 
 USERNAME="${1:-alice}"
@@ -16,7 +16,7 @@ KEYCLOAK_PORT="${KEYCLOAK_PORT:-8081}"
 KEYCLOAK_REALM="${KEYCLOAK_REALM:-ticketing}"
 
 # The confidential, direct-access-grant-enabled client — not the public
-# frontend client (PKCE-only, can't do password grant). See realm-export.json.
+# frontend client (PKCE-only, can't do password grant). See realm-export.json.template.
 CLIENT_ID="ticketing-service"
 CLIENT_SECRET="changeme"
 

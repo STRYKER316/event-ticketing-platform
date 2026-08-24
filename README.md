@@ -51,9 +51,10 @@ Frontend: `docker compose up frontend` from `/infra` serves it at `http://localh
 (or `cd frontend && npm install && npm run dev` for a hot-reloading dev server at
 `http://localhost:5173` — see `frontend/README.md`). Either way it talks to the same
 Traefik-routed backend, configured via `frontend/.env` (`VITE_EVENT_SERVICE_URL`,
-`VITE_SEARCH_SERVICE_URL`, `VITE_BOOKING_SERVICE_URL`, `VITE_KEYCLOAK_ISSUER`).
+`VITE_SEARCH_SERVICE_URL`, `VITE_BOOKING_SERVICE_URL`, `VITE_KEYCLOAK_PORT`,
+`VITE_KEYCLOAK_REALM`).
 
-Seed users (see `infra/keycloak/realm-export.json`), all password `changeme`:
+Seed users (see `infra/keycloak/realm-export.json.template`), all password `changeme`:
 
 | Username | Roles |
 |---|---|

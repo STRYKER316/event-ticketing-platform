@@ -22,8 +22,8 @@
       "attributes": {
         "pkce.code.challenge.method": "S256"
       },
-      "redirectUris": ["http://localhost/app/*", "http://localhost:5173/*"],
-      "webOrigins": ["http://localhost", "http://localhost:5173"],
+      "redirectUris": ["__APP_ORIGIN__/app/*", "http://localhost:5173/*"],
+      "webOrigins": ["__APP_ORIGIN__", "http://localhost:5173"],
       "protocolMappers": [
         {
           "name": "ticketing-services-audience",

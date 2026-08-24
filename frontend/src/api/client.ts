@@ -5,9 +5,11 @@ const SERVICE_BASE_URLS = {
 } as const
 
 // Fail loudly at startup rather than resolving fetch URLs to "undefined/..."
-// if a build/deploy forgot to set one of these.
+// if a build/deploy forgot to set one of these. An empty string is a
+// deliberate, valid value (relative/same-origin, via Traefik) -- only an
+// unset build arg (undefined) is the actual failure case.
 for (const [service, url] of Object.entries(SERVICE_BASE_URLS)) {
-  if (!url) throw new Error(`Missing VITE_${service.toUpperCase()}_SERVICE_URL`)
+  if (url === undefined) throw new Error(`Missing VITE_${service.toUpperCase()}_SERVICE_URL`)
 }
 
 type Service = keyof typeof SERVICE_BASE_URLS

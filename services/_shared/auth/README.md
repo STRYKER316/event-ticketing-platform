@@ -26,7 +26,7 @@ async def organizer_only(user: Principal = Depends(require_role("organizer"))):
 
 - `AUTH_KEYCLOAK_ISSUER` — e.g. `http://localhost:8081/realms/ticketing`
 - `AUTH_EXPECTED_AUDIENCE` — e.g. `ticketing-services` (must match the realm's
-  `oidc-audience-mapper` output, see `infra/keycloak/realm-export.json`)
+  `oidc-audience-mapper` output, see `infra/keycloak/realm-export.json.template`)
 - `AUTH_JWKS_CACHE_TTL_SECONDS` — default `300`
 - `AUTH_JWKS_URI_OVERRIDE` — optional. JWKS is public key material, so fetching it
   doesn't need to go through the same hostname a token's `iss` claim carries. Set
