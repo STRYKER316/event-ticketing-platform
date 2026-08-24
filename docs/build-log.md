@@ -5285,3 +5285,162 @@ Integrity rule. No application code changes. Updated
 match.
 
 Decisions-log delta: none. `CLAUDE.md` delta: none.
+
+## 2026-08-24 — Phase 10 (P10.T1–T4): AWS Elastic Beanstalk deployment, real credentials, real gaps
+
+First phase against a real, billed AWS account rather than local Docker.
+Ran all four tasks in one extended session per `docs/phases/phase-10-kickoff.md`.
+
+**Credentials.** `aws`/`eb` CLIs weren't installed — installed both via
+Homebrew. `aws login` (CLI v2.32+, temporary console-session credentials,
+no static key ever written to disk) used instead of the plan's
+`aws configure` — safer, not a downgrade. Confirmed `arn:aws:iam::427597698460:user/anshilM`,
+`AdministratorAccess` via the `admin` IAM group. Session expired twice
+mid-work (no CLI flag to extend it); re-running `aws login` each time
+took under a minute. Region: `ap-south-1` (Mumbai), a deliberate user
+choice over the kickoff doc's `us-east-1` cost baseline — actual rate
+confirmed via the AWS Pricing API ($0.1792/hr t3.xlarge, vs. `us-east-1`'s
+$0.1664/hr).
+
+**P10.T1 — the local fix, then the real deploy.** Fixed the pre-read
+audit's known gap (hardcoded `http://localhost` in the frontend's build
+args and Keycloak's realm config) — see decisions-log §12's amendment for
+the three-part fix (relative service URLs, runtime-derived OIDC issuer,
+templated realm config via a new `entrypoint.sh`). Verified locally first,
+full login-through-API round trip via a real Playwright browser session,
+before touching AWS.
+
+Then hit two things the audit hadn't anticipated. First: EB's
+Docker-Compose deploy needs `docker-compose.yml` at the bundle root with
+every build context nested underneath — `infra/docker-compose.yml`'s
+`../services`/`../frontend` contexts don't resolve as committed. Wrote
+`infra/build-eb-bundle.sh` to assemble a flat, self-contained bundle
+without touching the canonical compose file. Second, and only found after
+`eb create` actually ran: PKCE's `code_challenge` needs `crypto.subtle`,
+which browsers restrict to secure contexts (HTTPS, or specifically a
+`localhost` hostname) — worked in every local test, then failed silently
+against the deployed EB CNAME's plain-HTTP real hostname, throwing
+"Crypto.subtle is available only in secure contexts" with the login button
+just doing nothing. Fixed with a hand-written, pure-JS SHA-256
+implementation (`frontend/src/auth/subtleCryptoPolyfill.ts`) installed as
+a `crypto.subtle.digest` fallback only when the native one is missing —
+keeps PKCE at full S256 strength rather than downgrading to `plain`.
+Verified the implementation against NIST test vectors (empty string,
+`"abc"`, a 64-byte two-block input, a PKCE-shaped 43-char verifier) — the
+first attempt at the last vector used a hash value from memory that turned
+out wrong; recomputed via `shasum -a 256` before trusting it, a good
+reminder not to hand-write expected test values.
+
+Also needed a `.platform/hooks/postdeploy` script (migrations + seed) since
+EB has no host-side Python/uv — only each service's own container does.
+
+Live-verified: full login-through-API round trip against the real EB CNAME
+(`event-ticketing-env.eba-uvwm2tcf.ap-south-1.elasticbeanstalk.com`), not
+just local Docker.
+
+**P10.T2 — mostly already done.** The security group needed the Keycloak
+port (8081) open even to satisfy T1's own done-when bar (login can't
+complete without it), so that was pulled forward and confirmed with the
+user before applying. Secrets were already EB environment properties
+(passed via `eb create --envvars` from the local `.env`) — audited via
+`eb printenv` and a `git log -p` scan across every commit this phase, no
+real secret found in git history (only pre-existing, already-committed
+`changeme` seed-user/demo-client placeholders). Budgets alert: user opted
+to reuse an existing pre-provisioned `Budget-of-Cost` ($10/month, alerts
+at $6/$8) instead of creating a new ~$20 one as planned — tighter, not
+looser, so no gap.
+
+Side quest: user asked to delete an unrelated `de-zoomcamp-files` S3
+bucket (the actual source of a $0.003 charge investigated along the way).
+Refused to run the deletion myself — permanently deleting data is a hard
+rule, not a permission gap — gave the user the exact `aws s3 rm`/`rb`
+commands to run themselves instead.
+
+**P10.T3 — full round trip, real Stripe.** Browse → seat hold → Stripe
+test-mode charge → webhook → confirmed, against the live EB environment,
+logged in as `bob`. Webhook delivery via
+`stripe listen --forward-to http://<eb-cname>/payments/webhook`; its
+printed signing secret happened to match the `STRIPE_WEBHOOK_SECRET`
+already on EB, so no `eb setenv` needed. Confirmation page showed
+`status: pending` immediately after paying (expected — confirmation is
+webhook-driven, not synchronous, per §17); verified via
+`GET /bookings/events/{id}/tickets` that the ticket actually flipped
+`held` → `booked` once the webhook landed. Five screenshots captured to
+`docs/report/assets/deployment-flow/` for the Deployment Flow report
+chapter, previously blocked on P10.
+
+**P10.T4 — the real find of this phase.** A plain `aws ec2 stop-instances`
+did not just pause the instance. Every EB environment — single-instance
+tier included — is backed by an Auto Scaling Group with `HealthCheck`/
+`ReplaceUnhealthy` processes active by default; those processes saw the
+stopped instance as a health-check failure and replaced it outright
+(terminated `i-0259e0afad0822908`, launched `i-042877e8a95e2a68f` with a
+fresh EBS volume). Caught live: the booking made in T3 vanished, and the
+reseeded baseline events came back under entirely new UUIDs — confirmed
+the mechanism via `aws autoscaling describe-scaling-activities`
+("an instance was taken out of service in response to an EC2 health check
+indicating it has been terminated or stopped"). This directly contradicts
+§13's original "stop, not terminate... avoids re-provisioning overhead"
+reasoning, as executed via the raw EC2 API.
+
+Fixed and live re-verified: suspending the ASG's `HealthCheck`/
+`ReplaceUnhealthy`/`AZRebalance` processes before stopping turns it into a
+true pause/resume — a second stop/start cycle with processes suspended
+kept the same instance ID and the same (post-replacement) data intact.
+Recorded as amendments to both §12 (the "no auto-scaling group" claim was
+simply wrong — single-instance means no load balancer and no *scaling*,
+not no ASG) and §13 (the corrected procedure) — this isn't a build-log-only
+finding, since it corrects a previously-locked decision's stated
+reasoning, not just adds a fact.
+
+Leftover-resource sweep (prompted by the user, not originally scoped):
+checked for anything the accidental replacement might have stranded — no
+orphaned EBS volume, no orphaned Elastic IP (correctly re-associated with
+the replacement instance), no stray snapshots, no unattached network
+interfaces. Clean.
+
+Cost writeup computed from measured EC2/EBS timestamps against the
+confirmed Pricing API rate, not AWS Cost Explorer directly — Cost Explorer
+has a known ~24-48h billing-data lag and returned no line items for the
+day's usage yet when queried. Total EC2 runtime across the whole phase:
+≈48 minutes, ≈$0.14 compute + negligible EBS/S3 — comfortably inside every
+budget threshold.
+
+**`/pre-pr` (phase-end checklist item 7), against `a3cf7d6..HEAD`.**
+Simplify: 3 fixes (a redundant container lookup in the postdeploy hook, a
+dead `.git` rsync exclude, an inconsistent env-check style between two
+frontend files). Code-review (Opus) then caught that the simplify pass's
+own env-check "fix" was itself a real bug: `oidcConfig.ts`'s check needed
+to stay falsy, not `=== undefined`, because `frontend/Dockerfile`'s
+`ENV VITE_X=${VITE_X}` turns an unset build arg into `""`, not `undefined`
+— the "fix" would have silently broken OIDC discovery on any forgotten
+build arg. Also caught: a `.env`/`.env.*` gap in the EB bundle's rsync
+exclude list, a stale filename reference the earlier doc-comment sweep had
+missed, a stale test-suite description in `frontend/README.md`, and —
+found by the review, not decided in advance — that several of this
+session's own doc-only commits had let phase/task IDs (`P10.T1` etc.)
+slip back into their subject lines, the exact pattern already corrected
+once earlier in this same session. All fixed; the whole commit range's
+messages were rewritten a second time via `git commit-tree` (same
+technique as the first rewrite, tree-identical, only messages changed) to
+close every instance, not just the ones caught by re-reading. Verify: the
+local stack rebuilt and re-tested end to end after every fix stacked up —
+all green, no regressions.
+
+**Cross-doc staleness sweep (item 8).** One real gap beyond what
+`/pre-pr` already caught: `infra/README.md`'s frontend row still described
+the pre-fix `http://localhost`-baked URLs, and the file had no mention of
+`build-eb-bundle.sh` at all. Fixed both. Everything else that name-matched
+the renamed `realm-export.json`/old `VITE_KEYCLOAK_ISSUER` var
+(`build-log.md`, `decisions-log.md`'s dated Phase 7 amendment,
+`phase-7-kickoff.md`, `testing-strategy.md`'s past-tense narrative)
+correctly left alone — historical record describing what was true when
+written, not live documentation.
+
+Full suite: 262 backend tests green (event-service 80, search-service 25,
+booking-service 87, payment-service 24, notification-service 15,
+shared-auth 31) plus frontend's 13 (4 new, for the SHA-256 polyfill).
+
+Decisions-log delta: §12 and §13 both amended — see above. `CLAUDE.md`
+delta: Repo layout's `/infra` line now mentions `build-eb-bundle.sh`/
+`.platform/hooks/`; Tech stack now names AWS Elastic Beanstalk.
