@@ -70,6 +70,22 @@ Keycloak — its realm/user data is imported configuration
 (`keycloak/realm-export.json.template`), not demo-accumulated state. See
 `reset-demo-state.sh` for the exact commands.
 
+## AWS Elastic Beanstalk deployment (Phase 10, §12)
+
+```sh
+./build-eb-bundle.sh <output-dir>    # from infra/
+```
+
+`docker-compose.yml`'s build contexts (`../services`, `../frontend`) reach
+one level above `infra/` — correct for local dev, but EB's Docker-Compose
+platform expects the compose file at the deployment bundle's root with
+every context nested underneath. This script assembles that flat,
+self-contained bundle (rewriting the two out-of-bundle paths) without
+touching the canonical compose file above. `.platform/hooks/postdeploy/`
+runs migrations + seed on the deployed instance, since EB has no host-side
+Python/uv. See `docs/phases/phase-10-kickoff.md` and decisions-log §12's
+amendment for the full deployment narrative.
+
 ## Ports (host-mapped, from `.env`)
 
 | Service | Container | Host port | Notes |
@@ -85,7 +101,7 @@ Keycloak — its realm/user data is imported configuration
 | booking-service | `booking-service` | routed via Traefik only (no direct host port) | ticket provisioning consumer (Kafka #2, §7.2) + payment-outcome consumer (Kafka #4, §7.4) + `POST /bookings`/`POST /bookings/{id}/pay`/`POST /bookings/{id}/cancel` over `booking_db` and (if `HOLD_STRATEGY=redis`) Redis (§6, §8); publishes Kafka #5 (`booking.cancelled`, its first-ever producer, §22); `/healthz`, `/metrics` |
 | payment-service | `payment-service` | routed via Traefik only (no direct host port) | Stripe test-mode charge (`POST /payments/charge`, called by booking-service only — §9 amendment) + webhook (`POST /payments/webhook`) + `booking.cancelled` consumer (Kafka #5, its first-ever consumer — issues Stripe refunds, §22) over `payment_db`; publishes Kafka #4 (`payment.outcomes`) and Kafka #3 (`notifications` — `payment_confirmed` on webhook success, `refund_failed` on refund failure, §22 amendment #3); `/healthz`, `/metrics` |
 | notification-service | `notification-service` | routed via Traefik only (no direct host port) | no database of its own (§17 amendment); consumes Kafka #3 (`notifications` — booking-confirmed/payment-confirmed/refund-failed) and, on a simulated delivery failure, walks a hand-rolled retry/backoff/DLQ ladder through `notification-retry` then `notification-dlq`, retry state carried on the message itself via `RetryEnvelope`; `/healthz`, `/metrics` |
-| frontend | `frontend` | routed via Traefik only (no direct host port) | five-screen React UI (§10), built as static assets and served by `nginx:1.27-alpine`; talks to every backend service exclusively through Traefik (`VITE_*_SERVICE_URL` baked in at build time as `http://localhost`, since no service publishes its own host port), Keycloak Authorization Code + PKCE for auth |
+| frontend | `frontend` | routed via Traefik only (no direct host port) | five-screen React UI (§10), built as static assets and served by `nginx:1.27-alpine`; talks to every backend service exclusively through Traefik (`VITE_*_SERVICE_URL` baked in at build time as `""`, relative/same-origin, since no service publishes its own host port), Keycloak Authorization Code + PKCE for auth — the OIDC issuer is resolved at runtime from `window.location` instead (Keycloak isn't proxied through Traefik, so it needs the real host, not a build-time constant; Phase 10) |
 | Traefik | `traefik` | 80 (entrypoint), `TRAEFIK_DASHBOARD_PORT` (8080, dashboard) | Docker-labels provider; `event-service` on `PathPrefix('/')`, `search-service` on `PathPrefix('/search')`, `booking-service` on `PathPrefix('/bookings')`, `payment-service` on `PathPrefix('/payments/webhook')` — deliberately narrower than the generic per-service pattern: a bare `/payments` prefix would let any authenticated user call `/payments/charge` directly with an arbitrary `booking_id`/`amount_cents`, bypassing booking-service's ownership check and authoritative price lookup; `/payments/charge` is reachable only internally, called by booking-service over the Docker network — `notification-service` on `PathPrefix('/notifications')` (matches nothing the service actually serves — it exposes only `/healthz`/`/metrics`, unreachable through this prefix the same way every other service's own bare `/healthz` already is), `frontend` on `PathPrefix('/app')` |
 | docker-socket-proxy | `docker-socket-proxy` | internal only | nginx proxy in front of the Docker socket — see note below |
 | Prometheus | `prometheus` | `PROMETHEUS_PORT` (9090) | `benchmark` profile only (`make bench-up`) — scrapes `event-service`/`search-service`/`booking-service`/`payment-service`/`notification-service` `/metrics` every 5s (§11, §24) |
