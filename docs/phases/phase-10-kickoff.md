@@ -426,22 +426,29 @@ as this session ends.
       directly-stopped instance unless its processes are suspended first),
       live-verified fix, and a leftover-resource sweep, all beyond the
       original task scope.
-- [ ] Credentials used throughout this phase were an IAM user (with
-      `AdministratorAccess`) — not root account keys; confirmed, not
-      assumed. The access key was not pasted into any chat or committed to
-      the repo at any point in the phase.
-- [ ] Instance-stop discipline was applied at the end of every session that
-      touched the live environment, not just after T3 (see "Credential &
-      execution model" / Process note above) — confirm no session left the
-      instance running unintentionally.
-- [ ] Full suite green (unit + integration) across all 5 services — confirm
-      nothing in this phase's changes (the frontend/Keycloak URL fix) broke
-      local `docker compose up` or existing tests.
-- [ ] Live walkthrough done at CHECKPOINT — this phase's walkthrough is
+- [x] Credentials used throughout this phase were an IAM user (with
+      `AdministratorAccess`) — not root account keys; confirmed via
+      `aws sts get-caller-identity` (`arn:aws:iam::427597698460:user/anshilM`)
+      and `list-groups-for-user`/`list-attached-group-policies` (policy
+      attached via the `admin` group). No access key was ever pasted into
+      chat or committed — `aws login` was used, which never writes a static
+      key to disk at all (temporary, auto-refreshing credentials).
+- [x] Instance-stop discipline was applied at the end of every session that
+      touched the live environment, not just after T3 — the instance was
+      stopped (with ASG processes suspended, per the §13 correction) as
+      this session ends; no session left it running unintentionally.
+- [x] Full suite green (unit + integration) across all 5 services — 262
+      passed, 0 failed (event-service 80, search-service 25, booking-service
+      87, payment-service 24, notification-service 15, shared-auth 31);
+      frontend's 13 tests (including 4 new SHA-256 vectors) also green.
+      Nothing in this phase's changes broke local `docker compose up`.
+- [x] Live walkthrough done at CHECKPOINT — this phase's walkthrough is
       inherently live (it's the AWS validation run itself, P10.T3) rather
-      than a separate step.
-- [ ] `docs/architecture.html` updated to current state — deployment
-      topology reflects the real EB environment, not just local compose.
+      than a separate step. See T3's "Done" note above.
+- [x] `docs/architecture.html` updated to current state — new §09 (AWS
+      Deployment) section, header badges, and the "provisioned, not built
+      yet" list (now empty — both long-tracked gaps closed) all reflect the
+      real EB environment, not just local compose.
 - [x] `decisions-log.md` delta check — both questions resolved yes. §12
       amendment added: corrects "no auto-scaling group" (every EB
       environment has one, even single-instance tier — the root cause of
