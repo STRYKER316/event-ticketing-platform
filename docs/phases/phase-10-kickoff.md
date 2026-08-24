@@ -299,6 +299,25 @@ live. Report evidence: Deployment figures.
 environment, verified live, with screenshots captured. Report evidence:
 "Deployed" screenshots.
 
+**Done (2026-08-24).** Full round trip live-verified against
+`http://event-ticketing-env.eba-uvwm2tcf.ap-south-1.elasticbeanstalk.com`,
+logged in as `bob`: browsed seeded events, held seat 1-2 on "Wandering
+Notes: Reunion Tour" (`POST /bookings`), paid via a real Stripe test-mode
+charge, confirmation page showed `status: pending` (expected — confirmation
+is webhook-driven, not synchronous, per §17), then verified via
+`GET /bookings/events/{id}/tickets` that the webhook actually landed and
+the ticket flipped `held` → `booked`. Webhook delivery used
+`stripe listen --forward-to http://<eb-cname>/payments/webhook` (its
+printed signing secret matched the `STRIPE_WEBHOOK_SECRET` already set on
+EB from T1/T2, so no `eb setenv` was needed) — all four forwarded events
+(`payment_intent.succeeded`, `payment_intent.created`, `charge.succeeded`,
+`charge.updated`) returned `200` from the deployed `payment-service`.
+Five screenshots captured at
+`docs/report/assets/deployment-flow/01-browse-events.png` through
+`05-booking-confirmed.png` (browse, Keycloak login, seat map, checkout,
+confirmation). Nothing broke that T1 hadn't already caught — no new fix
+needed here.
+
 ---
 
 ## P10.T4 — Stop/terminate discipline + CNAME stability writeup
@@ -338,8 +357,11 @@ writeup.
       (user decision, recorded in T2's "Done" note above). Evidence:
       `eb printenv` + `git log -p` secret scan + `describe-security-groups`,
       see T2's "Done" note above.
-- [ ] P10.T3 — browse→book→pay→confirm live-verified against the deployed
-      EB environment; screenshots captured.
+- [x] P10.T3 — browse→book→pay→confirm live-verified against the deployed
+      EB environment; screenshots captured. Evidence: ticket status
+      `held`→`booked` confirmed via API after a real Stripe test-mode
+      charge + webhook, see T3's "Done" note above; 5 screenshots at
+      `docs/report/assets/deployment-flow/`.
 - [ ] P10.T4 — instance stopped; CNAME stability live-verified across the
       stop/restart; real cost writeup against the baseline.
 - [ ] Credentials used throughout this phase were an IAM user (with
