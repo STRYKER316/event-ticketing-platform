@@ -1,3 +1,9 @@
+// Side-effect only: installs a crypto.subtle.digest fallback before
+// anything else runs, in case this page is loaded over plain HTTP on a
+// real hostname (see the file for why) -- must be the first import so it
+// runs before oidc-client-ts's PKCE code_challenge ever gets a chance to
+// need it.
+import './auth/subtleCryptoPolyfill.ts'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
