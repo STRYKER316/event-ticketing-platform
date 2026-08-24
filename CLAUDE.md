@@ -25,7 +25,8 @@ full every session. When in doubt, the decisions log wins.
   /notification-service no DB (or minimal delivery log); hand-rolled retry/DLQ
   /_shared/auth          shared FastAPI JWT-validation dependency (build once in P0, reuse everywhere)
 /frontend                minimal React, 5 screens, Nginx-served (Phase 7, not before)
-/infra                   docker-compose.yml, Traefik config, Keycloak realm export
+/infra                   docker-compose.yml, Traefik config, Keycloak realm export,
+                         build-eb-bundle.sh + .platform/hooks/ (EB deployment, Phase 10)
 /benchmark               standalone P8 load harness (own pyproject.toml/uv venv, not
                          part of the /services workspace — mirrors infra/kafka-smoke-test)
 /docs                    decisions-log.md, master-development-plan.md,
@@ -78,6 +79,8 @@ React (frontend, Phase 7 only). `uv` for Python
 dependency/workspace management (one shared venv/lockfile across `/services`, §
 "Restructure: uv workspace" in build-log.md; `/benchmark` and
 `infra/kafka-smoke-test` are standalone `uv` tools outside that shared workspace).
+AWS Elastic Beanstalk (Docker platform branch, AL2023, single-instance,
+Phase 10 deployment target — decisions-log §12) via the `aws`/`eb` CLIs.
 
 ## Workflow & cadence (decisions-log §25, §27)
 

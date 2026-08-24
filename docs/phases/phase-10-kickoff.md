@@ -442,13 +442,18 @@ as this session ends.
       than a separate step.
 - [ ] `docs/architecture.html` updated to current state — deployment
       topology reflects the real EB environment, not just local compose.
-- [ ] `decisions-log.md` delta check — explicitly confirm whether the
-      frontend/Keycloak URL-configurability fix (a genuine
-      implementation-level extension of §12, similar in shape to the §22
-      amendment's pattern) needs recording as an amendment, and whether
-      this file's "Credential & execution model" section should be folded
-      into the decisions log as its own entry.
-- [ ] `CLAUDE.md` self-update check — explicitly checked, not assumed.
+- [x] `decisions-log.md` delta check — both questions resolved yes. §12
+      amendment added: corrects "no auto-scaling group" (every EB
+      environment has one, even single-instance tier — the root cause of
+      T4's finding), plus the durable summary of the three real
+      implementation gaps and the credential model. §13 amendment added
+      separately for the stop-vs-terminate correction itself.
+- [x] `CLAUDE.md` self-update check — explicitly checked, not assumed. Two
+      updates made: Repo layout's `/infra` line now mentions
+      `build-eb-bundle.sh`/`.platform/hooks/`; Tech stack now names AWS
+      Elastic Beanstalk. No new coding convention needed — the ASG/stop
+      finding is an operational fact, fully recorded in decisions-log §13,
+      not a code pattern.
 - [ ] Phase-end checklist item 7 (`/pre-pr`) run against the diff since
       this phase's starting commit.
 - [ ] Phase-end checklist item 8 (cross-doc staleness sweep) run against
