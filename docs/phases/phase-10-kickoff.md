@@ -212,6 +212,34 @@ resolve correctly against the real EB address (not just "containers
 started" — a login attempt through the deployed frontend must actually
 complete). Report evidence: Deployment Flow chapter.
 
+**Done (2026-08-24).** Two real gaps found and fixed beyond the pre-read
+audit's scope, both live-verified against
+`http://event-ticketing-env.eba-uvwm2tcf.ap-south-1.elasticbeanstalk.com`:
+- EB's Docker-Compose deploy needs `docker-compose.yml` at the deployment
+  bundle's root with every `build.context` nested underneath it (confirmed
+  against AWS's own docker-compose quickstart) — `infra/docker-compose.yml`'s
+  contexts reach one level above `infra/` (`../services`, `../frontend`),
+  which doesn't resolve as-is. Fixed with `infra/build-eb-bundle.sh`, which
+  assembles a flat, self-contained bundle without touching the canonical
+  compose file used for local dev.
+- PKCE's `code_challenge` needs `crypto.subtle`, which browsers restrict to
+  secure contexts (HTTPS, or a `localhost` hostname specifically) — worked
+  in every local test, failed silently against the EB CNAME's plain-HTTP
+  real hostname. Fixed with a pure-JS SHA-256 fallback
+  (`frontend/src/auth/subtleCryptoPolyfill.ts`), keeping PKCE at full S256
+  strength rather than downgrading to `plain`.
+- EB has no host-side Python/uv, so a fresh environment's databases stayed
+  unmigrated after `eb create` (`GET /events` 500'd). Fixed with a
+  `.platform/hooks/postdeploy` script that execs into each service's
+  container and runs the same `alembic upgrade head` + seed steps the
+  Makefile's `migrate`/`seed` targets run locally.
+
+Live evidence: logged in as `alice` through the deployed frontend, browsed
+seeded events, held a seat (`POST /bookings` succeeded) — full round trip,
+not just page load. Security group opened to exactly port 80 + Keycloak's
+8081 as part of this task (pulled forward from T2, since T1's own
+done-when criterion needed it — see T2 below).
+
 ---
 
 ## P10.T2 — Environment properties, security groups, Budgets alert
@@ -233,6 +261,25 @@ complete). Report evidence: Deployment Flow chapter.
 properties with no secret committed to the repo, the security group opens
 exactly the two ports that need to be public, and the Budgets alert is
 live. Report evidence: Deployment figures.
+
+**Done (2026-08-24), mostly as a T1 carryover.** All three verified:
+- **Secrets**: all 9 (7 DB credential values, Keycloak admin password +
+  client secret, 2 Stripe test-mode keys — the ~10 estimate rounded up)
+  confirmed present via `eb printenv`, sourced from local `.env` into EB
+  environment properties at `eb create` time, never committed — verified by
+  `git log -p` across every commit this phase, no real secret value found
+  (only the pre-existing, already-committed `changeme` seed-user/demo-client
+  placeholders, not a leak).
+- **Security group**: `aws ec2 describe-security-groups` confirms exactly
+  two inbound rules — TCP 80 and TCP 8081 (Keycloak), both `0.0.0.0/0`,
+  nothing else. Opened during T1, not a separate step here.
+- **Budgets alert — deviation from plan.** Per an explicit user decision
+  mid-phase, reusing the existing pre-provisioned `Budget-of-Cost` budget
+  ($10/month, alerts at $6 forecasted / $8 actual to
+  `ansil.mishra316@gmail.com`) instead of creating a new ~$20 one as
+  originally planned above. Tighter than the plan's $20, not looser — the
+  existing alert already covers this phase's spend at a lower threshold, so
+  a second budget would have been redundant.
 
 ---
 
@@ -278,13 +325,19 @@ writeup.
 
 ## Phase 10 exit checklist (all must pass before P11 resumes)
 
-- [ ] P10.T1 — hardcoded-localhost gap fixed and verified locally; EB
+- [x] P10.T1 — hardcoded-localhost gap fixed and verified locally; EB
       app/environment created (Docker platform branch, AL2023,
       single-instance, t3.xlarge); stack running with a working login+API
-      round trip against the real EB address.
-- [ ] P10.T2 — secrets moved to EB environment properties (none committed);
-      security group opens exactly ports 80 and the Keycloak port; AWS
-      Budgets alert live at ~$20.
+      round trip against the real EB address. Evidence: live login as
+      `alice` + seat hold against
+      `event-ticketing-env.eba-uvwm2tcf.ap-south-1.elasticbeanstalk.com`,
+      see T1's "Done" note above.
+- [x] P10.T2 — secrets moved to EB environment properties (none committed);
+      security group opens exactly ports 80 and the Keycloak port; existing
+      `Budget-of-Cost` alert ($10/month) reused in place of a new ~$20 one
+      (user decision, recorded in T2's "Done" note above). Evidence:
+      `eb printenv` + `git log -p` secret scan + `describe-security-groups`,
+      see T2's "Done" note above.
 - [ ] P10.T3 — browse→book→pay→confirm live-verified against the deployed
       EB environment; screenshots captured.
 - [ ] P10.T4 — instance stopped; CNAME stability live-verified across the
