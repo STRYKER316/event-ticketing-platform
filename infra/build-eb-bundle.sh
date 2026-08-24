@@ -33,7 +33,7 @@ rsync -a $EXCLUDES "$REPO_ROOT/services/" "$OUT_DIR/services/"
 # shellcheck disable=SC2086
 rsync -a $EXCLUDES "$REPO_ROOT/frontend/" "$OUT_DIR/frontend/"
 
-for d in keycloak postgres docker-socket-proxy prometheus grafana; do
+for d in keycloak postgres docker-socket-proxy prometheus grafana .platform; do
   if [ -d "$REPO_ROOT/infra/$d" ]; then
     # shellcheck disable=SC2086
     rsync -a $EXCLUDES "$REPO_ROOT/infra/$d/" "$OUT_DIR/$d/"
