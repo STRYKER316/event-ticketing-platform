@@ -5,8 +5,8 @@ import type { AuthProviderProps } from 'react-oidc-context'
 // OIDC discovery to a broken URL and break login with no useful error.
 const keycloakPort = import.meta.env.VITE_KEYCLOAK_PORT
 const keycloakRealm = import.meta.env.VITE_KEYCLOAK_REALM
-if (!keycloakPort) throw new Error('Missing VITE_KEYCLOAK_PORT')
-if (!keycloakRealm) throw new Error('Missing VITE_KEYCLOAK_REALM')
+if (keycloakPort === undefined) throw new Error('Missing VITE_KEYCLOAK_PORT')
+if (keycloakRealm === undefined) throw new Error('Missing VITE_KEYCLOAK_REALM')
 
 // Unlike the three service URLs in api/client.ts, Keycloak isn't proxied
 // through Traefik (infra/docker-compose.yml's keycloak service has no

@@ -23,12 +23,14 @@ wait_for_container() {
   exit 1
 }
 
+# Service list hand-kept in sync with the Makefile's migrate target and
+# reset-demo-state.sh's restart loop (same convention that file already uses).
 for svc in event-service booking-service payment-service; do
   id=$(wait_for_container "$svc")
   echo "Running migrations: $svc ($id)"
   docker exec "$id" /workspace/.venv/bin/alembic upgrade head
+  [ "$svc" = "event-service" ] && event_id="$id"
 done
 
-event_id=$(wait_for_container event-service)
 echo "Seeding demo data via event-service ($event_id)"
 docker exec "$event_id" /workspace/.venv/bin/python -m app.seed

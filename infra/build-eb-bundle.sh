@@ -26,7 +26,7 @@ mkdir -p "$OUT_DIR"
 # slow eb create/deploy for no reason (each service's Dockerfile does its
 # own npm ci / uv sync inside the build, these host-side copies are dead
 # weight).
-EXCLUDES="--exclude=.venv --exclude=__pycache__ --exclude=*.pyc --exclude=.pytest_cache --exclude=.mypy_cache --exclude=.ruff_cache --exclude=*.egg-info --exclude=node_modules --exclude=dist --exclude=build --exclude=.git"
+EXCLUDES="--exclude=.venv --exclude=__pycache__ --exclude=*.pyc --exclude=.pytest_cache --exclude=.mypy_cache --exclude=.ruff_cache --exclude=*.egg-info --exclude=node_modules --exclude=dist --exclude=build"
 
 # shellcheck disable=SC2086
 rsync -a $EXCLUDES "$REPO_ROOT/services/" "$OUT_DIR/services/"
