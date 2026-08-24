@@ -12,8 +12,9 @@ new application logic, no schema changes, no new Kafka points.
 **How to use this file:** run the four tasks below in order, one per Claude
 Code session where practical. Commit after each (small, green commits).
 `main` stays bootable at every step. Unlike every phase before it, this
-phase creates real, billed AWS resources — see "Process note" below before
-running any task that provisions or deploys anything.
+phase creates real, billed AWS resources — see "Credential & execution
+model" and "Process note" below before running any task that provisions or
+deploys anything.
 
 **Entry deps:** P9 (Hardening) — confirmed complete:
 `docs/phases/phase-9-kickoff.md`'s exit checklist is fully checked off with
@@ -74,16 +75,92 @@ P10.T1 itself):**
   redirect), not just one — easy to miss if the security-group task is
   scoped only around Traefik.
 
-**Open item requiring the user, not a design decision:** every prior phase
-ran entirely against local Docker — this phase is the first that needs an
-actual AWS account with billing enabled, and either the AWS CLI or the `eb`
-CLI configured with real IAM credentials on whatever machine runs the
-deploy. Nothing in `decisions-log.md` or `master-development-plan.md`
-addresses account/credential setup (checked, not present) because it was
-out of scope for every phase before now. Claude Code cannot provision AWS
-account access on its own — confirm before P10.T1 starts that an AWS
-account and IAM credentials (with EB/EC2/S3 permissions) are ready, or this
-phase blocks on that first.
+**Credential & execution model for this phase:**
+
+Every prior phase ran entirely against local Docker with no external
+account involved. This is the first phase where Claude Code operates
+against a real, billed AWS account, so the execution model needs to be
+explicit rather than assumed. Two distinct things are going on here, worth
+not conflating:
+
+- **Claude Code's own tool-permission prompts are automatic and need no
+  setup.** By default it stops and asks for approval before running
+  state-changing bash commands — `eb create`, `aws ec2 stop-instances`,
+  security-group changes, and so on. This is what the Process note's
+  "confirm before running any command that provisions AWS resources" relies
+  on; it's Claude Code's normal built-in behavior, not something this phase
+  has to configure.
+- **AWS credentials actually existing is a separate thing, and is *not*
+  prompted for.** If `aws configure` hasn't been run, an `aws`/`eb` command
+  doesn't pop an approval dialog — it just fails outright ("Unable to
+  locate credentials" or similar). Claude Code will surface that error and
+  say what's missing, but it cannot create the IAM user, attach a policy,
+  or generate access keys itself — that requires AWS console access it
+  doesn't have.
+
+**Once credentials exist, Claude Code drives the AWS side directly, the
+same way it drives everything else in this repo** — `eb init`, `eb create`,
+`eb deploy`, `eb setenv`, `aws ec2 stop-instances`/`start-instances`,
+`aws budgets create-budget`, security-group rule changes, and the T3
+smoke-test requests, exactly as a human would type them from the same
+terminal. This is plain CLI tool use, not a new integration.
+
+**Credentials for this project: settled, not still pending.** An IAM user
+(not root) with the `AdministratorAccess` managed policy is already
+provisioned — this is what Claude Code authenticates as for every task
+below. Two things worth being explicit about, both already weighed and
+accepted, not open questions:
+- **IAM user, not root, is the part that actually matters.** Root
+  credentials can't be scoped by any policy and their leak radius is the
+  whole account including billing/closure; this IAM user's leak radius is
+  large (full admin) but the identity itself can be deactivated or deleted
+  in seconds and can't do root-only things. That distinction is the real
+  safety boundary here, not the exact policy attached.
+- **Full `AdministratorAccess` is broader than this phase strictly needs**
+  (the minimum would be `AdministratorAccess-AWSElasticBeanstalk` + a
+  narrow Budgets permission) — a deliberate, accepted trade-off for a solo
+  capstone rather than an oversight. It means one less thing to debug if a
+  permission gap shows up mid-task, at the cost of a bigger blast radius if
+  the key ever leaked. Mitigate the trade-off with plain key hygiene:
+  never paste the access key/secret into a chat message or commit it to
+  the repo, and deactivate or delete the key once the project is submitted
+  and graded (matching §13's termination timing) rather than leaving it
+  live indefinitely.
+- Before treating any T1 result as real, confirm the credential actually
+  resolves (`aws sts get-caller-identity` returns the right account) — a
+  command that silently no-ops or errors shouldn't be mistaken for one
+  that succeeded.
+- **Cost baseline this phase is measured against** (verified current as of
+  this kickoff, 2026-08-24): t3.xlarge on-demand is $0.1664/hr in
+  us-east-1, unchanged from §13's original estimate. At §13's projected
+  ~20–35 hrs of total EC2 runtime across the whole project, compute cost is
+  ~$3–6, ~$7–12 all-in with EBS storage — comfortably inside free-tier
+  credit on any account age. T4's real-cost writeup should be reconciled
+  against this baseline, not treated as a fresh estimate.
+
+**Two deviations from the above, decided at the start of the actual T1
+session (2026-08-24), recorded here rather than only in `build-log.md`:**
+- **Auth flow used: `aws login` (AWS CLI v2.32+), not `aws configure`.**
+  This section originally assumed the long-lived IAM user access
+  key/secret entered once via `aws configure`. Instead, `aws login` was
+  used — it reuses an AWS Console sign-in (as the same `AdministratorAccess`
+  IAM user, not root) to mint short-lived, auto-refreshing temporary
+  credentials, with no static key ever written to disk. Verified via `aws
+  sts get-caller-identity` → `arn:aws:iam::427597698460:user/anshilM`, and
+  `AdministratorAccess` confirmed attached via the `admin` IAM group (not
+  directly on the user, but the same effective permission). Strictly safer
+  than the plan as originally written, not a downgrade — noted as a
+  deviation only because the credential mechanism differs from what's
+  described above.
+- **Region: `ap-south-1` (Mumbai), not `us-east-1`.** A deliberate user
+  choice, not a default. This directly invalidates the "Cost baseline"
+  bullet just above, which is a `us-east-1` on-demand price
+  ($0.1664/hr) — `ap-south-1` t3.xlarge pricing is different (typically
+  somewhat higher). T4's real-cost writeup must reconcile against actual
+  `ap-south-1` billing-console numbers, not the `us-east-1` figure quoted
+  above; that figure is left as originally written (it's what was "verified
+  current as of this kickoff") rather than edited, so the reconciliation at
+  T4 has an honest before/after to show its work against.
 
 **Process note specific to this phase:** every task in this phase either
 provisions billed AWS resources or runs commands against them (`eb create`,
@@ -92,10 +169,17 @@ assistant's standing operating rule on hard-to-reverse or cost-incurring
 actions affecting infrastructure outside the local machine, each such step
 gets an explicit confirm-before-running check with the user in the
 moment — this file lays out the plan, it doesn't pre-authorize the AWS
-actions themselves. No dedicated adversarial `/code-review` pass is
-required here (reserved for P3/P8 only, per CLAUDE.md) — the routine
-`/pre-pr` gate at CHECKPOINT plus self-verification is sufficient, same as
-every phase besides P3/P8.
+actions themselves. Additionally, because these four tasks may run across
+separate Claude Code sessions rather than one sitting ("one per session
+where practical"), **any session that leaves the EB instance running at
+its end should explicitly stop it before ending** — this isn't deferred
+solely to T4, which documents the *final* stop after T3's validation. An
+instance idling between, say, a T1 session today and a T2 session two days
+later is exactly the case §13's stop/terminate discipline exists to
+prevent. No dedicated adversarial `/code-review` pass is required here
+(reserved for P3/P8 only, per CLAUDE.md) — the routine `/pre-pr` gate at
+CHECKPOINT plus self-verification is sufficient, same as every phase
+besides P3/P8.
 
 ---
 
@@ -115,11 +199,13 @@ every phase besides P3/P8.
 > config driven by an environment value rather than a literal string, so the
 > same image works locally and on EB without a rebuild. Verify locally
 > first — full login-through-API round trip still works against
-> `docker compose up` before touching AWS. Second, create the EB application
-> and environment: Docker platform branch (AL2023), single-instance (no load
-> balancer), t3.xlarge, deploying the existing `docker-compose.yml`. Confirm
-> with the user before running any command that actually provisions AWS
-> resources.
+> `docker compose up` before touching AWS. Second, confirm AWS credentials
+> are configured (`aws sts get-caller-identity`) and create the EB
+> application and environment: Docker platform branch (AL2023),
+> single-instance (no load balancer), t3.xlarge, deploying the existing
+> `docker-compose.yml`. Confirm with the user before running any command
+> that actually provisions AWS resources. If the session is ending with the
+> instance still running, stop it before finishing.
 
 **Done when:** the stack runs on EB and the frontend's login/API calls
 resolve correctly against the real EB address (not just "containers
@@ -138,8 +224,10 @@ complete). Report evidence: Deployment Flow chapter.
 > public inbound rules: port 80 (Traefik/the app) and the Keycloak port (the
 > OIDC login redirect needs to reach Keycloak directly, per the pre-read
 > finding that it isn't proxied through Traefik). Set an AWS Budgets alert
-> at ~$20 (§13) as a safety net. Confirm with the user before applying
-> security-group changes or creating billing alerts, same as T1.
+> at ~$20 (§13) as a safety net. Confirm
+> with the user before applying security-group changes or creating billing
+> alerts, same as T1. If the session is ending with the instance still
+> running, stop it before finishing.
 
 **Done when:** the deployed environment runs on EB-managed environment
 properties with no secret committed to the repo, the security group opens
@@ -175,9 +263,11 @@ environment, verified live, with screenshots captured. Report evidence:
 > keeps the environment CNAME stable). Document in the Deployment Flow
 > report chapter: the actual stop procedure used, confirmation the CNAME is
 > still the same after a stop/restart cycle (verify this live, don't just
-> cite the decision), and the real cost incurred so far against §13's ~$3-6
-> estimate. Note explicitly that full termination is deferred until the
-> project is submitted and graded (§13), not done now.
+> cite the decision), and the real cost incurred so far against the
+> ~$7–12 all-in baseline in "Credential & execution model" above (itself a
+> reconciliation of §13's original ~$3-6 compute estimate). Note explicitly
+> that full termination is deferred until the project is submitted and
+> graded (§13), not done now.
 
 **Done when:** the instance is stopped, CNAME stability is live-verified
 (not just asserted from the decision), and the cost writeup reflects real
@@ -198,7 +288,15 @@ writeup.
 - [ ] P10.T3 — browse→book→pay→confirm live-verified against the deployed
       EB environment; screenshots captured.
 - [ ] P10.T4 — instance stopped; CNAME stability live-verified across the
-      stop/restart; real cost writeup against the §13 estimate.
+      stop/restart; real cost writeup against the baseline.
+- [ ] Credentials used throughout this phase were an IAM user (with
+      `AdministratorAccess`) — not root account keys; confirmed, not
+      assumed. The access key was not pasted into any chat or committed to
+      the repo at any point in the phase.
+- [ ] Instance-stop discipline was applied at the end of every session that
+      touched the live environment, not just after T3 (see "Credential &
+      execution model" / Process note above) — confirm no session left the
+      instance running unintentionally.
 - [ ] Full suite green (unit + integration) across all 5 services — confirm
       nothing in this phase's changes (the frontend/Keycloak URL fix) broke
       local `docker compose up` or existing tests.
@@ -210,7 +308,9 @@ writeup.
 - [ ] `decisions-log.md` delta check — explicitly confirm whether the
       frontend/Keycloak URL-configurability fix (a genuine
       implementation-level extension of §12, similar in shape to the §22
-      amendment's pattern) needs recording as an amendment.
+      amendment's pattern) needs recording as an amendment, and whether
+      this file's "Credential & execution model" section should be folded
+      into the decisions log as its own entry.
 - [ ] `CLAUDE.md` self-update check — explicitly checked, not assumed.
 - [ ] Phase-end checklist item 7 (`/pre-pr`) run against the diff since
       this phase's starting commit.
