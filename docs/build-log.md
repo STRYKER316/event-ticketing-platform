@@ -5648,3 +5648,91 @@ concurrent-race tests and explicit Kafka-redelivery-safe-no-op
 coverage for `BookingCancelledConsumer` — the low file count is just
 this service having one Manager and one consumer, not a coverage
 gap. No changes made there.
+
+## 2026-08-25 — Final sanity pass, part 2: full live round of the remaining checks
+
+Ran the rest of the sanity-round punch list: a fresh full test run
+across every service, a Kafka-redelivery coverage audit, a report
+placeholder/staleness sweep, then a real live walkthrough (local
+stack, then the deployed EB environment).
+
+**Full test suite, run fresh, not recalled**: 196 unit + 67
+integration = 263 tests, all passing, across all five services plus
+`_shared/auth`. Read `test_concurrency_suite.py`'s actual assertions
+rather than trusting green — `test_n_clients_race_one_seat_under_*`
+asserts `sum(results) == 1` and an exact booking count (not just "no
+crash"), and `_attempt_booking`'s helper catches only `HTTPException`
+and asserts `status_code == 409` specifically, with its own comment
+naming the exact `MissingGreenlet` bug class this guards against.
+
+**Kafka redelivery coverage audit**: mapped all 7 consumer classes to
+an explicit redelivery-is-a-safe-no-op test. Six already had one, but
+`notification-service`'s `RetryConsumer` didn't — `NotificationConsumer`
+had one (decisions-log §17: "test the claim, don't assume it") but its
+sibling never got the same treatment. Added
+`test_retry_consumer_redelivery_of_same_message_is_a_safe_no_op`,
+mirroring the existing pattern (publish the same `RetryEnvelope` twice,
+assert two independent deliveries and no DLQ entry). Passes; full
+notification-service suite (16 tests) still green.
+
+**Report cross-consistency**: no stray placeholders (`TBD`, `<insert>`,
+etc.) in any `docs/report/*.md` chapter; no aggregate test-count claim
+in `testing-strategy.md` to go stale against the real 263; §26's
+pull-list content confirmed already fully reflected in
+`conclusion.md`'s Limitations/Future Work sections, nothing missing.
+
+**Live walkthrough, local stack**: created a real venue/event/seat map
+as an organizer (bob), confirmed it landed in Elasticsearch (Kafka
+point 1) and provisioned real tickets in booking-service (Kafka point
+2). Booked and paid as a customer (alice) — a genuine
+`stripe.PaymentIntent.create_async` call, not a mock — with `stripe
+listen --forward-to localhost:80/payments/webhook` running to catch
+the real webhook: `charge.succeeded` → `payment_intent.succeeded` →
+`payment_outcome_published` (Kafka point 4) →
+`booking_confirmed`/`payment_confirmed` notifications (Kafka point 3)
+→ ticket flipped to `booked`. Cancelled the confirmed booking and
+confirmed a real `stripe.Refund` API call fired (Kafka point 5) and
+the seat returned to `available`. All 5 Kafka integration points and
+the one synchronous Booking→Payment call confirmed live, not assumed
+from passing tests.
+
+Verified both hold strategies live, not just via the test suite:
+temporarily flipped `docker-compose.yml`'s `HOLD_STRATEGY` to `redis`,
+recreated `booking-service`, confirmed a hold produces a real
+`ticket:hold:*` Redis key and blocks a concurrent booking attempt with
+409, then reverted the file back to `cron` and recreated again — `git
+diff` clean afterward, no stray edit left behind.
+
+Frontend click-through against the real running stack (Playwright,
+`claude-in-chrome` unavailable this session): real Keycloak OIDC login
+for both a customer and an organizer role, all 5 screens exercised
+(`SearchPage` → `EventDetailPage` → `CheckoutPage` → `ConfirmationPage`,
+plus `OrganizerPage` gated correctly behind the organizer role — no
+"Organizer" nav link shown for alice). One momentary console 409 on a
+seat that was still genuinely held from an earlier step in this same
+session — confirmed as expected behavior (the seat really was taken),
+not a bug; the UI surfaced it as a clean "This seat was just taken by
+someone else" message rather than crashing. Zero console errors on the
+clean run through a fresh event. Confirmation page correctly showed
+`status: pending` at render time even though the real webhook had
+already confirmed the booking server-side moments later — this is the
+documented "no confirmation-page refresh persistence" limitation
+(§26/Conclusion) working as designed, not a bug.
+
+**EB environment**: found the deployed instance stopped (`Health:
+Grey, HealthStatus: No Data`, requests timing out) — flagged to the
+user rather than starting a paid instance unilaterally. User
+authorized starting it for live testing and stopping it afterward.
+Confirmed the Auto Scaling Group's `HealthCheck`/`ReplaceUnhealthy`
+processes were still suspended (the P10.T4 fix) before touching the
+instance, to avoid repeating that incident. Started it
+(`aws ec2 start-instances`), waited for EC2 status checks, then
+confirmed `GET /events`, `GET /search`, and the frontend all returned
+200 against the real public address, and EB's own health flipped from
+Grey/No Data to Green — proof the "stopped" state was just an idle
+instance between sessions, not a real problem. Stopped it again
+afterward; confirmed via the ASG that the same instance ID stayed
+`InService` with no replacement triggered.
+
+No decisions-log delta. `CLAUDE.md` self-check: no convention changes,
+just verification work.
