@@ -3,9 +3,17 @@
 *Status: draft — all five backend services covered (Event Service's
 `event_db`/seat-map Mongo docs, Search Service's Elasticsearch index,
 Booking Service's `booking_db`, Payment Service's `payment_db`, and
-Notification Service's deliberate absence of a schema of its own).*
+Notification Service's deliberate absence of a schema of its own). Each
+Postgres ER diagram below is rendered to a static PNG (embedded inline)
+and a vector SVG (`assets/diagrams/db-*.svg`) from its Mermaid source,
+ready to insert directly into the formatted submission.*
 
 ## `event_db` (Postgres) — ER diagram
+
+![event_db ER diagram](assets/diagrams/db-event_db.png)
+
+*Rendered from the Mermaid source below (`assets/diagrams/db-event_db.svg`
+for a vector version).*
 
 ```mermaid
 erDiagram
@@ -174,6 +182,11 @@ idempotently on service boot (`HEAD` 404 → `PUT` 200 the first time,
 
 ## `booking_db` (Postgres) — ER diagram
 
+![booking_db ER diagram](assets/diagrams/db-booking_db.png)
+
+*Rendered from the Mermaid source below (`assets/diagrams/db-booking_db.svg`
+for a vector version).*
+
 ```mermaid
 erDiagram
     TICKET ||--o| BOOKING : "held/booked by"
@@ -320,6 +333,11 @@ re-run repeatedly to rule out a false-positive pass rather than trusted
 after a single green run.
 
 ## `payment_db` (Postgres) — ER diagram
+
+![payment_db ER diagram](assets/diagrams/db-payment_db.png)
+
+*Rendered from the Mermaid source below (`assets/diagrams/db-payment_db.svg`
+for a vector version).*
 
 ```mermaid
 erDiagram

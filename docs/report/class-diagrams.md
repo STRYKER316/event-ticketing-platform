@@ -2,9 +2,17 @@
 
 *Status: draft — all five backend services covered (Event Service Phase 1,
 Search Service Phase 2, Booking Service Phase 3/4/6/7, Payment Service
-Phase 4/6, Notification Service Phase 5).*
+Phase 4/6, Notification Service Phase 5). Every diagram below is rendered
+to a static PNG (embedded inline) and a vector SVG
+(`assets/diagrams/class-*.svg`) from its Mermaid source, ready to insert
+directly into the formatted submission.*
 
 ## Event Service — Manager + Repository per feature
+
+![Event Service class diagram](assets/diagrams/class-event-service.png)
+
+*Rendered from the Mermaid source below (`assets/diagrams/class-event-service.svg`
+for a vector version).*
 
 ```mermaid
 classDiagram
@@ -135,6 +143,11 @@ not a target design.
 
 ## Search Service — Manager + Repository, adapted for a non-SQL store
 
+![Search Service class diagram](assets/diagrams/class-search-service.png)
+
+*Rendered from the Mermaid source below (`assets/diagrams/class-search-service.svg`
+for a vector version).*
+
 ```mermaid
 classDiagram
     class SearchManager {
@@ -190,6 +203,11 @@ under `services/search-service/app/logic/`, `app/db/`, and `app/kafka/` as
 of Phase 2.
 
 ## Booking Service — Manager + Repository, plus the one Strategy interface in this codebase
+
+![Booking Service class diagram](assets/diagrams/class-booking-service.png)
+
+*Rendered from the Mermaid source below (`assets/diagrams/class-booking-service.svg`
+for a vector version).*
 
 ```mermaid
 classDiagram
@@ -506,6 +524,11 @@ this and two other issues.
 
 ## Payment Service — Manager + Repository, plus the system's one synchronous inter-service call
 
+![Payment Service class diagram](assets/diagrams/class-payment-service.png)
+
+*Rendered from the Mermaid source below (`assets/diagrams/class-payment-service.svg`
+for a vector version).*
+
 ```mermaid
 classDiagram
     class PaymentManager {
@@ -697,6 +720,11 @@ technique used since Phase 4 given no real Stripe account) produced a real
 Notification Service's own logs.
 
 ## Notification Service — Manager only, no Repository, no database (Phase 5)
+
+![Notification Service class diagram](assets/diagrams/class-notification-service.png)
+
+*Rendered from the Mermaid source below (`assets/diagrams/class-notification-service.svg`
+for a vector version).*
 
 ```mermaid
 classDiagram
