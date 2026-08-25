@@ -5980,3 +5980,45 @@ effect. Full smoke test clean afterward.
 No decisions-log delta. `CLAUDE.md` self-check: no convention changes —
 this follows the existing healthcheck-in-compose pattern rather than
 introducing a new one.
+
+## 2026-08-25 — Final sanity pass, part 7: log redaction, JWT expiry, migration reversibility, seed idempotency
+
+Five more angles, all came back clean — no fixes needed this round.
+
+**Log redaction**: acquired a real token, hit two endpoints with it, then
+grepped every service's logs for the raw token value, `changeme`, and
+`sk_test_` — zero hits across all five services. Secrets and bearer
+tokens never land in structured logs.
+
+**JWT expiry enforcement**: couldn't forge a validly-signed expired token
+live (no access to Keycloak's private key), so verified via code instead
+— `shared_auth/dependencies.py`'s `jwt.decode()` never overrides
+`verify_exp` (PyJWT's default, `True`, stands), pins
+`algorithms=["RS256"]` explicitly (blocks algorithm-confusion attacks
+too), and validates `audience`/`issuer`. Confirmed `_shared/auth`'s own
+unit suite already has `test_expired_token_rejected` (a self-signed
+RSA-keypair token with `exp_delta=-60`), part of the 31 shared-auth unit
+tests already re-run clean earlier this session.
+
+**No stack-trace leakage**: grepped all five `main.py`s for `debug=True`
+— zero hits, so Starlette's safe default (`debug=False`, a plain
+`"Internal Server Error"` body, no traceback) is in effect everywhere.
+Already independently confirmed by this session's earlier Postgres-down
+testing, whose raw 500 response body was exactly that plain string, not
+a traceback.
+
+**Alembic downgrade reversibility** — never tested this session until
+now, despite `upgrade head` being exercised repeatedly. Spun up an
+isolated, disposable Postgres container (not the shared dev volume, to
+avoid wiping this session's accumulated test data) and ran
+`upgrade head` → `downgrade base` → `upgrade head` for all three
+Postgres-backed services' full migration chains. All three round-tripped
+cleanly with no errors — `event-service` (1 migration),
+`booking-service` (3), `payment-service` (3). Torn down afterward.
+
+**Seed idempotency**: ran `make seed` twice in a row against the same
+running stack — both times logged `seed_skipped_data_already_present`
+and exited cleanly, confirming the script's own already-seeded-data
+detection works as designed, not just assumed.
+
+No decisions-log delta. `CLAUDE.md` self-check: no convention changes.
