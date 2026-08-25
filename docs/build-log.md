@@ -5444,3 +5444,103 @@ shared-auth 31) plus frontend's 13 (4 new, for the SHA-256 polyfill).
 Decisions-log delta: §12 and §13 both amended — see above. `CLAUDE.md`
 delta: Repo layout's `/infra` line now mentions `build-eb-bundle.sh`/
 `.platform/hooks/`; Tech stack now names AWS Elastic Beanstalk.
+
+## 2026-08-25 — Phase 11 follow-up pass: the four chapters blocked on P10, now unblocked
+
+Phase 10 closed 2026-08-24; this pass picks up everything
+`docs/phases/phase-11-kickoff.md`'s "Blocked on P10" section had deferred.
+
+**Deployment Flow chapter** (new `docs/report/deployment-flow.md`) written
+from P10.T1–T4's real evidence already captured in `phase-10-kickoff.md`
+and the prior day's build-log entry: topology, the three localhost-fix
+gaps, secrets/environment properties, the two-port security group, the
+reused `Budget-of-Cost` alert, the validation-run screenshots, the real
+§12/§13 Auto Scaling Group stop/terminate correction, and a Measured cost
+writeup (≈$0.15, computed from real instance timestamps against the
+confirmed `ap-south-1` Pricing API rate). `project-description.md` got its
+own missing Phase 10 narrative paragraph (mirroring the P4-P6 backfill
+P11a did for the same chapter) — its status line now reads "covers
+Phases 0-10, no narrative gap" instead of "0-7."
+
+**Conclusion chapter** (new `docs/report/conclusion.md`) — takeaways,
+real-world applications, and Limitations/Future Work lifted directly from
+decisions-log §26's pull-list, written in one sitting as originally
+planned rather than splitting the Limitations/Future Work half out early.
+
+**Abstract** (new `docs/report/abstract.md`) — written last, once every
+other chapter (including the two above) was in its final state. Caught
+one real accuracy bug while drafting it, before any external review: an
+early draft claimed a p95/p99 tail-latency edge to the `cron` hold
+strategy that `feature-development-process.md`'s own "Honest reading of
+the comparison" section explicitly says did not reproduce once each
+strategy was run three times (only a millisecond-scale immediate-release
+trigger-time edge held up) — corrected before the file was ever
+finalized, not caught downstream.
+
+**Adversarial accuracy review** (a fresh subagent, not self-review) then
+checked every number, AWS resource name, section citation, and
+"verified/measured" claim across all four touched files
+(`deployment-flow.md`, `conclusion.md`, `abstract.md`,
+`project-description.md`) against `decisions-log.md`, the Phase 10
+build-log entry, `phase-10-kickoff.md`'s Done notes, and
+`feature-development-process.md`'s benchmark tables. Found one real
+inconsistency: `conclusion.md` said the decisions log "held for 26
+sections," `abstract.md` correctly said 27 — the log actually has §1–§27.
+Fixed to 27. Everything else (instance IDs, timestamps, cost math,
+security-group rules, the §26 pull-list transcription, benchmark figures,
+screenshot paths, emoji/tone compliance) checked out accurate against
+source, no further changes needed.
+
+**P11.T5 — demo script + live-recorded walkthrough.** With the user's
+explicit go-ahead to restart the (stopped, since P10.T4) EB instance:
+confirmed AWS credentials still resolved (`aws sts get-caller-identity`),
+confirmed the instance (`i-042877e8a95e2a68f`) was still stopped with the
+ASG's `HealthCheck`/`ReplaceUnhealthy`/`AZRebalance` processes still
+suspended from P10.T4, then `aws ec2 start-instances` against it directly
+— the corrected pause/resume procedure from §13's amendment, not the
+plain EC2 API call that caused the original P10.T4 incident. Waited for
+the instance to reach `running`, then polled the CNAME until both the
+API (`GET /events`) and the frontend (served at `/app/`, not `/` — worth
+noting for anyone testing this cold) returned `200`.
+
+Ran the full customer flow live via Playwright against the real CNAME
+(the Chrome extension wasn't connected this session, so Playwright stood
+in for Claude-in-Chrome): browsed events, logged in as `alice` through
+the deployed Keycloak instance (a real PKCE S256 challenge visible in the
+redirect URL — the exact flow the `crypto.subtle` polyfill exists to keep
+working), held a fresh seat (General, Row 3, Seat 3-3 on "Wandering
+Notes: Reunion Tour" — deliberately not T3's seat 1-2, so the two
+validation runs don't collide in the same seed data), and paid 25.00 USD.
+Confirmation page showed `status: pending` as expected. `stripe listen`
+forwarded webhook events to the deployed `payment-service` (using the
+local `.env`'s test-mode secret key via `--api-key`, since this shell
+wasn't already `stripe login`-authenticated; its printed signing secret
+matched the `STRIPE_WEBHOOK_SECRET` already set on EB, same as T3, so no
+`eb setenv` was needed) — all four events
+(`payment_intent.created/succeeded`, `charge.succeeded/updated`) returned
+`200`. `GET /bookings/events/{id}/tickets` confirmed the ticket flipped
+`held` → `booked`. Five new screenshots captured to
+`docs/report/assets/demo/`. Instance stopped again afterward
+(`aws ec2 stop-instances`, same instance ID retained afterward — a second
+live confirmation of the corrected procedure, beyond P10.T4's original
+one) per the standing session-end discipline. Session EC2 runtime:
+≈11m41s (CloudTrail-timestamped), ≈$0.035 — folded into Deployment Flow's
+cost writeup as a second labeled line item, not merged silently into
+P10's original figures.
+
+`docs/report/demo-script.md` documents the reproducible script itself
+(prerequisites, numbered steps, what it deliberately doesn't cover) plus
+this run's live-run record.
+
+`docs/report/README.md`'s chapter table updated for all five touched/new
+rows (Project Description, Deployment Flow, Conclusion, Abstract, and a
+new Demo Script row). Cross-doc staleness sweep: grepped for any other
+doc still describing these chapters as "blocked on P10" or "not
+started" — none found outside historical build-log entries, correctly
+left alone. No decisions-log or `CLAUDE.md` delta this pass — pure
+content work plus a routine, already-decided AWS operational action, no
+new architecture or convention.
+
+`docs/phases/phase-11-kickoff.md`'s "Blocked on P10" section and overall
+status checkbox updated to reflect all of it done, with this file's own
+exit-checklist items checked off with evidence.
