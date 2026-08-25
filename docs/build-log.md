@@ -5544,3 +5544,44 @@ new architecture or convention.
 `docs/phases/phase-11-kickoff.md`'s "Blocked on P10" section and overall
 status checkbox updated to reflect all of it done, with this file's own
 exit-checklist items checked off with evidence.
+
+## 2026-08-25 — Rendering Class Diagrams and Database Schema Design to static images
+
+Ahead of handing `docs/report/*.md` to the separate Claude.ai Project for
+the template stitch, checked what that pass would actually need as
+embeddable figures. Both `class-diagrams.md` (5 diagrams) and
+`database-schema-design.md` (3 diagrams) already carried real Mermaid
+`classDiagram`/`erDiagram` source under each service/database heading —
+nothing needed designing from scratch — but no static image file existed
+anywhere in the repo to embed into a Word document; Mermaid syntax alone
+isn't renderable there.
+
+No Mermaid CLI (`mmdc`) or Node/npm was available on this machine. Built a
+local HTML page loading `mermaid.js` from a CDN (confirmed this machine
+has outbound internet access first), with all 8 diagrams as
+`<pre class="mermaid">` blocks, served over a throwaway local HTTP server
+(Playwright's browser tooling blocks `file://` navigation, so a real
+`http://127.0.0.1` server was needed). Extracted each rendered `<svg>`
+element's `outerHTML` via `browser_evaluate` for a lossless vector
+version, then discovered and fixed one real bug in that same pass: the
+tool JSON-stringified the returned SVG text before saving it to disk,
+corrupting all 8 files (escaped quotes/newlines, invalid XML) — caught by
+validating each with `xml.etree.ElementTree.parse`, fixed by JSON-decoding
+and rewriting all 8. A second real issue surfaced generating PNG
+fallbacks: initial element screenshots came out at ~340×190px regardless
+of the diagram's actual content size — traced to Mermaid's rendered
+`<svg width="100%">` sizing against an `inline-block` wrapper with no
+explicit width, a classic CSS circular-percentage-sizing collapse to the
+browser's ~300×150 replaced-element default. Fixed by setting each SVG's
+`width`/`height` attributes explicitly from its own `viewBox` before
+re-screenshotting; final PNGs range from 766×1057 to 2887×1223px,
+confirmed sharp by visual inspection of all 8.
+
+All 16 files (`assets/diagrams/{class,db}-*.{png,svg}`) referenced inline
+from both chapters (a PNG image embed plus a note pointing to the SVG for
+a vector version, right above each diagram's existing Mermaid source, not
+replacing it), both chapters' status lines and the `docs/report/README.md`
+table updated to reflect the figures now being render-ready rather than
+Mermaid-source-only. No decisions-log or `CLAUDE.md` delta — tooling
+mechanics for an existing report-assembly step, not a new architecture or
+convention.
