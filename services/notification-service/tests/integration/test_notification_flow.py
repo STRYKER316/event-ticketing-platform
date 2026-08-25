@@ -138,6 +138,39 @@ async def test_forced_failure_produces_retry_envelope_with_attempt_two(
         await retry_consumer.stop()
 
 
+async def test_retry_consumer_redelivery_of_same_message_is_a_safe_no_op(
+    kafka_container, kafka_producer: AIOKafkaProducer, fast_retry_settings, running_retry_consumer
+):
+    # Same idempotency claim as NotificationConsumer's own redelivery test above (decisions-log §17) — RetryConsumer has no dedup guard either, so this tests it rather than assuming it.
+    booking_id = str(uuid.uuid4())
+    envelope = RetryEnvelope(
+        attempt=1,
+        original={"action": "booking_confirmed", "booking_id": booking_id, "reason": None},
+        last_error="simulated upstream failure for test_retry_consumer_redelivery_of_same_message_is_a_safe_no_op",
+    )
+    payload = envelope.model_dump_json().encode()
+    dlq_consumer = await make_topic_consumer(kafka_container, NOTIFICATION_DLQ_TOPIC)
+    try:
+        with structlog.testing.capture_logs() as captured:
+            await kafka_producer.send_and_wait(NOTIFICATION_RETRY_TOPIC, key=booking_id.encode(), value=payload)
+            await kafka_producer.send_and_wait(NOTIFICATION_RETRY_TOPIC, key=booking_id.encode(), value=payload)
+
+            async def delivered_twice() -> bool:
+                deliveries = [
+                    entry
+                    for entry in captured
+                    if entry.get("event") == "notification_delivered" and entry.get("booking_id") == booking_id
+                ]
+                return len(deliveries) >= 2
+
+            await _wait_until(delivered_twice, timeout=10)
+
+        # Both deliveries succeed independently — a safe no-op means no DLQ entry for this booking.
+        await _assert_no_matching_record(dlq_consumer, booking_id, timeout=3)
+    finally:
+        await dlq_consumer.stop()
+
+
 async def test_retry_consumer_recovers_and_does_not_republish_to_dlq(
     kafka_container,
     kafka_producer: AIOKafkaProducer,
