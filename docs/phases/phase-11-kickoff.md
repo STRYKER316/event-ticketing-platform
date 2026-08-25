@@ -167,46 +167,58 @@ verification), not just the mechanism description.
 
 ---
 
-## Blocked on P10 — not started this pass
+## Blocked on P10 — resolved 2026-08-25, once P10 closed
 
-Left untouched, explicitly, not silently skipped:
+Phase 10 finished 2026-08-24; this follow-up pass ran the day after and
+closed every item below except the one explicitly out of scope for this
+repo:
 
-- **Deployment Flow chapter** — no content exists; needs P10.T1–T4's real
-  evidence (EB config, security groups, budget alert, the deployed smoke
-  test, cost writeup). Starts once P10 runs.
-- **Abstract** (P11.T1) — written last, once every other chapter
-  (including Deployment Flow) is in its final state.
-- **Conclusion's takeaways/applications** (P11.T3) — needs the finished
-  report to take stock of. The Limitations/Future Work half (§26's
-  pull-list) could reasonably start now since it doesn't depend on P10,
-  but is left for the follow-up pass alongside the takeaways half so the
-  chapter is written in one coherent sitting rather than two disjoint
-  ones — revisit this call if the user wants Limitations/Future Work
-  drafted independently sooner.
+- **Deployment Flow chapter** — done. Full topology, the three
+  localhost-fix gaps, secrets/security groups, the Budgets alert, the
+  validation-run screenshots, the real §12/§13 ASG stop/terminate
+  correction, and a Measured cost writeup, all built from P10.T1–T4's
+  real evidence. `docs/report/deployment-flow.md`.
+- **Abstract** (P11.T1) — done, written last once every other chapter
+  (including Deployment Flow and Conclusion) was in its final state.
+  `docs/report/abstract.md`.
+- **Conclusion's takeaways/applications** (P11.T3) — done, alongside the
+  Limitations/Future Work half (§26's pull-list) in one coherent sitting,
+  as originally planned above. `docs/report/conclusion.md`.
+- **P11.T5** (demo script + recorded walkthrough) — done. The EB instance
+  was restarted using the corrected pause/resume procedure (§13
+  amendment; same instance ID retained, confirmed via
+  `describe-auto-scaling-groups` before and after), a full
+  browse→login→hold→pay→confirm round trip was run live against the
+  deployed CNAME as `alice` on a fresh seat (distinct from P10.T3's),
+  Stripe test-mode webhook delivery confirmed the ticket flipped
+  `held`→`booked`, five new screenshots were captured, and the instance
+  was stopped again afterward per the standing session-end discipline.
+  `docs/report/demo-script.md`; the additional EC2 runtime (≈12 minutes,
+  ≈$0.035) is folded into Deployment Flow's cost writeup as a second,
+  clearly-labeled line item rather than silently merged into P10's
+  original figures.
 - **P11.T1's "stitch into template" step and all of P11.T4** (formatting
   pass — Times New Roman, 14pt/12pt, margins, per-chapter figure/table
-  numbering, 40-page check) — not this repo's job at all, per the
-  decisions-log §27 amendment's responsibility split. Hand the finished
-  `docs/report/*.md` set to the Claude.ai Project once P11a–d and the
-  post-P10 items above are done.
-- **P11.T5** (demo script + recorded walkthrough) — the graded demo runs
-  against the deployed instance per Phase 10's own goal; starts once P10
-  is live.
+  numbering, 40-page check) — still not this repo's job, per the
+  decisions-log §27 amendment's responsibility split. The finished,
+  gap-free `docs/report/*.md` set (now including Deployment Flow,
+  Conclusion, Abstract, and Demo Script) is ready to hand to the separate
+  Claude.ai Project for that pass.
 
 ---
 
 ## Phase 11 overall status
 
-- [ ] **Phase 11 is NOT complete.** The partial-pass checklist immediately
-      below is fully checked off, but it covers only P11a-P11d — the
-      content-polishing tasks that don't depend on P10. Everything in
-      the "Blocked on P10" section above (the Deployment Flow chapter,
-      the Abstract, Conclusion's takeaways, the template/formatting
-      handoff to the Claude.ai Project, and the demo script) is still
-      outstanding and cannot start until Phase 10 (AWS Elastic Beanstalk
-      Deployment) finishes and produces its evidence. Leave this box
-      unchecked until a follow-up session picks up the blocked items
-      once P10 closes and Phase 11 is actually done end to end.
+- [x] **Phase 11 is complete, for everything this repo owns.** P11a-P11d
+      (2026-08-23) plus this repo's entire "Blocked on P10" list
+      (2026-08-25 — Deployment Flow, Conclusion, Abstract, the demo
+      script and its live-recorded walkthrough) are all done, each with
+      real evidence, not just described. The one remaining item —
+      P11.T1's literal template stitch and all of P11.T4's formatting
+      pass — was never this repo's job (decisions-log §27 amendment) and
+      belongs to the separate Claude.ai Project once handed the finished
+      `docs/report/*.md` set. See "2026-08-25 — P11 follow-up pass exit
+      checklist" below for evidence on the second half specifically.
 
 **Note, 2026-08-23:** a separate, user-requested content-quality pass ran
 after the P11a-P11d tasks above closed — a review of all seven then-drafted
@@ -282,6 +294,82 @@ Conclusion's takeaways, the template/formatting handoff, and the demo
 script. Those get their own follow-up kickoff (or an addendum here) once
 P10 closes.
 
-**Next:** Phase 10 — AWS Elastic Beanstalk Deployment (still the next
-phase in the locked build order); then the blocked P11 items above,
-picked up once P10's evidence exists.
+---
+
+## 2026-08-25 — P11 follow-up pass exit checklist
+
+Phase 10 closed 2026-08-24; this pass ran the following day and closed
+every item the "Blocked on P10" section above had deferred, except the
+one item that was never this repo's job.
+
+- [x] Deployment Flow chapter written from P10.T1–T4's real evidence
+      (topology, the three localhost-fix gaps, secrets/security groups,
+      the Budgets alert, the validation-run screenshots, the real
+      §12/§13 ASG stop/terminate correction, a Measured cost writeup).
+      Evidence: `docs/report/deployment-flow.md`, commit `cec77ad`.
+- [x] Project Description's missing Phase 10 narrative paragraph added
+      (mirroring P11a's P4-P6 backfill); status line now reads "covers
+      Phases 0-10, no narrative gap." Evidence: `docs/report/project-description.md`,
+      commit `cec77ad`.
+- [x] Conclusion chapter written (takeaways, real-world applications,
+      Limitations/Future Work lifted from decisions-log §26's pull-list),
+      in one sitting as originally planned. Evidence:
+      `docs/report/conclusion.md`, commit `cec77ad`.
+- [x] Abstract written last, once every other chapter was in its final
+      state. Caught and fixed one real accuracy bug during drafting
+      itself (a benchmark tail-latency claim that overclaimed beyond
+      what `feature-development-process.md`'s own "Honest reading"
+      section supports) before any external review ran. Evidence:
+      `docs/report/abstract.md`, commit `cec77ad`.
+- [x] Adversarial accuracy review (a fresh subagent, not self-review) run
+      against all four touched files, cross-checking every number,
+      resource name, section citation, and "verified/measured" claim
+      against decisions-log.md, the Phase 10 build-log entry,
+      phase-10-kickoff.md, and feature-development-process.md. Found and
+      fixed one real inconsistency (a decisions-log section count, 26 vs.
+      the correct 27); everything else confirmed accurate. Evidence:
+      fix applied directly to `docs/report/conclusion.md`, folded into
+      commit `cec77ad`.
+- [x] P11.T5 — demo script written and its live walkthrough actually run
+      against the deployed EB environment, not just described: EB
+      instance restarted via the corrected pause/resume procedure (same
+      instance ID retained, confirmed before and after via
+      `describe-auto-scaling-groups`), a full browse→login→hold→pay→confirm
+      round trip run live via Playwright as `alice` on a fresh seat
+      (General, Row 3, Seat 3-3 — distinct from P10.T3's seat 1-2),
+      Stripe test-mode webhook delivery confirmed (`GET
+      /bookings/events/{id}/tickets` showing `booked`), five screenshots
+      captured, instance stopped again afterward per session-end
+      discipline. Evidence: `docs/report/demo-script.md` and
+      `docs/report/assets/demo/`, commit `6462d84`.
+- [x] Deployment Flow's cost writeup updated with the demo session's real
+      EC2 runtime (≈11m41s, CloudTrail-timestamped, ≈$0.035) as a second,
+      clearly-labeled line item rather than merged silently into P10's
+      original figures. Evidence: `docs/report/deployment-flow.md`,
+      commit `cec77ad`.
+- [x] `docs/report/README.md`'s chapter-status table updated for all five
+      touched/new rows (Project Description, Deployment Flow, Conclusion,
+      Abstract, and a new Demo Script row). Evidence: commits `6462d84`
+      and `cec77ad`.
+- [x] Cross-doc staleness sweep — grepped for any other doc still
+      describing these chapters as "blocked on P10" or "not started."
+      None found outside historical build-log entries (correctly left
+      alone — past-tense record of what was true when written).
+      `architecture.html` checked too: it doesn't track report/demo
+      status at all (topology/flow-only), and nothing architectural
+      changed this pass, so no update needed there.
+- [x] `decisions-log.md` delta check — none expected, none made. This
+      pass was content-polishing plus a routine, already-decided AWS
+      operational action (the corrected stop/start procedure §13 already
+      documents), not a new architecture or scope decision.
+- [x] `CLAUDE.md` self-update check — none expected, none made. No new
+      convention, command, or structural change this pass.
+- [x] Build-log entry appended for this pass. Evidence:
+      `docs/build-log.md`, 2026-08-25 "Phase 11 follow-up pass" entry.
+
+**Next:** the finished, gap-free `docs/report/*.md` set (Project
+Description through Demo Script, all in their final state) is ready to
+hand to the separate Claude.ai Project for the template stitch and
+formatting pass (P11.T1's literal stitch step, all of P11.T4) — the one
+remaining Phase 11 item, and never this repo's job per the decisions-log
+§27 amendment.
