@@ -5736,3 +5736,75 @@ afterward; confirmed via the ASG that the same instance ID stayed
 
 No decisions-log delta. `CLAUDE.md` self-check: no convention changes,
 just verification work.
+
+## 2026-08-25 — Final sanity pass, part 3: static analysis, live security pass, fresh-clone boot
+
+Ran the remaining angles not yet covered: static analysis/dependency
+tooling (none of it exercised yet this project), a live security/IDOR
+pass against real running services, and the genuinely-fresh-checkout
+boot test the phase-end checklist has carried as a standing,
+never-yet-executed lower-priority item since Phase 0.
+
+**Static analysis and dependency audit**: no `ruff`/`mypy` configured
+anywhere in the `uv` workspace — confirmed deliberate (never in the
+documented stack), not a gap. Frontend has real tooling that was never
+run this project: `npm run lint` (`oxlint`) and `npm test` (`vitest`)
+both failed initially on a stale local `node_modules` (a known
+npm/oxlint native-binding bug, `npm i` after removing
+`node_modules`/`package-lock.json` is the documented fix) and an
+incompatible local Node version (v22.7.0 vs. the `>=22.12.0` engines
+range) — fixed locally by switching to Node v26.1.0 via `nvm` and
+reinstalling; the regenerated `package-lock.json`'s incidental
+transitive-dependency bump (oxlint 1.79.0 → 1.80.0) was reverted
+afterward since it wasn't an intentional change. With that fixed: lint
+clean, `tsc -b && vite build` clean, 13/13 vitest tests pass, `npm
+audit` reports 0 vulnerabilities. `pip-audit` against both the
+`services` workspace's resolved 218-package set and `/benchmark`'s
+separate one: 0 known vulnerabilities in either.
+
+**Live security/IDOR pass** (real running stack, real tokens, not unit
+tests): role escalation (alice, no organizer role, tried `POST
+/venues` and `POST /events`) — 403 both times. Cross-organizer
+ownership bypass (carol, a real organizer but not the owner, tried
+PATCH/DELETE/seat-map-PUT on bob's event) — 403 "not the owning
+organizer" every time, confirming role-check-is-not-enough is real,
+not just documented. Cross-customer IDOR (bob tried `/pay` and
+`/cancel` on a booking_id belonging to alice) — 404 "booking not
+found" both times, not 403 — deliberately doesn't confirm the booking
+even exists to an unauthorized caller. No-auth, garbage-bearer-token,
+and a real token with one signature byte flipped — all 401. A crafted
+`alg: none` unsigned JWT carrying a forged `organizer` role — 401
+"missing kid" (`shared_auth` requires a `kid` to resolve the JWKS key,
+which incidentally blocks this attack class before `alg` is ever
+inspected). SQL-injection-style search query — 200, empty results, no
+error (ORM-parameterized queries and Elasticsearch's own query DSL,
+not string-built SQL, by construction). Malformed UUID path param —
+clean 422. Stored-XSS payload (`<script>alert(1)</script>` as an event
+title) — backend correctly stores it as opaque data (sanitization
+isn't its job); confirmed live in a real browser via Playwright that
+the frontend renders it as literal escaped text with zero script
+execution and zero console errors, matching the `grep`-confirmed fact
+that `dangerouslySetInnerHTML`/`innerHTML` appear nowhere in
+`frontend/src`.
+
+**Fresh-clone boot test**: `git clone` to a scratch directory, then
+followed the README's documented path exactly as a new developer
+would — `make up` (auto-copies `.env.example` → `.env`), `make
+migrate`, `make seed`. First attempt accidentally reused the original
+checkout's named volumes (`docker-compose.yml` pins a top-level
+`name: event-ticketing-platform`, so Compose project naming collided
+regardless of directory) — redone correctly with
+`COMPOSE_PROJECT_NAME` overridden to force genuinely separate, empty
+volumes. `GET /events` correctly 500'd before migration (relation does
+not exist — an unrelated, expected error, not a regression of this
+session's earlier Postgres-down fix, which only targets
+connection-establishment failures). All three services' Alembic chains
+applied cleanly against an empty database; seed populated 2 venues/3
+performers/3 events/3 seat maps; post-seed, `/events`, `/search`
+(confirming Kafka point 1 fired), the frontend, and all three
+Postgres-backed `/healthz` endpoints all came back correctly. Torn
+down with `-v` afterward (safe — these were scratch-only volumes under
+the isolated project name); confirmed the original
+`event-ticketing-platform_*` volumes were never touched.
+
+No decisions-log delta. `CLAUDE.md` self-check: no convention changes.
