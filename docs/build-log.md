@@ -5932,3 +5932,51 @@ No decisions-log delta. `CLAUDE.md` self-check: no convention changes.
 This closes out the sanity-pass punch list — every angle from the
 original checklist plus everything found along the way has now been
 either live-verified clean or found-and-fixed.
+
+## 2026-08-25 — Final sanity pass, part 6: closing the two container-hardening findings
+
+Went back and fixed the two items part 4 had noted but left alone
+(non-root user, `HEALTHCHECK`) — both were low-severity/zero-current-
+impact, not required, but cheap enough to close out rather than leave
+as accepted gaps.
+
+**Non-root containers**: each of the five backend Dockerfiles now
+creates a `--system` `appuser` (no login shell, no home dir), `chown -R`s
+`/workspace` after `uv sync` (which still needs to run as root — the venv
+and installed packages are created before the ownership handoff), then
+`USER appuser` before `CMD`. Frontend's `nginx:alpine` base already runs
+its worker processes as an unprivileged `nginx` user out of the box
+(only the master process, which needs to bind port 80, stays root) — no
+change needed there. Rebuilt all five images `--no-cache`, brought the
+full stack up, and confirmed via `docker compose exec <service> whoami`
+that every one now reports `appuser` (uid 999) — then a full smoke test
+(`/events`, `/search`, `/healthz` × 3 via Traefik, plus a direct in-
+container `/healthz` check for search-service and notification-service,
+which aren't Traefik-routed for that path) confirmed nothing broke.
+
+**`HEALTHCHECK`**: added to all five FastAPI services in
+`docker-compose.yml` (matching the project's existing convention of
+defining healthchecks there, not in the Dockerfiles, same as
+postgres/redis/mongo/elasticsearch/kafka/keycloak already do) — a
+`python -c "import urllib.request; ..."` one-liner against each
+service's own `/healthz`, since `python:3.12-slim` has no `curl`/`wget`
+and installing one just for this felt like the wrong tradeoff.
+`interval: 5s, timeout: 5s, retries: 10, start_period: 10s`, matching
+the existing infra services' interval/timeout/retries convention.
+Noticed along the way that `booking-service`'s `depends_on:
+payment-service` was the only dependency anywhere in the file still on
+`condition: service_started` rather than `service_healthy` — almost
+certainly because payment-service had no healthcheck to depend on
+before now. Upgraded it to `service_healthy` too, since booking-service
+calls payment-service synchronously on `/pay` and waiting for genuine
+readiness rather than just "container started" is strictly better.
+Brought the stack up fresh (not just rebuilt) to verify: all five
+FastAPI services report `(healthy)` in `docker compose ps`, and
+`booking-service` visibly waited for `payment-service`'s healthcheck to
+pass (`Waiting` → `Healthy` → booking-service `Starting`) before
+starting, confirming the upgraded dependency condition actually took
+effect. Full smoke test clean afterward.
+
+No decisions-log delta. `CLAUDE.md` self-check: no convention changes —
+this follows the existing healthcheck-in-compose pattern rather than
+introducing a new one.
