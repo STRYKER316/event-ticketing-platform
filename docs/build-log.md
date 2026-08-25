@@ -5635,3 +5635,16 @@ Updated `docs/report/testing-strategy.md`'s Round 7 entry and
 describe the fix instead of an accepted gap. No decisions-log delta —
 this is a bug fix within an existing exception-handling convention,
 not a new architectural decision.
+
+The audit's two remaining lower-severity findings were also closed
+out. `event-service/app/db/base_repository.py`'s `get_many_by_id` did
+an unbatched `.in_()`, unlike booking-service's equivalent — copied
+`chunking.py` and applied the same `chunked()` pattern for
+consistency (67 unit tests still pass). Payment-service's "thin unit
+coverage" turned out to be a false alarm on closer read: 14 unit
+tests already cover the full charge/webhook/refund idempotency
+contract, and the integration suite adds 10 more including real
+concurrent-race tests and explicit Kafka-redelivery-safe-no-op
+coverage for `BookingCancelledConsumer` — the low file count is just
+this service having one Manager and one consumer, not a coverage
+gap. No changes made there.
