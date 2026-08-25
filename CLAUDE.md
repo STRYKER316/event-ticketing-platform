@@ -280,6 +280,16 @@ issues worth locking in against:
 
 ## Conventions
 
+- **The root `README.md` never carries phase-by-phase build status.** It's a
+  professional, current-state project overview (features, architecture,
+  local dev, testing, docs pointers) for anyone landing on the repo — not a
+  build diary. Phase history, bug narratives, and CHECKPOINT review findings
+  belong in `docs/build-log.md`; each phase's own progress belongs in its
+  `docs/phases/phase-N-kickoff.md`. Established 2026-08-25 after the README
+  had accumulated a "Status" section with a full paragraph per phase (bug
+  lists, review-round counts, decisions-log section references) — removed
+  and replaced with a concise Features/Architecture/Testing/Documentation
+  structure instead. Don't let per-phase status paragraphs creep back in.
 - **Keep every folder scannable at a glance — group into subfolders before a flat
   listing turns into a pile.** If a folder is about to hold more than ~6–8 files of
   the same kind (one per phase, one per component, one per migration, etc.), give
