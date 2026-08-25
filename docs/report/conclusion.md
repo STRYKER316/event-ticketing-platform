@@ -13,27 +13,25 @@ surfaced a few things that are easy to state as principles but only
 really land once a real bug forces the point:
 
 - **Database-per-service is only as real as its enforcement.** Every
-  service in this system owns its datastore outright, and cross-service
-  facts move exclusively through five explicitly-scoped Kafka integration
-  points (§7) — with exactly one narrow, deliberate exception (§9
-  amendment). Holding that line took active discipline, not just an
-  initial design decision: Payment Service genuinely cannot check booking
-  ownership itself, which is what forced the one synchronous call to
-  exist in the first place, fronted by Booking Service rather than
+  service owns its datastore outright, and cross-service facts move
+  exclusively through five explicitly-scoped Kafka integration points
+  (§7) — with exactly one narrow, deliberate exception (§9 amendment).
+  Holding that line took active discipline: Payment Service genuinely
+  cannot check booking ownership itself, which is what forced the one
+  synchronous call to exist, fronted by Booking Service rather than
   reached directly. A boundary that can't be crossed even when it would
-  be momentarily convenient is what makes the boundary mean something.
+  be momentarily convenient is what makes it mean something.
 - **"Idempotent consumer" is a testable claim, not a design aspiration.**
-  Kafka's at-least-once delivery means every one of this system's
-  consumers must treat redelivery as a safe no-op — and the project's
-  testing strategy backs that claim with an explicit coverage matrix
+  Kafka's at-least-once delivery means every consumer must treat
+  redelivery as a safe no-op — backed by an explicit coverage matrix
   across all five integration points (P9.T1), not an assumption. The
   places this discipline slipped even briefly — a consumer's own DB write
   gated on the wrong commit semantics, a DTO tightening that broke an
   internal call site the same guard was meant to protect — are recorded
-  honestly in Testing Strategy and CLAUDE.md's conventions rather than
+  honestly in the Testing Strategy documentation (Appendix A) and CLAUDE.md's conventions rather than
   quietly fixed and forgotten, because the failure mode (a redelivered
-  message doing real damage) is exactly the kind of bug that only shows
-  up under production load, not a local demo.
+  message doing real damage) only shows up under production load, not a
+  local demo.
 - **Concurrency correctness has to be proven under real contention, not
   argued from the code.** The dual seat-hold mechanism (§6) is this
   project's centerpiece guarantee — selling the same seat twice would
@@ -43,58 +41,54 @@ really land once a real bug forces the point:
   implementation, and the Feature Development Process chapter's Phase 8
   benchmark then measured both under genuine concurrent load rather than
   asserting either was "fine." A correctness claim about concurrent
-  systems that hasn't been run under actual concurrent load is not yet a
-  verified claim, only a plausible one.
+  systems that hasn't been run under actual concurrent load is only
+  plausible, not yet verified.
 - **A local-first workflow makes cloud deployment a late, thin, and
   therefore honest checkpoint.** Every phase before Phase 10 ran entirely
   against local Docker — real Postgres/MongoDB/Elasticsearch/Redis/Kafka
   via `testcontainers`, not mocks — so Phase 10's job was narrowly to
-  prove the already-correct system runs on real infrastructure, not to
-  debug application logic against AWS. It still found three real gaps
-  (hardcoded `localhost` URLs, a secure-context restriction on
-  `crypto.subtle`, EB's flat-bundle requirement) and one real
+  prove the already-correct system runs on real infrastructure. It still
+  found three real gaps (hardcoded `localhost` URLs, a secure-context
+  restriction on `crypto.subtle`, EB's flat-bundle requirement) and one
   operational surprise (an Auto Scaling Group replacing, not pausing, a
-  stopped instance) — proof that "it works locally" and "it works
-  deployed" are genuinely different claims, each needing its own
-  live verification, not one standing in for the other.
+  stopped instance) — proof that "works locally" and "works deployed"
+  are genuinely different claims, each needing its own live
+  verification.
 - **A locked decisions log is a discipline, not a straitjacket** — it
   held for 27 sections across the whole build, and every genuine
-  correction to it (the §7 Kafka-topic broadening, the §9 synchronous-call
+  correction (the §7 Kafka-topic broadening, the §9 synchronous-call
   exception, the §12/§13 Auto Scaling Group finding) is recorded as an
-  explicit, dated amendment rather than a silent edit, which is what
-  keeps the log trustworthy as a record of what was actually decided and
-  why, not just what's currently true.
+  explicit, dated amendment rather than a silent edit, keeping the log
+  trustworthy as a record of what was actually decided and why.
 
 ## Real-world applications
 
 The core problem this system solves — reserving a scarce, uniquely
 identified resource (a specific seat) under genuine concurrent demand,
 without overselling it — is not specific to event ticketing. The same
-shape shows up in hotel and short-term rental booking (a specific room,
-specific nights), restaurant reservation systems (a specific table, a
-specific time slot), airline seat selection, and any flash-sale
-e-commerce scenario where a fixed, small inventory faces a demand spike
-far larger than the inventory itself. The dual hold-strategy design in
-particular generalizes directly: a TTL-based hold (simple, no extra
-infrastructure, coarser expiry granularity) versus a distributed-lock
-hold (tighter expiry, needs Redis or an equivalent) is a real trade-off
-any of those systems would face, and this project's benchmark — not just
-its design — is the kind of evidence that trade-off decision should
-actually be made against.
+shape shows up in hotel/short-term-rental booking (a specific room,
+specific nights), restaurant reservations (a specific table, time slot),
+airline seat selection, and any flash-sale e-commerce scenario where a
+fixed, small inventory faces a demand spike far larger than itself. The
+dual hold-strategy design generalizes directly: a TTL-based hold (simple,
+no extra infrastructure, coarser expiry) versus a distributed-lock hold
+(tighter expiry, needs Redis or an equivalent) is a real trade-off any of
+those systems would face, and this project's benchmark — not just its
+design — is the kind of evidence that decision should be made against.
 
 More broadly, the event-driven integration pattern here (services owning
 their own data, propagating facts via Kafka rather than reaching into
 each other's databases) is the same shape used at production scale by
-real ticketing and e-commerce platforms specifically because it lets each
-service scale, fail, and deploy independently — a booking surge doesn't
-require search infrastructure to scale in lockstep, and a notification
-outage doesn't block a payment from completing. The one deliberate
-exception to that pattern (Booking Service's synchronous call into
-Payment Service, §9 amendment) is itself a realistic lesson: not every
-cross-service interaction fits the eventually-consistent shape Kafka is
-good at, and knowing when a synchronous call is the more honest design —
-rather than forcing everything through one integration style for
-consistency's sake — is itself a transferable judgment call.
+real ticketing and e-commerce platforms, because it lets each service
+scale, fail, and deploy independently — a booking surge doesn't require
+search infrastructure to scale in lockstep, and a notification outage
+doesn't block a payment from completing. The one deliberate exception to
+that pattern (Booking Service's synchronous call into Payment Service,
+§9 amendment) is itself a realistic lesson: not every cross-service
+interaction fits the eventually-consistent shape Kafka is good at, and
+knowing when a synchronous call is the more honest design — rather than
+forcing everything through one integration style for consistency's sake
+— is itself a transferable judgment call.
 
 ## Limitations
 

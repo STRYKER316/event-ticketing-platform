@@ -1,12 +1,12 @@
 # Technologies Used
 
 *Status: draft, running list — appended each phase per the DOCUMENT step.
-"Real-world framing" polish pass happens at P11.T2; until then this is
-accurate but unpolished. Entries below cover what Phases 0-4, 6, 8, and 7
-actually introduced and verified running — Stripe (Phase 4, verified live
-Phase 9) is the one entry that took until this session to have a real,
-non-placeholder-credential live verification behind it. AWS/Elastic
-Beanstalk remains correctly absent, pending Phase 10.*
+Condensed 2026-08-25 (report trim, phase 2): each entry's narration was
+cut to its essential what/why/verified-status claim, dropping blow-by-blow
+bug narratives already covered in Class Diagrams, Database Schema Design,
+or `docs/build-log.md` — no fact, number, or verification claim was
+removed, only the duplicate retelling of it. AWS/Elastic Beanstalk is
+covered by the Deployment Flow chapter rather than repeated here.*
 
 Each entry: what it is, why it was chosen over the alternatives considered,
 and its status in this build.
@@ -15,639 +15,331 @@ and its status in this build.
 
 **What:** a reverse proxy / API gateway that discovers backend services
 automatically by reading Docker labels on running containers, rather than
-requiring a static routing config file to be hand-maintained as services are
-added or removed.
+requiring a static routing config file to be hand-maintained.
 
-**Why:** chosen over Kong, Nginx, and AWS API Gateway specifically for that
-auto-discovery property — adding a new backend service means adding labels
-to its container definition, not editing a separate gateway config in
-lockstep. It behaves identically in local Docker Compose and in the
-eventual AWS deployment, which Kong (needing an extra datastore) and AWS API
-Gateway (no meaningful local equivalent) do not.
+**Why:** chosen over Kong, Nginx, and AWS API Gateway specifically for
+that auto-discovery property, and because it behaves identically in local
+Docker Compose and in the AWS deployment.
 
-**Status:** Implemented, Tested. Verified live: routes to `event-service`
-and, since Phase 2, `search-service` purely from Docker labels, no manual
-wiring; dashboard reachable; every route confirmed reachable only through
-Traefik, not by hitting a service directly on its container port.
-
-**Real-world caveat surfaced during the build:** on this development
-machine's Docker Desktop build, Traefik's embedded Docker client hardcodes
-an outdated initial API-version probe that the daemon rejected outright,
-breaking service discovery entirely until a small proxy was added in front
-of the Docker socket to normalize the request. Worth a mention as a concrete
-example of environment-specific integration friction that doesn't show up
-until you actually run the thing — see `docs/build-log.md`, P0.T5 entry, for
-the full diagnosis.
+**Status:** Implemented, Tested, Verified (live) — routes to all five
+backend services and the frontend purely from Docker labels, dashboard
+reachable, every route confirmed reachable only through Traefik, not by
+hitting a service directly on its container port. (A one-time Docker
+Desktop API-version incompatibility during setup was fixed with a small
+proxy in front of the Docker socket — see `docs/build-log.md`, P0.T5.)
 
 ## Keycloak (identity provider)
 
 **What:** a self-hosted, open-source identity and access management server
 implementing OpenID Connect. Runs here in development mode with its
-embedded database — appropriate for a capstone demo, explicitly not
-production-hardened (worth stating plainly in the report rather than
-implying otherwise).
+embedded database — not production-hardened, stated plainly rather than
+implied otherwise.
 
 **Why:** rather than hand-rolling authentication or offloading it to a
-managed third-party service, Keycloak lets the project demonstrate a real,
-standards-based auth flow: password-grant token issuance, RS256-signed
-JWTs, realm-scoped roles, and a JWKS endpoint services use to verify
-signatures without ever seeing user passwords.
+managed third-party service, Keycloak demonstrates a real, standards-based
+auth flow: password-grant token issuance, RS256-signed JWTs, realm-scoped
+roles, and a JWKS endpoint services use to verify signatures without ever
+seeing user passwords.
 
-**Status:** Implemented, Tested. A realm (`ticketing`) with `user` and
-`organizer` roles, a public PKCE-only frontend client, and a confidential
-password-grant client is imported automatically on container start. Verified
-live: password grant returns a token whose decoded claims carry the
-expected realm roles.
+**Status:** Implemented, Tested, Verified (live) — a realm (`ticketing`)
+with `user`/`organizer` roles and both a PKCE-only public client and a
+confidential password-grant client import automatically on container
+start; password grant returns a token with the expected realm roles.
 
 ## Shared JWT-validation dependency (`shared_auth`)
 
-**What:** a small internal Python package, built once and imported by every
-backend service, that fetches and caches Keycloak's public signing keys,
-validates a bearer token's signature/issuer/audience/expiry, and exposes two
-FastAPI dependencies — `get_current_user()` and a `require_role(...)`
-factory — as the single way any service authenticates or authorizes a
-request.
+**What:** a small internal Python package, built once and imported by
+every backend service, that fetches and caches Keycloak's public signing
+keys, validates a bearer token's signature/issuer/audience/expiry, and
+exposes `get_current_user()` and `require_role(...)` as the single way any
+service authenticates or authorizes a request.
 
-**Why:** with five independently-deployed backend services all needing to
-validate the same tokens against the same identity provider, implementing
-that logic five times would mean five chances for the validation logic to
-drift out of sync — a real, tested security-boundary bug class. Building it
-once as a shared dependency makes correctness (or a fix to it) apply
-uniformly across every service that imports it.
+**Why:** with five independently-deployed services all needing to
+validate the same tokens, implementing that logic five times would mean
+five chances for it to drift — a real security-boundary bug class.
+Building it once makes correctness apply uniformly.
 
-**Status:** Implemented, Tested. 28 pytest unit tests: the original 10
-(valid token, expired token, tampered token, wrong audience, wrong issuer,
-unknown signing key, missing required role, present required role,
-JWKS-URI override behavior) against a mocked JWKS endpoint with a real
-generated RSA keypair, plus 18 added during a retroactive review-gate pass
-(2026-08-15, see `docs/build-log.md`) that hardened the package past its
-Phase 0 walking-skeleton state: a genuine algorithm-confusion attack (a
-hand-constructed forged HS256-signed token using the RSA public key as the
-HMAC secret — PyJWT's own `encode()` refuses to build this via its normal
-API, so the forged JWS is built by hand, the way a real attacker would),
-missing-required-claim rejection, malformed-claims fail-closed behavior,
-and a full suite against the real `JWKSCache` (TTL expiry, unknown-kid
-refresh, key rotation, fetch-failure handling) via `httpx.MockTransport` —
-the original suite fully stubbed out `get_key()`, so this logic had zero
-real coverage until then. The same pass added: an `asyncio.Lock` around
-JWKS refresh (was vulnerable to a thundering-herd re-fetch and a racy
-double-client-creation window under concurrent requests), a minimum-
-refetch-interval throttle (an unauthenticated client sending garbage `kid`s
-could previously drive unbounded 1:1 request-to-Keycloak-fetch traffic),
-and a proper error boundary around JWKS fetch/parse failures (an IdP
-outage or malformed JWKS response previously crashed with an uncaught
-500 instead of a clean 503). No live Keycloak required to run the suite —
-also verified live, end-to-end,
-against a running Keycloak instance.
+**Status:** Implemented, Tested. 28 pytest unit tests against a mocked
+JWKS endpoint with a real generated RSA keypair, including a hand-built
+algorithm-confusion attack (RS256→HS256 key-confusion), missing-claim and
+malformed-claim rejection, and JWKS cache behavior (TTL expiry, key
+rotation, fetch-failure handling) via `httpx.MockTransport`. Hardened past
+its Phase 0 walking-skeleton state with an `asyncio.Lock` around JWKS
+refresh, a minimum-refetch throttle, and a proper error boundary around
+JWKS fetch failures (previously an uncaught 500). Also verified live,
+end-to-end, against a running Keycloak instance.
 
 ## FastAPI + `prometheus-fastapi-instrumentator` + `structlog`
 
-**What:** the async Python web framework instantiated services are built
-on, paired with automatic Prometheus metrics instrumentation and structured
-(JSON) application logging.
+**What:** the async Python web framework every service is built on,
+paired with automatic Prometheus metrics and structured (JSON)
+application logging.
 
-**Why:** async I/O throughout was a deciding architectural factor for this
-project (over a synchronous framework), so the web framework, database
-driver, and logging all had to support it natively rather than blocking the
-event loop. JSON logging over plain text specifically so log lines are
-machine-parseable — a real requirement once there is more than one service
-producing logs to correlate.
+**Why:** async I/O throughout was a deciding architectural factor (§3),
+so the framework, DB driver, and logging all had to support it natively.
+JSON logging specifically so log lines are machine-parseable across five
+services.
 
-**Status:** Implemented, Tested, Verified. Verified that both
-application-level log calls and the framework's own request-access logging
-render as JSON — initially only the former did, until the logging
-configuration was extended to route stdlib/uvicorn logging through the same
-formatter (see build-log, P0.T5).
-
-**Correction (P9.T2):** this section previously claimed "`/metrics`
-confirmed scraping through the gateway" — true only for `event-service`,
-which happens to hold Traefik's catch-all `PathPrefix('/')` router
-(priority 15, the lowest of the six routers, per `GET :8080/api/http/routers`
-— every other service's more specific `PathPrefix` rule outranks it, per
-CLAUDE.md's Traefik-routing convention, but none of those rules match the
-literal path `/metrics`, so a request to it always falls through to
-`event-service`'s router regardless of which service's metrics were
-intended). The other four services' `/metrics` endpoints are not reachable
-through the gateway at all; Prometheus's own scrape config
-(`infra/prometheus/prometheus.yml` — its five-target shape was already
-correct as of this phase, though the file itself gained a target each time
-a new service shipped: `payment-service` in Phase 4, `notification-service`
-in Phase 5) already reflects this correctly — it targets each service directly on the Docker network
-(`booking-service:8003`, etc.), not through Traefik. Confirmed live this
-phase via Prometheus's targets API (`GET /api/v1/targets`): all five
-services report `health: "up"` from that direct-network scrape path.
-`/metrics` on all five was also confirmed independently reachable and
-correctly service-scoped (verified both through the gateway for
-`event-service` and directly on each service's own container port for the
-other four), so the underlying instrumentation was never the gap — only
-this section's overbroad claim about how the gateway routes it was.
-
-**Log-level discipline audit (P9.T2):** every `logger.debug/info/warning/
-error/critical` call site across all five services (67 call sites total —
-16 info, 34 warning, 11 error, 6 critical, 0 debug, per
-`grep -rE "logger\.(debug|info|warning|error|critical)\(" */app`)
-was read against CLAUDE.md's log-level rule — debug for normal flow,
-info for notable events, warning for expected/handled failures (validation
-rejections, business-rule raises), error/critical reserved for genuine
-incidents. Found one real inconsistency: `payment-service`'s
-`PaymentManager._submit_to_stripe` (the synchronous charge path) logged a
-`stripe.error.StripeError` at `error`, while
-`_submit_refund_to_stripe` — catching the identical exception type a few
-methods away in the same file — already logged it at `warning`, with an
-explicit comment reasoning that a Stripe-side decline or failure is
-"expected, handled... not a system incident." The charge path had no such
-reasoning and was simply inconsistent with its sibling. Fixed by aligning
-`_submit_to_stripe`'s log call to `warning`, matching the refund path's
-already-correct precedent. No other call site was misclassified — the
-retry-ladder pattern shared by `booking-service`, `payment-service`, and
-`notification-service`'s Kafka consumers (`warning` while retrying,
-`critical` once retries are exhausted) and every Manager's business-rule
-rejection (`warning`, never `error`, across `event_manager.py`,
-`booking_manager.py`, and `payment_manager.py`) were already consistent
-with the rule as found.
+**Status:** Implemented, Tested, Verified. Both application-level log
+calls and the framework's own request-access logging render as JSON.
+`/metrics` is reachable on all five services (directly on each service's
+container port, and through the gateway only for `event-service`, which
+holds Traefik's catch-all router — Prometheus's own scrape config already
+targets each service directly on the Docker network, so this was never a
+real gap, only a stale claim in an earlier draft of this section,
+corrected P9.T2). A log-level discipline audit (P9.T2, 67 call sites
+across all five services) found and fixed one inconsistency
+(`payment-service`'s charge-path Stripe-error log level, aligned to match
+its already-correct refund-path sibling).
 
 ## PostgreSQL, database-per-service credential isolation
 
 **What:** one Postgres container hosting three logically separate
 databases (`event_db`, `booking_db`, `payment_db`), each with its own
-dedicated user and password, initialized from environment-supplied
-credentials rather than hardcoded values.
+dedicated user and password.
 
 **Why:** database-per-service isolation is a locked architectural
-invariant of this project — no service is permitted to query another
-service's tables directly. Per-database credentials (rather than one shared
-superuser) makes that boundary enforceable at the database layer, not just
-by convention.
+invariant (§8) — per-database credentials make that boundary enforceable
+at the database layer, not just by convention.
 
-**Status:** Implemented, Tested. Verified via direct `psql` inspection that
-all three databases exist with correct per-database ownership.
+**Status:** Implemented, Tested, Verified — all three databases exist with
+correct per-database ownership, confirmed via direct `psql` inspection.
 
 ## Apache Kafka (KRaft mode)
 
-**What:** the event-streaming broker used for the project's five
-cross-service integration points, running in KRaft mode (no separate
-Zookeeper process) as a single broker for local development.
+**What:** the event-streaming broker behind the project's five
+cross-service integration points, running in KRaft mode (no Zookeeper) as
+a single local broker.
 
-**Why:** the architecture's cross-service communication is Kafka-only by
-design — no service calls another service synchronously, and no service
-shares another's database. KRaft mode over Zookeeper-based Kafka
-specifically to keep the local resource footprint down (one fewer
-long-running process) without giving up anything this project actually
-needs from Kafka.
+**Why:** cross-service communication is Kafka-only by design (with one
+narrow exception, §9). KRaft mode keeps the local resource footprint down
+by one fewer long-running process.
 
-**Status:** Implemented, Tested (Phase 2 — first real integration point,
-event↔search, §7.1; Phase 3 adds integration point #2, event→booking
-provisioning — same producer, a second independent consumer group
-(`booking-service`) reading the same topic, proving the one-producer/
-many-independent-consumer-groups shape scales past the first pair without
-any change to the producer side). Event Service's `aiokafka` producer publishes a keyed
-message (event ID as the partition/idempotency key) on the event's `publish`
-action and on any update while `PUBLISHED`; Search Service's consumer
-processes it into Elasticsearch. (A `PUBLISHED` event can no longer be
-deleted at all as of Phase 3 — `EventProducer.publish_deleted` was removed
-as dead code once that path became unreachable — so this producer only
-ever emits `upserted`, never `deleted`, going forward; see the Booking
-Service class-diagram note.) Idempotency verified two ways: unit tests
-against a mocked repository, and live against the real stack by hand-
-replaying an identical Kafka message via `kafka-console-producer` and
-confirming the document count never grows past one (an upsert-by-ID
-overwrites; `_version` increments, no duplicate). A redelivered delete
-against an already-deleted document is caught and logged as a no-op rather
-than raising. `testcontainers`' `KafkaContainer` (Confluent image, KRaft
-mode) backs the integration suite — a different image than the compose
-stack's `apache/kafka`, since that container helper's bootstrap scripts are
-Confluent-specific; noted as a test-infrastructure detail, not a production
-concern.
-
-**Phase 3 addendum, corrected in Phase 6:** this section originally
-claimed Booking Service's own integration suite passed
-`KafkaContainer("apache/kafka:3.8.0")` directly, no Confluent substitute
-needed. That claim was never actually exercised by a real test —
-Booking Service's `kafka_container` fixture sat unused from Phase 3 until
-Phase 6's P6.T4 became its first real caller, and hit an immediate
-failure: both the `apache/kafka` image's Zookeeper and KRaft boot paths
-shell out to `/etc/confluent/docker/configure`, which that image doesn't
-ship, so the container exits (code 2) regardless of `.with_kraft()`. The
-correct, verified pairing is `KafkaContainer("confluentinc/cp-kafka:7.6.0")
-.with_kraft()` — the same combination Search Service's suite already used
-since Phase 2 — now used by both services' fixtures. Left here, corrected
-rather than silently deleted, because the original wrong claim is itself
-an instance of this report's own Integrity rule: a claim that was never
-executed shouldn't have been written as fact, and the record should show
-the correction happened, not just the corrected end state.
-
-**Phase 3 review finding: offset-commit semantics matter for idempotency,
-not just the write itself.** `ProvisioningConsumer` originally left
-`aiokafka`'s `enable_auto_commit` at its default `True`, which commits
-offsets on a background timer independent of whether the DB write under
-it actually finished — a crash between that timer firing and the write
-committing would silently drop tickets rather than trigger the
-redelivery the idempotent `ON CONFLICT DO NOTHING` design depends on.
-Fixed with `enable_auto_commit=False` and an explicit `commit()` after
-each record is fully handled, plus a bounded in-process retry (3
-attempts, 1s backoff) so a merely transient DB error doesn't cost that
-message's tickets on the very first hiccup. The "idempotent consumer"
-claim (decisions-log §7) is about more than the write being safe to
-redeliver — it also requires the redelivery to actually happen when it's
-needed, which is an offset-commit-timing property, not a write-shape one.
+**Status:** Implemented, Tested, Verified (live). Idempotency verified two
+ways for every integration point: unit tests against mocked repositories,
+and live redelivery against the real stack showing no duplicate effect.
+Offset-commit semantics matter as much as the write itself — every
+DB-writing consumer disables `aiokafka`'s default auto-commit and commits
+only after its write fully succeeds, with a bounded retry so a merely
+transient DB error doesn't cost a message on the first hiccup (found and
+fixed in Phase 3 review; see Class Diagrams). Integration tests use
+`confluentinc/cp-kafka:7.6.0` with `.with_kraft()` — the plain
+`apache/kafka` image's bootstrap scripts are Confluent-specific and won't
+boot under `testcontainers`, a fact this project got wrong in an earlier
+draft of this note and corrected once a real test actually exercised it
+(Phase 6; see `docs/build-log.md`).
 
 ## Elasticsearch (search index)
 
-**What:** a document search engine, populated exclusively via the Kafka
-consumer above — never queried back into Event Service, and never treated
-as a source of truth (§8).
+**What:** a document search engine, populated exclusively via Kafka —
+never queried back into Event Service, never a source of truth (§8).
 
-**Why:** free-text search across title/description/venue/performers with
-relevance ranking is the kind of query a relational database handles
-poorly compared to a purpose-built search index; Elasticsearch was already
-the architecturally locked choice (decisions-log §8) specifically for this
-role. Populated asynchronously via Kafka rather than synchronously from
-Event Service writes, so a slow or unavailable search index can never block
-an organizer's write path — the same reasoning behind every other
-Kafka-mediated integration point in this system.
+**Why:** free-text search with relevance ranking is a poor fit for a
+relational database. Populated asynchronously so a slow or unavailable
+index can never block an organizer's write path.
 
-**Status:** Implemented, Tested. Single-node local topology
-(`discovery.type=single-node`, per §12/§24); the index is created with
-`number_of_replicas: 0` since a replica could never be assigned to a
-second node that doesn't exist in this topology, and service startup
-blocks on `cluster.health(wait_for_status="yellow")` so nothing reports
-healthy before its shards are actually assigned — a real fix, not
-precautionary, after a Docker Desktop disk-space incident during test
-development surfaced that a fresh index can otherwise sit unready far
-longer than a caller might assume (see `docs/build-log.md`, P2.T3 entry).
-`GET /search` (free-text, paginated, sortable by relevance or `start_time`,
-every sort carrying an explicit tiebreaker to keep pagination stable)
-verified live end-to-end through Traefik against real published events.
+**Status:** Implemented, Tested. Single-node topology
+(`number_of_replicas: 0`); service startup blocks on cluster health so
+nothing reports healthy before its shards are assigned (a real fix after
+a Docker-disk-space incident during test development, P2.T3). `GET
+/search` verified live end-to-end through Traefik against real published
+events.
 
 ## `uv` (Python tooling) and workspace structure
 
-**What:** a Python package/dependency manager and project runner, used here
-to set up a **workspace**: one shared virtual environment and lockfile
-across every backend Python package in `/services`, rather than each
-service (and the shared auth package) maintaining its own isolated
-environment.
+**What:** a Python package/dependency manager used here to set up a
+**workspace** — one shared virtual environment and lockfile across every
+backend Python package in `/services`.
 
-**Why:** with multiple services sharing a dependency (`shared_auth`) and
-needing consistent dependency versions, per-package environments would mean
-duplicated installs and a real risk of the same dependency resolving to
-different versions in different services. A workspace gives one dependency
-resolution across everything while each service still declares its own
-`pyproject.toml`.
+**Why:** with a shared dependency (`shared_auth`) across services,
+per-package environments risk the same dependency resolving to different
+versions in different services.
 
-**Status:** Implemented. Confirmed both `uv run pytest` from within a
-member package and `uv run --package <name> pytest` from the workspace root
+**Status:** Implemented — `uv run pytest` from within a member package and
+`uv run --package <name> pytest` from the workspace root both confirmed to
 resolve against the same shared environment.
 
 ## MongoDB (Motor, async driver)
 
 **What:** a document database, used by Event Service exclusively for
-seat-map storage — sections/rows/seats per event — accessed via Motor,
-the async MongoDB driver.
+seat-map storage, accessed via Motor, the async MongoDB driver.
 
-**Why:** seat maps are read and written as a single nested document per
-event, never queried at sub-document granularity by this service, which
-is a better fit for a document store than forcing a normalized
-rows-and-seats relational schema onto data that's always accessed whole.
-Motor specifically (over the sync PyMongo driver) to stay consistent with
-the project's async-throughout requirement (§3) — no blocking I/O in a
-request path, including database calls to the document store.
+**Why:** a seat map is always read and written as one whole nested
+document per event — a better fit for a document store than a normalized
+relational schema. Motor specifically for the project's async-throughout
+requirement (§3).
 
-**Status:** Implemented, Tested. Verified live: store/fetch/delete
+**Status:** Implemented, Tested, Verified (live) — store/fetch/delete
 round-trip against a real `mongo:7` container; `/healthz` confirms
-connectivity via `db.command("ping")` alongside the existing Postgres
-check.
+connectivity alongside the existing Postgres check.
 
 ## Alembic (schema migrations)
 
 **What:** SQLAlchemy's migration tool, generating versioned, revertible
-schema changes from the ORM models rather than hand-written DDL.
+schema changes from the ORM models.
 
-**Why:** with schema changes expected across every remaining phase
-(Booking, Payment each add their own tables) and grading requiring a
-demonstrable, reproducible schema history rather than a snapshot,
-autogenerated + reviewed migrations give both a paper trail and a repeatable
-`alembic upgrade head` that works identically in local dev, CI-equivalent
-test runs, and eventual AWS deployment.
+**Why:** with schema changes across every phase and grading requiring a
+reproducible schema history, autogenerated + reviewed migrations give both
+a paper trail and a repeatable `alembic upgrade head`.
 
-**Status:** Implemented, Tested. First migration applies clean against a
-real Postgres instance; downgrade-then-upgrade cycle verified — surfaced
-and fixed a real gap in the autogenerated `downgrade()` (a Postgres
-`ENUM` type isn't dropped automatically when its owning table is), see
-`docs/build-log.md`, P1.T2 entry.
+**Status:** Implemented, Tested — first migration applies clean;
+downgrade-then-upgrade cycle verified (surfaced and fixed a gap in
+autogenerate's default `downgrade()`, which doesn't drop a Postgres `ENUM`
+type automatically — see `docs/build-log.md`, P1.T2).
 
 ## `testcontainers-python`
 
-**What:** a library that boots real, disposable Docker containers (here:
-Postgres, MongoDB) for the duration of a test session, rather than mocking
-the database layer or relying on a shared long-lived test database.
+**What:** a library that boots real, disposable Docker containers for the
+duration of a test session, rather than mocking the database layer.
 
 **Why:** for a project whose core correctness claims are about real
-database behavior — unique constraints, transaction boundaries, and later
-the dual-hold concurrency race (Phase 3) — a mocked database can't
-actually prove those claims. `testcontainers-python` gives integration
-tests the real thing, disposably, without a hand-maintained shared test
-environment to keep in sync.
+database behavior — unique constraints, transaction boundaries, the
+dual-hold concurrency race — a mocked database can't prove those claims.
+Session-scoped containers over the running `docker compose` stack
+specifically for test isolation: fresh boot, clean migration, automatic
+teardown, runnable from a clean checkout without ambient state.
 
-**Why not go through the running `docker compose` stack instead?** Test
-isolation — containers boot fresh per test *session*, migrate cleanly, and
-tear down automatically, so the suite is runnable from a clean checkout
-(including CI, later) without a developer having remembered to
-`make up` first, and without test data leaking between runs.
-
-**Status:** Implemented, Tested. First use in this repo, Phase 1: session-
-scoped `PostgresContainer`/`MongoDbContainer` fixtures, one Alembic
-migration run per session, table truncation between individual tests.
-Established as the pattern every later phase's integration suite reuses.
-Phase 3 extends the pattern to a third and fourth container type
-(`community.redis.RedisContainer`, `community.kafka.KafkaContainer`) in
-the same suite — Booking Service's correctness claims span three real
-datastores at once (Postgres, Redis, and the Kafka broker the
-provisioning consumer reads from), so the integration tier needed all
-three running simultaneously, not sequentially.
+**Status:** Implemented, Tested. First used Phase 1 (Postgres, MongoDB);
+extended Phase 3 to Redis and Kafka simultaneously, since Booking
+Service's correctness claims span all three real datastores at once.
 
 ## Stripe (payment processing)
 
-**What:** a third-party payment processor, integrated here via
-`stripe-python`'s async client, in test mode throughout — real API calls
-against Stripe's sandbox, never a mocked HTTP layer, but never real money
-or a production account.
+**What:** a third-party payment processor, integrated via `stripe-python`'s
+async client, in test mode throughout — real API calls against Stripe's
+sandbox, never a mocked HTTP layer, never real money.
 
 **Why:** rather than hand-rolling a payment gateway (a security-sensitive,
-PCI-scope-heavy problem well outside this project's actual scope), Stripe
-lets the project demonstrate a real, production-shaped payment integration:
-a genuine `PaymentIntent` charge attempt, a genuine webhook delivery
-carrying the authoritative outcome, and a genuine refund call — the same
-shapes a real production integration would use, just against test-mode
-credentials and Stripe's always-succeeding test payment method
-(`pm_card_visa`) rather than a live card network.
+PCI-scope-heavy problem outside this project's scope), Stripe demonstrates
+a real, production-shaped integration: a genuine charge attempt, a genuine
+webhook carrying the authoritative outcome, and a genuine refund.
 
-**Idempotency-key pattern, shared by charges and refunds** (§9): both
-`PaymentManager.create_charge` and `refund_payment` pass Stripe's own
-`idempotency_key` parameter as a backstop against a duplicate submission
-racing past this system's own application-level guard — `create_charge`
-keys on the booking ID itself, `refund_payment` keys on
-`{booking_id}-refund`, so a charge and its later refund for the same
-booking can never collide on the same key. The primary defense in both
-cases is still application-level (a resubmission gate keyed on whether
-the provider-side ID column — `stripe_charge_id`/`stripe_refund_id` — is
-still `NULL`, see the Database Schema Design chapter's Payment Service
-section); Stripe's key is the second, independent layer, not the only one.
-
-**Webhook-driven confirmation is the sole source of truth for a Payment's
-terminal status** (§9), not `create_charge`'s synchronous response — even
-though Stripe test mode often resolves a `PaymentIntent` synchronously, a
-lost synchronous response after Stripe already processed the charge would
-otherwise be indistinguishable from a genuine failure. The route verifies
-Stripe's own webhook signature (`stripe.Webhook.construct_event`) before
-`handle_webhook_event` ever sees the event, and the handler itself is
-idempotent the same way every Kafka consumer in this system is required to
-be (§7): a rowcount-gated conditional `UPDATE` transitions `Payment` on
-the outcome — `transition_if_pending` for the `failed` branch, only
-matching a row still `pending`; `transition_to_succeeded` for the
-`succeeded` branch, deliberately matching `pending` **or** `failed` too,
-since a genuine success can still arrive after an earlier failed webhook
-for the same payment.
+**Idempotency-key pattern** (§9): both `create_charge` and `refund_payment`
+pass Stripe's own `idempotency_key` as a backstop behind this system's
+primary application-level guard (a resubmission gate keyed on whether
+`stripe_charge_id`/`stripe_refund_id` is still `NULL` — see Database
+Schema Design). **Webhook-driven confirmation is the sole source of truth
+for a Payment's terminal status** (§9), never the synchronous response,
+via a rowcount-gated conditional `UPDATE` the same way every Kafka
+consumer in this system is required to be idempotent (§7).
 
 **Status:** Implemented, Tested, Verified (live) — a real Stripe test-mode
-charge-and-refund round trip, not just the placeholder-credential failure
-mode every earlier phase had to work around. Once the user configured a
-real Stripe test-mode secret key and the Stripe CLI's `stripe listen`
-forwarded real webhook deliveries through Traefik to `payment-service`,
-a real booking's `POST /bookings/{id}/pay` drove a genuine
-`stripe.PaymentIntent.create_async` call; the real webhook round-tripped
-back within about a second (`charge.succeeded` → `payment_intent.succeeded`
-→ `payment_outcome_published` in `payment-service`'s logs, `payment_outcome
-_applied` → `booking_confirmed` in `booking-service`'s), and the seat's
-status moved from `available` to `booked`. Cancelling the same booking
-drove a genuine `stripe.Refund.create_async` call, confirmed via
-`payment_db`: `status = REFUNDED` with both `stripe_charge_id` and
-`stripe_refund_id` populated. A synthetic redelivery of the same
-`booking.cancelled` message then exercised `refund_payment`'s
-`stripe_refund_id is not None` replay-no-op guard against a real,
-already-populated refund ID — a clean `refund_replay_no_op` log line, no
-second call to Stripe's `/v1/refunds` endpoint — closing the one
-idempotency branch every prior round could only prove against a mocked
-Stripe response, not a real one. See `docs/build-log.md`'s 2026-08-23
-"Ninth testing round" entry for the full session, and the Class Diagrams
-and Database Schema Design chapters' Payment Service sections for the
-mechanism this verified.
+charge-and-refund round trip: a real booking's `/pay` drove a genuine
+`PaymentIntent`, the webhook round-tripped within about a second and
+confirmed the booking, and cancelling drove a genuine refund
+(`payment_db` confirmed `REFUNDED` with both provider IDs populated). A
+synthetic redelivery against the now-populated refund ID exercised the
+replay-no-op guard cleanly. See `docs/build-log.md`'s 2026-08-23 "Ninth
+testing round" entry for the full session.
 
 ## Redis (`redis.asyncio`)
 
-**What:** an in-memory key-value store, used here exclusively as the
-backing store for one of Booking Service's two `TicketHoldStrategy`
-implementations — a distributed lock via `SET key value NX EX seconds`,
-Redis's atomic acquire-or-fail-with-auto-expiry primitive.
+**What:** an in-memory key-value store, used exclusively as the backing
+store for one of Booking Service's two `TicketHoldStrategy`
+implementations — a distributed lock via `SET key value NX EX seconds`.
 
-**Why:** chosen for this specific role because `SET ... NX EX` gives
-exactly-one-winner concurrency semantics and self-expiry in a single
-atomic operation, with no sweep needed to reclaim the *lock* itself —
-a genuinely different mechanism from the cron strategy's
-periodic-sweep approach (§6), which is the entire point of building both:
-the Phase 8 benchmark measures which trade-off performs better under
-real concurrent load, and that comparison is only meaningful if the two
-mechanisms are actually different, not two names for the same idea.
-`redis.asyncio` specifically (over the sync `redis-py` client) for the
-same async-throughout reason as every other I/O dependency in this
-project (§3).
+**Why:** `SET ... NX EX` gives exactly-one-winner concurrency semantics
+and self-expiry in one atomic operation — a genuinely different mechanism
+from the cron strategy's periodic-sweep approach (§6), which is the point
+of building both: the Phase 8 benchmark only means something if the two
+mechanisms are actually different. `redis.asyncio` for the same
+async-throughout reason as every I/O dependency in this project.
 
-**A gap the "no sweep needed" framing hid, found during this phase's
-review:** the *lock* self-expires, but the `Booking` row `BookingManager`
-creates alongside it lives in Postgres, which Redis knows nothing about.
-An abandoned checkout used to leave that row `pending` forever, and a
-partial unique index (see the Database Schema Design chapter) then
-permanently blocked the seat — so this strategy does need a sweep after
-all, just for a Postgres row instead of the Redis key, run on its own
-APScheduler job (see the APScheduler entry below).
+**A gap found during Phase 3 review:** the lock itself self-expires, but
+the `Booking` row created alongside it lives in Postgres, which Redis
+knows nothing about — an abandoned checkout used to block the seat
+permanently. Fixed with a separate age-based sweep for that row (see the
+Class Diagrams chapter).
 
-**Why not use Redis for the cron strategy's hold state too, for
-consistency?** Considered and deliberately rejected — the cron
-strategy's whole reason for existing in this comparison is that it
-stores hold state in the same Postgres database the rest of Booking
-Service already writes to, using an atomic conditional `UPDATE` rather
-than a second datastore's primitive. Making both strategies use Redis
-would collapse the comparison into "the same lock, implemented twice,"
-not two architecturally different approaches worth benchmarking against
-each other.
-
-**Status:** Implemented, Tested, Verified (live). `RedisHoldStrategy`'s
-`acquire_hold`/`release_hold`/`is_held` proven against the shared
-`TicketHoldStrategy` contract test and a dedicated race test (25
-concurrent clients, exactly one winner) via a real `testcontainers`
-Redis instance; the auto-release-on-TTL claim specifically verified by
-asserting the Redis key is simply gone after its TTL elapses, not via
-any scheduler run — there is no scheduler on this path, which is the
-mechanism being proven. Verified live against the running compose
-stack's `redis` container too: booked a real seat with `HOLD_STRATEGY=redis`
-active, confirmed a second booking attempt on the same seat cleanly
-returned 409, and inspected the live Redis key and its TTL directly
-(`redis-cli GET`/`TTL`) alongside confirming `tickets.status` correctly
-stays `AVAILABLE` in Postgres throughout — the documented trade-off (see
-Class Diagrams chapter) observed directly, not just asserted in a
-docstring.
+**Status:** Implemented, Tested, Verified (live) — proven against the
+shared `TicketHoldStrategy` contract test and a dedicated 25-client race
+test via real Redis; verified live against the running stack, including
+direct inspection of the Redis key/TTL alongside `tickets.status`
+correctly staying `AVAILABLE` throughout (the documented strategy
+trade-off, observed directly).
 
 ## APScheduler
 
-**What:** an in-process Python job scheduler, used here to run Booking
-Service's periodic sweep — an `AsyncIOScheduler` interval job that runs
-whichever cleanup the active `HOLD_STRATEGY` needs.
+**What:** an in-process Python job scheduler running Booking Service's
+periodic sweep — whichever cleanup the active `HOLD_STRATEGY` needs.
 
-**Why:** chosen over a system-level cron job or a separate scheduling
-service specifically because the sweep needs to run inside the same
-async application (same event loop, same database session factory) as
-the rest of Booking Service, with no separate process, deployment
-artifact, or inter-process coordination to stand up for what is, in this
-project's scope, a single periodic in-process task. Wired into the same
-FastAPI `lifespan` context manager that starts/stops the Kafka consumer.
+**Why:** the sweep needs to run inside the same async application (same
+event loop, same session factory) as the rest of Booking Service, with no
+separate process to stand up.
 
-**Both hold strategies need this scheduler, not just cron — a correction
-made during this phase's review.** Originally only started when
-`HOLD_STRATEGY=cron`, on the reasoning that the Redis strategy's lock
-expires on its own. True for the lock, not for the `Booking` row
-alongside it (see the Redis entry above) — `hold_sweep.py` now always
-starts the scheduler and picks which job to register based on the active
-strategy: `_sweep_cron_holds_once` (releases expired `Ticket` holds and
-their `Booking` rows together) under `cron`, or
-`_sweep_stale_redis_bookings_once` (age-based `Booking`-row expiry only)
-under `redis`. An unrecognized `HOLD_STRATEGY` value fails scheduler
-construction the same way `get_hold_strategy()` already failed on the
-first request that needed it, rather than only failing one of the two
-places.
-
-**Status:** Implemented, Tested, Verified (live, both strategies). The
-cron sweep's release logic (`CronHoldStrategy.release_expired()`) is
-tested directly against a real Postgres instance — an already-expired
-hold is released and its associated `PENDING` booking transitioned to
-`EXPIRED`, while an unexpired hold is correctly left untouched — and the
-Redis sweep's logic (`BookingRepository.expire_stale_pending()`) is
-tested the same way, independent of whether APScheduler's own timer
-fires during the test, since the scheduler is only the trigger, not the
-logic being proven. Verified live under both values: booted with
-`HOLD_STRATEGY=cron`, confirmed `"Scheduler started"` and `"Added job
-\"_sweep_cron_holds_once\""` in the structured logs alongside the Kafka
-consumer's own startup sequence; switched to `HOLD_STRATEGY=redis` with a
-short TTL/sweep interval, confirmed `"Added job
-\"_sweep_stale_redis_bookings_once\""` on boot, then confirmed the job
-actually fires and clears an abandoned booking (`hold_sweep_expired_
-stale_redis_bookings`, `count: 1`) — see the Testing Strategy chapter for
-the full live sequence.
+**Status:** Implemented, Tested, Verified (live, both strategies). Both
+hold strategies need the scheduler, not just cron (a correction made
+during Phase 3 review, once it became clear the Redis strategy's
+`Booking`-row sweep needs it too). Verified live under both
+`HOLD_STRATEGY` values, including a real abandoned booking cleared by the
+Redis-side sweep job.
 
 ## Prometheus + Grafana (benchmark observability)
 
-**What:** Prometheus scrapes each service's existing `/metrics` endpoint
-(`prometheus-fastapi-instrumentator`, wired since P0.T5 — no new
-instrumentation needed); Grafana renders it. Run as a `benchmark`-profiled
-`docker-compose` pair (`make bench-up`/`make bench-down`), not part of the
-default local stack.
+**What:** Prometheus scrapes each service's `/metrics` endpoint; Grafana
+renders it. Run as a `benchmark`-profiled `docker-compose` pair, not part
+of the default local stack.
 
-**Why:** chosen over a hosted APM (Datadog, New Relic) or hand-rolled log
-scraping specifically for the local/on-demand fit decisions-log §11
-already calls for: no external account, no steady-state memory cost on the
-default stack, and the same scrape/dashboard config works unmodified
-whether the benchmark runs locally or (later) against the AWS deployment.
-Grafana's dashboard-as-JSON provisioning means the `booking-service`
-dashboard is checked into the repo (`infra/grafana/provisioning/`) and
-reproducible on any machine, not hand-built through the UI each time.
+**Why:** chosen over a hosted APM specifically for the local/on-demand fit
+(§11) — no external account, no steady-state memory cost, the same config
+works locally or against AWS. Dashboard-as-JSON provisioning keeps the
+dashboard checked into the repo and reproducible.
 
-**Status:** Implemented, Tested, Verified (P8.T1). Live-verified against
-the real stack: all three Prometheus scrape targets (`event-service`,
-`search-service`, `booking-service`) confirmed `up`; real traffic driven
-through Traefik against `POST /bookings`; the resulting `http_requests_total`
-counter increments and `http_request_duration_seconds_bucket` samples
-confirmed scraped; all four dashboard panel expressions (request rate,
-p50/p95/p99 latency, `POST /bookings` p95, 5xx error ratio) queried
-directly through Grafana's datasource-proxy API and confirmed to return
-real, non-placeholder values. See `docs/build-log.md`'s P8.T1 entry for two
-real provisioning bugs found and fixed during this verification (a
-nested-bind-mount failure, a datasource-UID mismatch) and one real mistake
-made and corrected (`make bench-down` briefly tore down the whole stack
-instead of just these two containers, before the target was rewritten).
+**Status:** Implemented, Tested, Verified (P8.T1) — all three scrape
+targets confirmed `up`; real traffic driven through Traefik; the resulting
+counters/histograms confirmed scraped; all four dashboard panels queried
+directly and confirmed to return real values. See `docs/build-log.md`'s
+P8.T1 entry for two provisioning bugs found and fixed during this
+verification.
 
 ## Python asyncio load harness (`/benchmark`)
 
-**What:** a standalone script (`benchmark/run_benchmark.py`, its own
-`pyproject.toml`/`uv` environment, not part of the `/services` workspace)
-that provisions a fresh, self-contained seat pool via the real
-`event-service`/`booking-service` APIs, fires a fixed burst of concurrent
-clients at it via `asyncio.gather`, and measures successful/failed booking
-counts, hold-acquisition latency (p50/p95/p99), and time-to-release-after-
-abandonment — the three metrics called for in decisions-log §6.
+**What:** a standalone script (`benchmark/run_benchmark.py`, its own `uv`
+environment) that provisions a fresh seat pool via the real APIs, fires a
+fixed burst of concurrent clients at it via `asyncio.gather`, and measures
+successful/failed booking counts, hold-acquisition latency, and
+time-to-release — the three metrics §6 calls for.
 
-**Why (over k6):** the choice between "k6 or a multi-threaded harness" was
-left undecided in decisions-log §6; resolved 2026-08-16 in favor of the Python asyncio harness after
-confirming with the user. It reuses the exact `asyncio.gather`
-concurrent-client pattern already proven correct in P3.T7's concurrency
-suite (`test_concurrency_suite.py` — N clients racing one seat, exactly one
-winner), generalized from one contended seat to a pool of them, rather than
-introducing a new Go-based dependency this project touches nowhere else.
-The trade-off, made explicit rather than silently accepted: k6's built-in
-percentile/threshold reporting is hand-rolled here instead
-(`summarize_latencies()` in the harness) — a small, auditable cost against
-a project that stays Python end-to-end.
+**Why (over k6):** resolved 2026-08-16 in favor of Python — it reuses the
+exact `asyncio.gather` pattern already proven correct in P3.T7's
+concurrency suite, at the cost of hand-rolling percentile reporting k6
+would have provided out of the box.
 
-**Load profile:** `seat_pool_size` tickets (default 30) provisioned fresh
-per run; `clients_per_seat` concurrent clients (default 10) race each
-pooled seat in one `asyncio.gather` burst — no gradual ramp. One extra
-ticket beyond the pool is reserved and deliberately left unconfirmed to
-measure the passive release path, observed by polling `booking_db`
-directly for `Booking.status` `PENDING` -> `EXPIRED` — the one signal both
-hold strategies actually produce on release (the cron strategy also flips
-`Ticket.status`; the Redis strategy never writes that column at all, per
-its own §6 design, so the Booking row is the only cross-strategy
-observation point).
-
-**Status:** Implemented, Tested (P8.T2). Live-verified against the real
+**Status:** Implemented, Tested (P8.T2) — live-verified against the real
 stack under both `HOLD_STRATEGY` values: a burst of 15 clients against a
-5-seat pool produced exactly 5 successes/10 failures (matching the pool
-size exactly, both times); the release-latency measurement confirmed
-against a temporarily shortened `HOLD_TTL_SECONDS=5`/
-`HOLD_SWEEP_INTERVAL_SECONDS=5` override, correctly returning ~6s under
-`cron` and ~8s under `redis` — both within the expected TTL-plus-one-sweep
-window for their respective release mechanisms. Full contention-burst and
-release-latency runs at the P8.T3/T4 fixed load profile, archived under
-`/docs`, are that phase's task, not this one's.
+5-seat pool produced exactly 5 successes/10 failures both times; release
+latency confirmed within the expected TTL-plus-sweep window for both
+strategies. Full contention-burst and release-latency runs at the fixed
+load profile, archived under `/docs`, are covered in the Feature
+Development Process chapter.
 
 ## React + Vite + TypeScript (frontend)
 
-**What:** the minimal five-screen frontend (§10) — Vite as the build
-tool/dev server, React 19, TypeScript throughout, built to static assets
-and served by a plain `nginx:1.27-alpine` container behind Traefik at
-`PathPrefix('/app')`.
+**What:** the minimal five-screen frontend (§10) — Vite, React 19,
+TypeScript throughout, built to static assets and served by
+`nginx:1.27-alpine` behind Traefik at `PathPrefix('/app')`.
 
-**Why:** decisions-log §10 already settled on a minimal React UI over a
-polished product build — the backend stays the graded emphasis. Vite over
-Create React App (unmaintained) or a Next.js-style framework (server
-rendering, routing conventions, and a build pipeline this project has no
-use for — every page here is client-rendered against already-JSON APIs).
-TypeScript specifically to catch API-shape mismatches against the
-backend's own Pydantic schemas at compile time rather than at runtime in
-the browser.
+**Why:** §10 already settled on a minimal React UI over a polished product
+build. Vite over Create React App (unmaintained) or a Next.js-style
+framework (server rendering this project has no use for). TypeScript to
+catch API-shape mismatches against the backend's Pydantic schemas at
+compile time.
 
 **Status:** Implemented, Tested (Vitest — the seat-map layout/status join
-and the checkout hold→pay state machine, the two pieces of real,
-non-trivial logic, plus a small display-formatting helper; presentational
-components otherwise aren't unit-tested). `tsc -b`, `oxlint`, and a
-production `vite build` all clean. Verified (live) both at the
-API-contract level (real HTTP through the real container) and via a
-rendered, clicked-through browser pass (a Claude-in-Chrome walkthrough,
-2026-08-21) — see `docs/build-log.md` for the bugs that pass found and
-fixed, including a login-completion race in the OIDC callback route.
+and the checkout hold→pay state machine). `tsc -b`, `oxlint`, and a
+production `vite build` all clean. Verified live both at the API-contract
+level and via a rendered, clicked-through browser pass (2026-08-21) — see
+`docs/build-log.md` for the bugs that pass found and fixed, including a
+login-completion race in the OIDC callback route.
 
 ## `@tanstack/react-query`
 
-**What:** the frontend's entire data-fetching/caching layer — every
-`GET`/mutation call to `event-service`, `search-service`, and
-`booking-service` goes through it, including the seat map's live status
-poll.
+**What:** the frontend's data-fetching/caching layer — every API call goes
+through it, including the seat map's live status poll.
 
-**Why:** the "polling, not push" design for the seat map (decisions-log §23)
-needs an interval-based refetch with request de-duplication and
-cache invalidation; React Query's `refetchInterval` gives that for one
-config line instead of hand-rolled `setInterval`/cleanup logic repeated
-across every screen that needs live data. Chosen over plain
-`fetch`-in-`useEffect` specifically because this project already has one
-genuinely recurring-fetch requirement (the seat map poll) that a bespoke
-hook would otherwise reinvent per call site.
+**Why:** the "polling, not push" seat-map design (§23) needs an
+interval-based refetch with de-duplication and cache invalidation;
+`refetchInterval` gives that in one config line.
 
 **Status:** Implemented, Tested (indirectly — the seat-map join function
 it feeds is unit-tested; the poll itself is live-verified: a real hold in
@@ -657,28 +349,18 @@ one interval).
 ## `react-oidc-context` / `oidc-client-ts` (frontend OIDC client)
 
 **What:** drives the browser-side half of Authorization Code + PKCE
-against Keycloak's `ticketing-frontend` public client (`standardFlowEnabled:
-true`, `directAccessGrantsEnabled: false`, PKCE `S256` required) — login/
-register redirect, callback handling, token storage, and exposing the
-current user/token to the rest of the app via a React context.
+against Keycloak's public frontend client — login/register redirect,
+callback handling, token storage, and exposing the current user/token via
+a React context.
 
 **Why:** the realm's frontend client was already configured for a real
-Authorization Code + PKCE flow (§5) before Phase 7 began — building that
-exchange by hand (state/nonce generation, code-verifier storage across the
-redirect, token-endpoint POST, silent renew) is exactly the "don't roll
-your own auth" reasoning already applied to the backend (§5), now applied to
-the one place a browser-side OIDC client is actually needed.
+PKCE flow before Phase 7 began — hand-building that exchange is exactly
+the "don't roll your own auth" reasoning already applied to the backend
+(§5), now applied to the browser side.
 
 **Status:** Implemented, Tested (live) — but not by trusting the library.
 A full Authorization Code + PKCE exchange was independently driven with
-raw HTTP requests (`curl`, no library) performing the exact same steps
-`react-oidc-context` performs in the browser: fetch the real login page,
-submit real credentials, follow the real redirect back to
-`http://localhost/app/`, exchange the real code for a real token. This is
-what caught a real bug the library itself couldn't have surfaced on its
-own: the issued token carried no `aud` claim at all, because
-`ticketing-frontend` was missing the audience-mapper every backend service
-requires (decisions-log §5 amendment) — fixed, then re-verified the same
-way. See the Testing Strategy chapter's Phase 7 section for the full
-finding and the double-booking-path bug this same live-testing pass also
-caught.
+raw HTTP requests performing the library's exact steps, which is what
+caught a real bug: the issued token carried no `aud` claim at all, since
+the frontend client was missing the audience-mapper every backend service
+requires (§5 amendment) — fixed, then re-verified the same way.

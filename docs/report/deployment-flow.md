@@ -9,11 +9,10 @@ abstract. Cost figures are Measured (real billing inputs), not estimated.*
 The system is deployed to AWS Elastic Beanstalk (EB), Docker platform
 branch (AL2023), single-instance mode — no load balancer, no manual
 auto-scaling (§12). EB deploys the project's existing `docker-compose.yml`
-directly rather than a separate multi-container config format, so the
-same container topology that runs under `docker compose up` locally also
-runs on the deployed instance; local-first (§25) means this is a late,
-thin deployment checkpoint, not where development happens, and the
-deployment mechanism was chosen specifically to keep that true.
+directly, so the same container topology that runs under `docker compose
+up` locally also runs on the deployed instance — local-first (§25) means
+this is a late, thin deployment checkpoint, not where development
+happens.
 
 Live environment: `event-ticketing-env.eba-uvwm2tcf.ap-south-1.elasticbeanstalk.com`,
 region `ap-south-1` (Mumbai, a deliberate user choice over §13's original
@@ -34,10 +33,9 @@ treating any deployment step as real.
 ## Pre-deployment fixes: making a localhost-built app work on a public CNAME
 
 Nothing in the stack had ever been reached by anything other than
-`localhost` before this phase. Three real gaps surfaced turning that into
-a public deployment, none of them anticipated until they were actually
-hit — the full narrative lives in `docs/phases/phase-10-kickoff.md`'s T1
-section and decisions-log §12's amendment; summarized here as the
+`localhost` before this phase. Three real gaps surfaced, none anticipated
+until actually hit — full narrative in `docs/phases/phase-10-kickoff.md`'s
+T1 section and decisions-log §12's amendment; summarized here as the
 durable deployment-facing fact:
 
 - **Build-time `localhost` URLs.** The frontend's Vite build had baked
@@ -47,9 +45,9 @@ durable deployment-facing fact:
   `webOrigins` to `localhost` origins the same way. Fixed three ways: the
   three service URLs are now relative (Traefik already proxies both the
   frontend and the backend APIs from the same origin, so same-origin
-  requests need no absolute host at all), the Keycloak issuer is resolved
-  at runtime from `window.location` instead (Keycloak is reached directly
-  on its own port, not proxied through Traefik, so it genuinely can't be
+  requests need no absolute host), the Keycloak issuer is resolved at
+  runtime from `window.location` instead (Keycloak is reached directly on
+  its own port, not proxied through Traefik, so it genuinely can't be
   relative), and the realm config is rendered from a template by a
   Keycloak entrypoint script driven by an `APP_ORIGIN` environment value —
   the same container image now works unmodified against either `localhost`
@@ -58,11 +56,11 @@ durable deployment-facing fact:
   computation needs `crypto.subtle`, which browsers restrict to HTTPS or
   specifically the `localhost` hostname — every local test passed, then
   the login button silently did nothing against the deployed CNAME's
-  plain-HTTP real hostname. Fixed with a hand-written, pure-JS SHA-256
-  fallback (`frontend/src/auth/subtleCryptoPolyfill.ts`), verified against
-  NIST test vectors, installed only when the native implementation is
-  missing — keeps PKCE at full S256 strength rather than silently
-  downgrading to `plain`.
+  plain-HTTP hostname. Fixed with a hand-written, pure-JS SHA-256 fallback
+  (`frontend/src/auth/subtleCryptoPolyfill.ts`), verified against NIST
+  test vectors, installed only when the native implementation is missing —
+  keeps PKCE at full S256 strength rather than silently downgrading to
+  `plain`.
 - **EB's Docker-Compose deploy needs a flat bundle.** `infra/docker-compose.yml`'s
   build contexts (`../services`, `../frontend`) reach one level above
   `infra/`, which doesn't resolve under EB's Docker-Compose deploy — it
@@ -76,9 +74,8 @@ durable deployment-facing fact:
   created environment's databases don't stay unmigrated.
 
 Each fix was verified against the real deployed environment, not assumed
-from the mechanism alone: a full login-through-API round trip against
-`docker compose up` first, then the same round trip again against the
-live EB CNAME once deployed.
+from the mechanism alone: a full login-through-API round trip run first
+against `docker compose up`, then again against the live EB CNAME.
 
 ## Secrets and environment properties
 
@@ -160,11 +157,11 @@ hadn't already caught — no new fix was needed at this stage.
 
 §13 originally reasoned that stopping (not terminating) the EC2 instance
 between sessions was a cheap, safe way to avoid re-provisioning overhead
-while keeping the environment's CNAME stable. Executing that plan for the
-first time found it was wrong in a way worth documenting precisely,
-because it corrects a previously-locked decision's stated reasoning, not
-just a build-log footnote: a plain `aws ec2 stop-instances` against this
-environment did **not** pause it. Every Elastic Beanstalk environment —
+while keeping the environment's CNAME stable. Executing that plan found
+it wrong, worth documenting precisely since it corrects a
+previously-locked decision's stated reasoning, not just a build-log
+footnote: a plain `aws ec2 stop-instances` against this environment did
+**not** pause it. Every Elastic Beanstalk environment —
 single-instance tier included — is backed by an Auto Scaling Group
 (min=max=desired=1) with `HealthCheck`/`ReplaceUnhealthy` processes active
 by default; those processes treated the stopped instance as a health-check
@@ -227,30 +224,31 @@ cross-checked against the console itself.
 - S3 (deployment bundles/logs, ~1.7MB): negligible
 - **Total project-to-date: ≈$0.18**
 
-This is far under the ~$7-12 all-in project-lifecycle baseline (§13,
-already reconciled from its original ~$3-6 `us-east-1` compute-only
-estimate) and nowhere near the `Budget-of-Cost` alert's $6/$8 thresholds.
-That baseline covers the whole project's EC2 lifetime, not one session, so
-a cumulative ≈$0.18 across two deployment/validation sessions sitting well
-under it is the expected outcome, not evidence the baseline was loose.
+Far under the ~$7-12 all-in project-lifecycle baseline (§13, already
+reconciled from its original ~$3-6 `us-east-1` compute-only estimate) and
+nowhere near the `Budget-of-Cost` alert's $6/$8 thresholds. That baseline
+covers the whole project's EC2 lifetime, not one session, so a cumulative
+≈$0.18 across two deployment/validation sessions sitting well under it is
+the expected outcome, not evidence the baseline was loose.
 
 The P11.T5 demo-script recording session used the same corrected
-pause/resume procedure this section documents above — `aws ec2
-start-instances` against the already-stopped, ASG-suspended instance
-(same instance ID throughout, confirmed via
-`describe-auto-scaling-groups` before and after), followed by `aws ec2
-stop-instances` once the recording was done. The instance ID staying
-identical across the whole session is itself a second live confirmation
-of the corrected procedure, beyond the one already recorded in Phase 10.
+pause/resume procedure documented above — `aws ec2 start-instances`
+against the already-stopped, ASG-suspended instance (same instance ID
+throughout, confirmed via `describe-auto-scaling-groups` before and
+after), followed by `aws ec2 stop-instances` once the recording was done.
+The instance ID staying identical across the whole session is itself a
+second live confirmation of the corrected procedure, beyond the one
+already recorded in Phase 10.
 
 The instance is stopped (ASG replacement processes left suspended,
 harmless for a single-instance environment) as of the end of both
 sessions. Full termination is deliberately deferred until the project is
-submitted and graded (§13) — not done now, since the deployed environment
-may still be needed again before then.
+submitted and graded (§13) — the deployed environment may still be needed
+again before then.
 
 ## What this section still needs
 
 None remaining. The demo recording this section previously flagged as
-outstanding (P11.T5) is now complete — see the Demo Script chapter for
-the full reproducible walkthrough and its live-run record.
+outstanding (P11.T5) is now complete — see `docs/report/demo-script.md`
+(linked from the assembled report's Appendix B) for the full reproducible
+walkthrough and its live-run record.

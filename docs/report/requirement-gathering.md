@@ -43,10 +43,9 @@ The bolded cells are the requirement that role checking alone cannot
 satisfy: `organizer` is necessary but not sufficient (§15). A second,
 explicit check — the resource's stored `organizer_id` against the caller's
 JWT `subject` — runs inside `EventManager` on every write to an existing
-event, independent of and in addition to the `require_role("organizer")`
-route guard. This is the concrete instance of the architecture invariant
-"ownership scoping, not just role checks" that `CLAUDE.md` calls out as
-holding across every service, not just this one.
+event, independent of the `require_role("organizer")` route guard. This is
+the concrete instance of the "ownership scoping, not just role checks"
+invariant `CLAUDE.md` holds across every service.
 
 **Status:** Implemented, Tested, Verified. Every cell in this table was
 exercised live against a running Keycloak instance with real seed users
@@ -54,36 +53,31 @@ exercised live against a running Keycloak instance with real seed users
 subjects) during Phase 1 — not inferred from reading the route
 declarations. See `docs/architecture.html` §2 for the traced sequence.
 
-**P1 addendum — closing the venue/seat-map write gap.** Event Service's
-write scope was originally described in decisions-log §15 as "`POST /events`,
-venue/seat-map management," but only the event endpoints were ever built in
-Phase 1 — `master-development-plan.md` never scheduled a task for the other
-two, so it went unnoticed until an audit ahead of Phase 3 surfaced it: an
-organizer had no way to create a venue or attach a seat map through the API
-at all, only via the seed script or a direct Mongo write. `POST /venues`
-needs the `organizer` role but no ownership check — venues are a shared
-catalog (no `organizer_id` on the model), unlike events. `PUT /events/{id}/seat-map`
+**P1 addendum — closing the venue/seat-map write gap.** Decisions-log §15
+originally scoped Event Service's writes as "`POST /events`, venue/seat-map
+management," but Phase 1 only built the event endpoints — an audit ahead of
+Phase 3 found an organizer had no API path to create a venue or attach a
+seat map at all, only the seed script or a direct Mongo write. `POST
+/venues` needs the `organizer` role but no ownership check — venues are a
+shared catalog (no `organizer_id` on the model). `PUT /events/{id}/seat-map`
 is ownership-scoped like every other event mutation, upserts (create or
-replace), and — since a seat map can change after an event is already
-`PUBLISHED` — re-publishes to Kafka/Search on that path exactly like
-`PATCH /events/{id}` already does for title/venue/performer changes, so the
-search index and the Kafka payload's seat list never go stale relative to
-what an organizer most recently set.
+replace), and re-publishes to Kafka/Search on that path exactly like
+`PATCH /events/{id}` already does — since a seat map can change after an
+event is `PUBLISHED`, this keeps the search index and Kafka payload's seat
+list from going stale relative to the organizer's latest write.
 
-**Phase 2 addition — publish as its own step.** Event Service originally
-shipped `POST /events` creating an event directly in a `PUBLISHED` state
-per the original "creation = publishing" wording in decisions-log §15, but the
-actual Phase 1 build used a `DRAFT`/`PUBLISHED` model with no way to reach
-`PUBLISHED` at all — an open scope question deliberately left at the Phase
-1 checkpoint. Resolved in Phase 2 once the Kafka producer needed a concrete
-answer for "when does an event become visible to Search": kept the two-
-state model and added `POST /events/{id}/publish` as the same
-role-plus-ownership-scoped write pattern as every other mutating endpoint,
-logged as an explicit amendment to §15 rather than a silent implementation
-detail (decisions-log is the normative record; see its §15 for the full
-amendment text). `GET /search` needs no role distinction at all — every
-actor sees the same published-event index, consistent with "browse/search"
-being explicitly anonymous-accessible scope (§2).
+**Phase 2 addition — publish as its own step.** Decisions-log §15's
+original "creation = publishing" wording implied `POST /events` should
+create in `PUBLISHED` state directly, but Phase 1 built a `DRAFT`/
+`PUBLISHED` model with no way to reach `PUBLISHED` — an open scope question
+deliberately left at the Phase 1 checkpoint, resolved in Phase 2 once the
+Kafka producer needed a concrete answer for "when does an event become
+visible to Search." Kept the two-state model and added `POST
+/events/{id}/publish` as the same role-plus-ownership-scoped write pattern
+as every other mutating endpoint, logged as an explicit §15 amendment.
+`GET /search` needs no role distinction — every actor sees the same
+published-event index, consistent with "browse/search" being explicitly
+anonymous-accessible scope (§2).
 
 ## Roles/permissions table — Booking Service (Phase 3)
 
@@ -93,30 +87,27 @@ being explicitly anonymous-accessible scope (§2).
 
 Deliberately a one-row table: booking a ticket needs no `organizer` role
 at all (§15 delta) — any authenticated user, `user` or `organizer` alike,
-can book. There is no ownership-scoping check on this endpoint the way
-Event Service's writes have one, because there is no pre-existing owner
-to check against — the caller *becomes* the booking's `user_subject` by
-making the request, not by matching an existing resource's stored owner.
-This is a structurally different kind of authorization requirement than
-every Event Service write, worth stating explicitly rather than leaving
-implicit: "authenticated-only" and "ownership-scoped" are two different
-points on the same auth-requirement spectrum `CLAUDE.md`'s conventions
-require every route to declare, not the same check applied twice.
+can book. There is no ownership-scoping check on this endpoint, because
+there is no pre-existing owner to check against — the caller *becomes* the
+booking's `user_subject` by making the request, not by matching an existing
+resource's stored owner. Worth stating explicitly: "authenticated-only" and
+"ownership-scoped" are two different points on the same auth-requirement
+spectrum `CLAUDE.md` requires every route to declare, not the same check
+applied twice.
 
 **Phase 3 addition — closing the `_check_no_bookings` stub with a
-decidable-locally rule.** The original delete policy in decisions-log §15 read "deleting a
-published event with existing tickets/bookings is not supported... only
-events with zero bookings can be removed" — a check Event Service was
-never actually able to perform, since database-per-service (§8) means it
-cannot see whether Booking Service holds any `Ticket`/`Booking` rows for
-a given event, and there is no sixth Kafka integration point for a
-delete-time cross-service query, since integration points are capped at five (§7). Resolved at the point
-Booking Service actually existed and gave the stub something concrete to
-resolve against: `DELETE /events/{id}` now refuses unconditionally once
-`status == PUBLISHED` (409), regardless of whether tickets were ever
-actually booked — a fully locally-decidable rule, logged as a decisions-
-log amendment to §15 rather than a silent behavior change. `DRAFT`
-events, which can never have provisioned tickets, still delete freely.
+decidable-locally rule.** Decisions-log §15's original delete policy read
+"deleting a published event with existing tickets/bookings is not
+supported... only events with zero bookings can be removed" — a check
+Event Service was never actually able to perform, since database-per-service
+(§8) means it cannot see Booking Service's `Ticket`/`Booking` rows, and a
+delete-time cross-service query would need a sixth Kafka integration point
+past the five-point cap (§7). Resolved once Booking Service existed to give
+the stub something concrete to resolve against: `DELETE /events/{id}` now
+refuses unconditionally once `status == PUBLISHED` (409), regardless of
+whether tickets were ever actually booked — a fully locally-decidable rule,
+logged as a §15 amendment. `DRAFT` events, which can never have provisioned
+tickets, still delete freely.
 
 ## Roles/permissions table — Payment (Phase 4)
 
@@ -130,31 +121,27 @@ events, which can never have provisioned tickets, still delete freely.
 has already done the ownership check. It still requires a valid Keycloak
 token (the caller's own, forwarded unmodified), but not an ownership check
 of its own, since Payment Service has no access to `booking_db` to perform
-one (§8). This is the one endpoint in the system whose auth requirement is
-"authenticated, checked by a different service" rather than "authenticated
-and/or ownership-scoped, checked here" — worth stating explicitly per the
-auth-requirement convention rather than leaving it looking like an
-omission. **This "only Booking Service can reach it" premise was not
-actually true until a CHECKPOINT code-review pass caught it**: Traefik's
-original routing rule exposed the whole `/payments` prefix publicly, so
-any authenticated user could call this route directly with a fabricated
-`amount_cents` — a real authorization bypass, not a hypothetical one.
-Fixed by narrowing Traefik's rule to `/payments/webhook` only; see
-`build-log.md`'s 2026-08-17 CHECKPOINT entry and the Class Diagrams
-chapter's Payment Service section for the full account. The table above
-reflects the corrected, enforced state.
+one (§8) — the one endpoint whose auth requirement is "authenticated,
+checked by a different service" rather than "checked here."
+**This "only Booking Service can reach it" premise was not actually true
+until a CHECKPOINT code-review pass caught it**: Traefik's original routing
+rule exposed the whole `/payments` prefix publicly, so any authenticated
+user could call this route directly with a fabricated `amount_cents` — a
+real authorization bypass, not a hypothetical one. Fixed by narrowing
+Traefik's rule to `/payments/webhook` only; see `build-log.md`'s 2026-08-17
+CHECKPOINT entry and the Class Diagrams chapter's Payment Service section
+for the full account. The table above reflects the corrected, enforced
+state.
 
-**Ownership scoping on `/pay` works the same way as every other
-ownership-scoped route**, the same pattern established in decisions-log §15: the booking's stored
-`user_subject` compared against the caller's JWT `subject`, not just a role
-check — `organizer` has no special standing here, same as booking itself
-(§15 delta, Phase 3). A booking has no publicly visible state at all (no
-`GET` route, no public listing), so a non-owner's request answers **404**,
-not 403 — its existence stays hidden the same way a `DRAFT` event's does,
-rather than merely blocking the action while confirming the booking is
-real. Additionally checks the booking is currently `PENDING` (409
-otherwise) — a state precondition on top of the authorization check, not a
-substitute for it.
+**Ownership scoping on `/pay`** follows the same decisions-log §15 pattern:
+the booking's stored `user_subject` compared against the caller's JWT
+`subject`, not just a role check — `organizer` has no special standing here
+(§15 delta, Phase 3). A booking has no publicly visible state (no `GET`
+route, no public listing), so a non-owner's request answers **404**, not
+403 — existence stays hidden the same way a `DRAFT` event's does, rather
+than merely blocking the action while confirming the booking is real. Also
+checks the booking is currently `PENDING` (409 otherwise) — a state
+precondition on top of, not a substitute for, the authorization check.
 
 **Status:** Implemented, Tested, Verified (live, except a real Stripe
 success). Every cell above except the internal `/payments/charge` "Allow*"
@@ -164,9 +151,10 @@ nonexistent booking ID, also 404);
 `alice` on her own `PENDING` booking → the full chain through to Payment
 Service's own auth check and a genuine Stripe API call, failing only at
 Stripe's placeholder-credential boundary (401 from Stripe itself, not from
-this system). See the Testing Strategy and Class Diagrams chapters'
-Payment Service sections for the full live-verification detail and the
-real idempotency bug this testing caught and fixed.
+this system). See the Testing Strategy documentation (Appendix A) and the
+Class Diagrams chapter's Payment Service section for the full
+live-verification detail and the real idempotency bug this testing caught
+and fixed.
 
 ## Roles/permissions table — Cancellation & Refunds (Phase 6)
 
@@ -174,23 +162,21 @@ real idempotency bug this testing caught and fixed.
 |---|---|---|---|---|
 | `POST /bookings/{id}/cancel` (Booking Service) | 401 | **404** (existence hidden) | Allow (cancels + releases seat + triggers refund) | **409** |
 
-**Ownership scoping works the same way as `/pay`** — the same pattern from
-decisions-log §15, applied a third time in this system: the booking's stored `user_subject` compared
-against the caller's JWT `subject`, not a role check — `organizer` has no
-special standing over a booking it didn't make, same as booking and
-payment before it. Same existence-hiding 404, not 403, for the same reason
-as `/pay`. Two state preconditions stack on top of the
-authorization check, both independently checked and independently
-returning 409: the booking must currently be `CONFIRMED` (cancelling a
-still-`PENDING`, already-`CANCELLED`, or `EXPIRED` booking is rejected),
-and the event's `start_time` must not have passed yet (the cancellation
-policy in §22 — full refund, any time before the event starts, no partial-refund
-tiers). Payment Service has no route of its own for this at all — the
-refund is entirely Kafka-triggered (integration point #5), the message
-itself standing in as authorization since Booking Service already checked
-ownership before publishing it (§8: Payment Service has no access to
-`booking_db` to check ownership a second time, same reasoning as `/pay`'s
-"authenticated, checked by a different service" cell).
+**Ownership scoping works the same way as `/pay`** — the same decisions-log
+§15 pattern, applied a third time: the booking's stored `user_subject`
+compared against the caller's JWT `subject`, not a role check —
+`organizer` has no special standing over a booking it didn't make. Same
+existence-hiding 404, not 403, for the same reason as `/pay`. Two state
+preconditions stack on top of the authorization check, both independently
+checked and independently returning 409: the booking must currently be
+`CONFIRMED` (cancelling a still-`PENDING`, already-`CANCELLED`, or
+`EXPIRED` booking is rejected), and the event's `start_time` must not have
+passed yet (the cancellation policy in §22 — full refund, any time before
+the event starts, no partial-refund tiers). Payment Service has no route
+of its own for this — the refund is entirely Kafka-triggered (integration
+point #5), the message itself standing in as authorization since Booking
+Service already checked ownership before publishing it (§8, same reasoning
+as `/pay`'s "authenticated, checked by a different service" cell).
 
 **Status:** Implemented, Tested, Verified (live, except a real Stripe
 refund succeeding). Every cell above was exercised live against the
@@ -219,17 +205,16 @@ was already enforced by whichever service produced the message: Booking
 Service's `PaymentOutcomeConsumer` (booking-confirmed) and Payment
 Service's webhook handler and refund path (payment-confirmed,
 refund-failed) each already checked ownership or used the Kafka message
-itself as authorization before publishing, the same "message is the
-authorization" reasoning already established for Payment Service's own
-consumers (§8/§22). This is the "explicit, never implicit" auth convention
-applied to its edge case: a service can genuinely have nothing to guard,
-and that absence is stated here rather than left unaddressed.
+itself as authorization before publishing (§8/§22). This is the "explicit,
+never implicit" auth convention applied to its edge case: a service can
+genuinely have nothing to guard, and that absence is stated here rather
+than left unaddressed.
 
 **Status:** Implemented, Tested, Verified (live). The retry/backoff/DLQ
 ladder itself is not an authorization concern but is this phase's
-functional centerpiece — see the Class Diagrams and Testing Strategy
-chapters' Phase 5 sections for the mechanism, the design reasoning (no
-database, so retry state rides on the Kafka message itself via a
+functional centerpiece — see the Class Diagrams chapter's Phase 5 section
+and the Testing Strategy documentation (Appendix A) for the mechanism, the
+design reasoning (no database, so retry state rides on the Kafka message itself via a
 `RetryEnvelope`), and the live-verification detail (both a forced failure
 recovering on retry, and exhausted retries landing in the DLQ).
 
@@ -242,10 +227,10 @@ recovering on retry, and exhausted retries landing in the DLQ).
 Public, no role or ownership check — browsing which seats are available
 shouldn't require login, matching Event Service's own public `GET
 /events*` routes; only the act of booking (already authenticated,
-ownership-scoped where relevant) requires one. Added specifically because
-the frontend's seat map (§23) needed a read path this system never
-exposed before Phase 7 — see the Database Schema Design and Class
-Diagrams chapters' Phase 7 sections for the mechanism.
+ownership-scoped where relevant) requires one. Added because the
+frontend's seat map (§23) needed a read path this system never exposed
+before Phase 7 — see the Database Schema Design and Class Diagrams
+chapters' Phase 7 sections for the mechanism.
 
 **Frontend auth, stated explicitly so it isn't mistaken for a second
 enforcement layer**: the React app checks the logged-in user's `organizer`
@@ -269,13 +254,13 @@ Every roles/permissions table above states this system's functional
 requirements — who can do what. The one non-functional requirement this
 project set out to demonstrate with a real number, not a hand-wave, is
 the double-booking-critical path's throughput and latency under
-contention (§6): can the dual `TicketHoldStrategy` mechanism actually
-resolve a seat race correctly *and* fast, at a scale beyond the
-correctness suite's 25 clients. Phase 8's benchmark (this report's only
-Measured chapter — see Feature Development Process for the full
-methodology and honest reading of the results) answers this directly,
-against a fixed load profile of 300 concurrent requests (10 clients
-racing each of 30 contended seats), three independent runs per strategy:
+contention (§6): can the dual `TicketHoldStrategy` mechanism resolve a
+seat race correctly *and* fast, at a scale beyond the correctness suite's
+25 clients. Phase 8's benchmark (this report's only Measured chapter — see
+Feature Development Process for the full methodology and honest reading of
+the results) answers this directly, against a fixed load profile of 300
+concurrent requests (10 clients racing each of 30 contended seats), three
+independent runs per strategy:
 
 - **Correctness under load, not just speed**: both `TicketHoldStrategy`
   implementations allocated the contended pool exactly correctly on

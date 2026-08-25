@@ -18,12 +18,12 @@ not an afterthought.
 
 The system is designed against
 [Hello Interview's "Design a Ticket Booking Site Like Ticketmaster"](https://www.hellointerview.com/learn/system-design/problem-breakdowns/ticketmaster)
-as an architecture baseline, but deliberately extends past that reference in
-several respects: real authentication and authorization via a self-hosted
-Keycloak identity provider (not hand-waved), five genuine Kafka integration
-points connecting independently-owned services (the reference design does
-not integrate Kafka at all), automated testing against real dependencies
-rather than mocks, and an actual cloud deployment.
+as an architecture baseline, extended past that reference with: real
+authentication/authorization via a self-hosted Keycloak identity provider;
+five genuine Kafka integration points connecting independently-owned
+services (the reference design does not integrate Kafka at all); automated
+testing against real dependencies rather than mocks; and an actual cloud
+deployment.
 
 ## Architectural shape
 
@@ -31,11 +31,10 @@ The system is a microservices architecture of five backend services, each
 owning its own datastore (event, search, booking, payment, notification),
 sitting behind a single API gateway, with all cross-service communication
 carried over five explicitly-scoped Kafka integration points rather than
-shared databases or synchronous service-to-service calls. This
-database-per-service, event-driven shape is a deliberate constraint, not an
-accident of tooling: it is what makes each service independently testable,
-independently deployable, and forces the ownership boundaries (who is
-allowed to write what) to be explicit rather than implicit.
+shared databases or synchronous calls. This database-per-service,
+event-driven shape is a deliberate constraint: it makes each service
+independently testable and deployable, and forces ownership boundaries (who
+is allowed to write what) to be explicit rather than implicit.
 
 Phase 0's walking skeleton proved the plumbing this architecture depends on
 actually works end-to-end, before any business logic existed:
@@ -80,9 +79,8 @@ backend services actually built out, not just scaffolded:
   and sortable by relevance or start time.
 
 The two services communicate only through Kafka integration point #1 (§7) —
-no synchronous call from either service into the other, and no shared
-database. This is the same pattern Booking Service (Phase 3) extends for
-integration point #2 (ticket provisioning), not a one-off for this pair.
+no synchronous call, no shared database. Booking Service (Phase 3) extends
+the same pattern for integration point #2 (ticket provisioning).
 
 Phase 3 adds the third backend service and the system's centerpiece
 correctness guarantee: **Booking Service** (Postgres `booking_db`, plus
@@ -150,36 +148,33 @@ Phase 6 completes the booking lifecycle with **cancellation and
 refunds**, a first-class flow rather than an afterthought (§22). A
 customer cancels their own `CONFIRMED` booking, before the event's start
 time, through the same ownership-scoped pattern every other mutating
-endpoint in this system uses; the seat releases optimistically and
-immediately via a genuine third `TicketHoldStrategy` method,
-`release_booking` — not a `release_hold` reuse, since a confirmed
-booking's ticket is `BOOKED`, not `HELD`, and the two methods target
-different source states. Booking Service doesn't own payment data (§8),
-so it can't call Stripe directly: it publishes a `booking.cancelled`
-Kafka event on integration point #5, and Payment Service's first-ever
-Kafka consumer issues the refund using the same idempotency-key pattern
-already established for charges (booking ID plus "refund", §9). The
-cancellation cutoff needed a start time Booking Service's own tables
-never stored — resolved the same way Phase 4's pricing gap was, by
-adding a small reference table (`booking_db.events`) populated from the
-same Kafka message that already provisions tickets, no new integration
-point needed. If a refund fails after the seat has already been
-released, this design deliberately does not attempt saga-style rollback
-to re-lock the seat — a failed refund is logged and surfaced via
-Notification Service for manual reconciliation instead, an explicit
-scope boundary rather than an oversight (§22).
+endpoint uses; the seat releases immediately via a genuine third
+`TicketHoldStrategy` method, `release_booking` — not a `release_hold`
+reuse, since a confirmed booking's ticket is `BOOKED`, not `HELD`, and the
+two methods target different source states. Booking Service doesn't own
+payment data (§8), so it publishes a `booking.cancelled` Kafka event on
+integration point #5, and Payment Service's first-ever Kafka consumer
+issues the refund using the same idempotency-key pattern already
+established for charges (booking ID plus "refund", §9). The cancellation
+cutoff needed a start time Booking Service's own tables never stored —
+resolved the same way Phase 4's pricing gap was, by adding a small
+reference table (`booking_db.events`) populated from the same Kafka
+message that already provisions tickets, no new integration point needed.
+If a refund fails after the seat has already been released, this design
+deliberately does not attempt saga-style rollback to re-lock the seat — a
+failed refund is logged and surfaced via Notification Service for manual
+reconciliation, an explicit scope boundary rather than an oversight (§22).
 
 Phase 5 closes the loop with **Notification Service**, the one backend
 service with no database of any kind (§17 amendment) — a documented
 decision, not a smaller schema. `NotificationManager.deliver` writes
 nothing anywhere; the delivery *is* the structured log line it emits,
-since no real email/SMS provider exists in this system's scope to
-persist a delivery record about. With no database, the retry ladder's
-state (how many attempts so far, the original message, the last error)
-has nowhere to live except the Kafka message itself: a `RetryEnvelope`
-round-trips through three topics — `notifications` (one attempt, no
-backoff) → `notification-retry` (increasing backoff, `min(2 **
-attempt, cap)`) → `notification-dlq` (terminal, visibility-only —
+since no real email/SMS provider exists in this system's scope. With no
+database, the retry ladder's state (attempt count, original message, last
+error) has nowhere to live except the Kafka message itself: a
+`RetryEnvelope` round-trips through three topics — `notifications` (one
+attempt, no backoff) → `notification-retry` (increasing backoff, `min(2
+** attempt, cap)`) → `notification-dlq` (terminal, visibility-only —
 nothing reprocesses out of it automatically, consistent with §17's "not
 silently dropped" rather than "automatically retried forever"). Since
 this service has no real external delivery dependency capable of a
@@ -193,9 +188,9 @@ live demo or test. This completes integration point #3 (booking/payment
 own payment-confirmed and refund-failed paths, each already having
 checked ownership or used the Kafka message itself as authorization
 before publishing — the "message is the authorization" reasoning already
-established for every consumer in this system that has no independent
-way to re-check it (§8/§22, per the Requirement Gathering chapter's
-Notification Service section).
+established for every consumer with no independent way to re-check it
+(§8/§22, per the Requirement Gathering chapter's Notification Service
+section).
 
 The full current-state topology and a live-traced authentication sequence
 diagram are maintained at `docs/architecture.html` (kept current every
@@ -207,50 +202,50 @@ single-page app (§10) — login/register, browse/search, an event detail
 screen with an interactive seat map that polls Booking Service every five
 seconds for live per-seat status, checkout (hold, then pay), confirmation,
 and a minimal organizer flow (venue → event → seat map → publish) — served
-as static assets behind Traefik rather than built into any backend
-service. It needed one new backend route that nothing before it had
-exposed: a public `GET /bookings/events/{event_id}/tickets` on Booking
-Service, since the seat map's live half (§23) had a design but no read
-endpoint until this phase. Live-verifying the frontend's actual login (a
-real Keycloak Authorization Code + PKCE exchange, not a mock) surfaced
-findings worth naming in a project-description sense, not just a testing
-one: an identity-configuration gap (the frontend's OIDC client had never
-been issued a token carrying the audience claim every backend service
-requires, so every authenticated call from the real frontend would have
-failed silently), a genuine concurrency bug on the double-booking
-guarantee itself, and — only surfaced once a later pass drove login
-through the app's own rendered router rather than curl — login never
-actually completing at all, since the index route stripped Keycloak's
-callback query string before it could be processed. All found only
-because this phase was the first to drive real, non-mocked traffic
-through the entire stack the way an actual user would — see the Testing
-Strategy chapter's Phase 7 section for the full account.
+as static assets behind Traefik. It needed one new backend route nothing
+before it had exposed: a public `GET /bookings/events/{event_id}/tickets`
+on Booking Service, since the seat map's live half (§23) had a design but
+no read endpoint until this phase. Live-verifying the frontend's actual
+login (a real Keycloak Authorization Code + PKCE exchange, not a mock)
+surfaced findings worth naming here, not just in Testing Strategy: an
+identity-configuration gap (the frontend's OIDC client had never been
+issued a token carrying the audience claim every backend service
+requires, so every authenticated call would have failed silently), a
+genuine concurrency bug on the double-booking guarantee itself, and —
+only surfaced once a later pass drove login through the app's own
+rendered router rather than curl — login never actually completing at
+all, since the index route stripped Keycloak's callback query string
+before it could be processed. All found only because this phase was the
+first to drive real, non-mocked traffic through the entire stack the way
+an actual user would — see the Testing Strategy chapter's Phase 7 section
+for the full account.
 
 **Phase 10** took the already-working stack off a developer's own machine
 and onto real cloud infrastructure — AWS Elastic Beanstalk, Docker
 platform branch, single-instance mode (§12) — since local-first (§25)
-means this is a late, thin deployment checkpoint rather than where
-day-to-day development happens. Three real gaps surfaced only by actually
+makes this a late, thin deployment checkpoint rather than where
+day-to-day development happens. Three real gaps surfaced only by
 reaching the app through a public address instead of `localhost`: the
 frontend's build-time service URLs and Keycloak's realm config were
-hardcoded to `localhost` and had to become relative/runtime-derived; PKCE's
-`code_challenge` needs `crypto.subtle`, which browsers restrict to secure
-contexts, so the deployed plain-HTTP CNAME silently broke login until a
-pure-JS SHA-256 fallback was added; and EB's Docker-Compose deploy needs
-the compose file and every build context flattened at the bundle root,
-unlike the nested layout `../services`/`../frontend` local dev uses,
-solved with a dedicated bundle-assembly script rather than restructuring
-the canonical compose file. The full customer flow — browse, log in, hold
-a seat, pay via a real Stripe test-mode charge, and confirm via the same
-webhook-driven path Phase 4 built — was then live-verified against the
-deployed environment, not just local Docker. The phase's other real find
-was operational rather than application-level: every EB environment,
+hardcoded to `localhost` and had to become relative/runtime-derived;
+PKCE's `code_challenge` needs `crypto.subtle`, which browsers restrict to
+secure contexts, so the deployed plain-HTTP CNAME silently broke login
+until a pure-JS SHA-256 fallback was added; and EB's Docker-Compose
+deploy needs the compose file and every build context flattened at the
+bundle root, unlike the nested `../services`/`../frontend` layout local
+dev uses — solved with a dedicated bundle-assembly script rather than
+restructuring the canonical compose file. The full customer flow —
+browse, log in, hold a seat, pay via a real Stripe test-mode charge, and
+confirm via the same webhook-driven path Phase 4 built — was then
+live-verified against the deployed environment, not just local Docker.
+The phase's other real find was operational: every EB environment,
 single-instance tier included, is backed by an Auto Scaling Group that
-treats a directly-stopped instance as a health-check failure and replaces
-it, wiping container-local data — a correction to §12/§13's original
-stop/terminate reasoning, fixed by suspending the ASG's replacement
-processes before stopping. See the Deployment Flow chapter for the full
-topology, configuration, validation evidence, and cost writeup.
+treats a directly-stopped instance as a health-check failure and
+replaces it, wiping container-local data — a correction to §12/§13's
+original stop/terminate reasoning, fixed by suspending the ASG's
+replacement processes before stopping. See the Deployment Flow chapter
+for the full topology, configuration, validation evidence, and cost
+writeup.
 
 ## What this section still needs
 

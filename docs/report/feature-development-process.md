@@ -51,9 +51,8 @@ contention for one seat" — was already proven in Phase 3 (P3.T7,
 `testcontainers`) and re-confirmed by this benchmark's own contention burst
 (below). Phase 8's job is not to re-prove correctness; it's to measure
 which mechanism performs better, and by how much, under real concurrent
-load — this is a genuine engineering trade-off decision, not a foregone
-conclusion, deliberately left open in decisions-log §6 until it could
-be measured rather than guessed.
+load — a genuine engineering trade-off, deliberately left open in
+decisions-log §6 until it could be measured rather than guessed.
 
 ## Methodology
 
@@ -85,14 +84,14 @@ throughput), which has no dependency on TTL at all.
 
 **HTTP client connection limit sized to the load profile.** `httpx`'s
 default `AsyncClient` caps at 100 concurrent connections; against a
-300-request burst, roughly two-thirds of requests would queue for a free
-connection before ever reaching the server. Since `attempt_booking`'s
-timer starts before the request is sent, that queueing time would be
-counted as server-side "hold-acquisition latency" rather than what it
-actually is — a client-side artifact. Fixed by sizing `httpx.Limits` to
-the load profile (`seat_pool_size * clients_per_seat + 20`), so every
-request in the burst can be in flight simultaneously, the same way 300
-independent real clients would be.
+300-request burst, roughly two-thirds would queue for a free connection
+before reaching the server. Since `attempt_booking`'s timer starts before
+the request is sent, that queueing time would be counted as server-side
+"hold-acquisition latency" rather than the client-side artifact it
+actually is. Fixed by sizing `httpx.Limits` to the load profile
+(`seat_pool_size * clients_per_seat + 20`), so every request in the burst
+can be in flight simultaneously, the same way 300 independent real
+clients would be.
 
 **Each run repeated three times per strategy, not once.** A single run
 cannot distinguish "strategy A is genuinely faster" from "run-to-run
@@ -196,8 +195,9 @@ eventually ships.
 performs exactly the write this benchmark measured directly — the
 `release_hold()` call this table's "trigger-write time" timed is no longer
 a stand-in for a future handler, it's the real one, verified live against
-the running stack (see the Testing Strategy and Class Diagrams chapters'
-Payment Service sections). The numbers above were not re-measured, since
+the running stack (see the Testing Strategy documentation (Appendix A) and
+the Class Diagrams chapter's Payment Service section). The numbers above
+were not re-measured, since
 the mechanism is identical either way (the original amendment to §17 already
 established this — simulating the call is a faithful measurement of the
 mechanism, not a placeholder for it).
