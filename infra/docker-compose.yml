@@ -160,6 +160,13 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    healthcheck:
+      # No curl/wget on python:slim -- urllib avoids adding a package just for this.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     labels:
       traefik.enable: "true"
       traefik.http.routers.event-service.rule: PathPrefix(`/`)
@@ -180,6 +187,12 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     labels:
       traefik.enable: "true"
       # Longer, more specific rules take priority over event-service's
@@ -221,7 +234,13 @@ services:
       kafka:
         condition: service_healthy
       payment-service:
-        condition: service_started
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     labels:
       traefik.enable: "true"
       # Same reasoning as search-service's rule above — more specific than
@@ -256,6 +275,12 @@ services:
         condition: service_healthy
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8004/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     labels:
       traefik.enable: "true"
       # Deliberately narrower than every other service's rule: only the
@@ -286,6 +311,12 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8005/healthz', timeout=2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     labels:
       traefik.enable: "true"
       # Same PathPrefix convention every non-root service follows, kept for
