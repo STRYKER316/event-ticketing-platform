@@ -5585,3 +5585,53 @@ table updated to reflect the figures now being render-ready rather than
 Mermaid-source-only. No decisions-log or `CLAUDE.md` delta — tooling
 mechanics for an existing report-assembly step, not a new architecture or
 convention.
+
+## 2026-08-25 — Final sanity pass: closing the last accepted gap, the Postgres-down 500
+
+Ahead of calling Phase 0-11 genuinely done, ran a project-wide sanity
+sweep (docs staleness, code/infra conformance against `CLAUDE.md`,
+academic-presentation scan, commit hygiene) via two parallel read-only
+audits. Everything came back clean except two items worth a real
+decision: the Postgres-down 500 that `testing-strategy.md` still named
+as an accepted gap, and a possibly-stale `architecture.html` (three
+infra/frontend commits landed after its last update). Diffed all
+three against what the deployment-flow section describes: the first
+two round-trip `oidcConfig.ts`'s OIDC-issuer resolution back to
+exactly the `window.location`-based behavior already documented (a
+falsy-check tightening, then its own revert), and the third is a
+docs-only `infra/README.md` fix — no drift, no update needed.
+
+Chose to fix the Postgres-down 500 rather than keep accepting it,
+since the original round-7 reasoning ("only broad catch available is
+`except OSError`") looked wrong: SQLAlchemy wraps DBAPI errors into
+`sqlalchemy.exc.OperationalError`, a scoped exception, for execute-time
+failures — so `event-service`, `booking-service`, and `payment-service`
+each got an `@app.exception_handler(OperationalError)` mirroring the
+existing `RequestValidationError`/`RedisError` handler pattern.
+
+Live testing (stopping the `postgres` container, curling `GET /events`
+and `GET /bookings/events/{id}/tickets`, and POSTing a validly-signed
+Stripe webhook to `/payments/webhook`) still returned a bare 500 —
+the fix didn't work. The traceback showed why: SQLAlchemy's
+connection-pool checkout (`pool/base.py`'s `__connect`) uses
+`util.safe_reraise()`, which re-raises the original DBAPI-level
+exception unchanged rather than wrapping it — `OperationalError`
+translation only happens for execute-time errors against an
+already-open connection, not connect-time failures. The actual
+exception reaching the ASGI boundary was the raw `socket.gaierror`
+the original round-7 note had correctly identified.
+
+Corrected the fix to catch `(ConnectionError, socket.gaierror,
+TimeoutError)` instead — narrower than bare `OSError` (excludes
+file-I/O and other unrelated `OSError` subtypes) while actually
+covering the failure. Confirmed no other route in the codebase uses
+raw `asyncio.wait_for`/bare `TimeoutError` that this could
+misclassify. Re-verified live: all three services returned a clean
+503 with Postgres down, and 200 again once it was restarted — no
+regression.
+
+Updated `docs/report/testing-strategy.md`'s Round 7 entry and
+`docs/report/README.md`'s Testing Strategy status-table row to
+describe the fix instead of an accepted gap. No decisions-log delta —
+this is a bug fix within an existing exception-handling convention,
+not a new architectural decision.

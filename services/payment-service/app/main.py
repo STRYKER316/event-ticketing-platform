@@ -1,12 +1,14 @@
 import asyncio
 import contextlib
+import socket
 from contextlib import asynccontextmanager
 
 import shared_auth
 import stripe
 import structlog
 from aiokafka import AIOKafkaConsumer
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api import health, payments
@@ -58,6 +60,14 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(payments.router)
     Instrumentator().instrument(app).expose(app)
+
+    async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Postgres connect failures surface as raw ConnectionError/gaierror/TimeoutError — SQLAlchemy's pool checkout only wraps execute-time DBAPI errors, not connect-time ones.
+        logger.error("database_unavailable", error=str(exc))
+        return JSONResponse(status_code=503, content={"detail": "database unavailable"})
+
+    for exc_class in (ConnectionError, socket.gaierror, TimeoutError):
+        app.add_exception_handler(exc_class, database_unavailable_handler)
 
     return app
 

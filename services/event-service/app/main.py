@@ -1,8 +1,10 @@
 import math
+import socket
 from contextlib import asynccontextmanager
 from typing import Any
 
 import shared_auth
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -11,6 +13,8 @@ from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.api import events, health
 from app.core import close_kafka_producer, close_mongo_client, configure_logging, dispose_engine
+
+logger = structlog.get_logger()
 
 
 @asynccontextmanager
@@ -44,6 +48,14 @@ def create_app() -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(status_code=422, content=_json_safe(jsonable_encoder({"detail": exc.errors()})))
+
+    async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Postgres connect failures surface as raw ConnectionError/gaierror/TimeoutError — SQLAlchemy's pool checkout only wraps execute-time DBAPI errors, not connect-time ones.
+        logger.error("database_unavailable", error=str(exc))
+        return JSONResponse(status_code=503, content={"detail": "database unavailable"})
+
+    for exc_class in (ConnectionError, socket.gaierror, TimeoutError):
+        app.add_exception_handler(exc_class, database_unavailable_handler)
 
     return app
 

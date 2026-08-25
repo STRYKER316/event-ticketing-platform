@@ -1036,8 +1036,9 @@ throughout: fix everything real found, rather than partial-defer for
 later. Across all twelve rounds, this surfaced and fixed 15 real bugs —
 6 in the first pass alone, then one to two per subsequent round — plus
 one infrastructure defect (Kafka never actually persisting data), one
-deliberately accepted gap (a Postgres-down 500 left unfixed on
-purpose, discussed below), Round 9's real Stripe test-mode charge and
+gap initially accepted then fixed in a later final sanity pass (a
+Postgres-down 500, discussed below), Round 9's real Stripe test-mode
+charge and
 refund round trip closing the last deferred gap, Round 10's
 genuine-concurrency and webhook-forgery checks (both clean), Round
 11's real Stripe-minimum-charge finding, and Round 12's JWT-audience
@@ -1169,12 +1170,27 @@ it ever reaches the database.
 Postgres, Elasticsearch, and MongoDB were each stopped in turn against
 the live stack. Postgres down: `/healthz` correctly 503s on the three
 Postgres-backed services and stays 200 on the two that aren't, but a
-real business route crashes to a bare 500 — deliberately left unfixed,
-since the underlying exception here is a bare `socket.gaierror` (an
-`OSError` subclass), and an app-level `except OSError` broad enough to
+real business route crashes to a bare 500 — initially left unfixed
+here, since the underlying exception is a bare `socket.gaierror` (an
+`OSError` subclass) and an app-level `except OSError` broad enough to
 catch it risks silently reclassifying unrelated errors, a worse
 trade-off than the 500 it would fix given a full Postgres outage is
-already a full system outage either way. Elasticsearch down: a real
+already a full system outage either way. **Fixed in a later final
+sanity pass** (2026-08-25): live testing of the first proposed fix
+(catching `sqlalchemy.exc.OperationalError`) showed it doesn't
+actually catch this failure — SQLAlchemy's connection-pool checkout
+uses `safe_reraise()`, which re-raises the raw DBAPI-level exception
+unchanged; the `OperationalError` wrapping only applies to
+execute-time errors against an already-open connection, not
+connect-time failures. The real fix narrows the catch to
+`(ConnectionError, socket.gaierror, TimeoutError)` instead of bare
+`OSError` — connection-establishment failures specifically, excluding
+unrelated `OSError` subtypes like file-I/O errors — applied in
+`event-service`, `booking-service`, and `payment-service`. Verified
+live: `GET /events`, `GET /bookings/events/{id}/tickets`, and a
+signed Stripe webhook POST to `/payments/webhook` each returned a
+clean 503 with Postgres stopped, and 200 again once it was restarted.
+Elasticsearch down: a real
 bug, `GET /search` crashed to a bare 500; fixed with the same
 exception-handler pattern as the Redis fix, this time on the properly
 scoped `elastic_transport.TransportError`, yielding a clean 503.

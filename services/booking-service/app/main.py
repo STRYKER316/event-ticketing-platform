@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import socket
 from contextlib import asynccontextmanager
 
 import shared_auth
@@ -104,6 +105,14 @@ def create_app() -> FastAPI:
         # Kafka consumers are unaffected — this only wraps the HTTP cycle, so PaymentOutcomeConsumer's _run_with_retry still sees the raw exception and retries as designed.
         logger.error("hold_backend_unreachable", error=str(exc))
         return JSONResponse(status_code=503, content={"detail": "hold service unavailable"})
+
+    async def database_unavailable_handler(request: Request, exc: Exception) -> JSONResponse:
+        # Postgres connect failures surface as raw ConnectionError/gaierror/TimeoutError — SQLAlchemy's pool checkout only wraps execute-time DBAPI errors, not connect-time ones.
+        logger.error("database_unavailable", error=str(exc))
+        return JSONResponse(status_code=503, content={"detail": "database unavailable"})
+
+    for exc_class in (ConnectionError, socket.gaierror, TimeoutError):
+        app.add_exception_handler(exc_class, database_unavailable_handler)
 
     return app
 
