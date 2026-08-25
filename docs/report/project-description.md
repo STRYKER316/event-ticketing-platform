@@ -1,10 +1,11 @@
 # Project Description
 
-*Status: draft, covers Phases 0-7 — platform plumbing, the event catalog,
-browse/search, booking, payment, cancellation/refunds, notification, and
-the frontend. No narrative gap remains; the underlying mechanisms for
-every phase below are also documented in the Class Diagrams, Database
-Schema Design, and Testing Strategy chapters.*
+*Status: draft, covers Phases 0-10 — platform plumbing, the event catalog,
+browse/search, booking, payment, cancellation/refunds, notification, the
+frontend, and the AWS deployment. No narrative gap remains; the underlying
+mechanisms for every phase below are also documented in the Class
+Diagrams, Database Schema Design, Testing Strategy, and Deployment Flow
+chapters.*
 
 ## Overview
 
@@ -225,10 +226,37 @@ because this phase was the first to drive real, non-mocked traffic
 through the entire stack the way an actual user would — see the Testing
 Strategy chapter's Phase 7 section for the full account.
 
+**Phase 10** took the already-working stack off a developer's own machine
+and onto real cloud infrastructure — AWS Elastic Beanstalk, Docker
+platform branch, single-instance mode (§12) — since local-first (§25)
+means this is a late, thin deployment checkpoint rather than where
+day-to-day development happens. Three real gaps surfaced only by actually
+reaching the app through a public address instead of `localhost`: the
+frontend's build-time service URLs and Keycloak's realm config were
+hardcoded to `localhost` and had to become relative/runtime-derived; PKCE's
+`code_challenge` needs `crypto.subtle`, which browsers restrict to secure
+contexts, so the deployed plain-HTTP CNAME silently broke login until a
+pure-JS SHA-256 fallback was added; and EB's Docker-Compose deploy needs
+the compose file and every build context flattened at the bundle root,
+unlike the nested layout `../services`/`../frontend` local dev uses,
+solved with a dedicated bundle-assembly script rather than restructuring
+the canonical compose file. The full customer flow — browse, log in, hold
+a seat, pay via a real Stripe test-mode charge, and confirm via the same
+webhook-driven path Phase 4 built — was then live-verified against the
+deployed environment, not just local Docker. The phase's other real find
+was operational rather than application-level: every EB environment,
+single-instance tier included, is backed by an Auto Scaling Group that
+treats a directly-stopped instance as a health-check failure and replaces
+it, wiping container-local data — a correction to §12/§13's original
+stop/terminate reasoning, fixed by suspending the ASG's replacement
+processes before stopping. See the Deployment Flow chapter for the full
+topology, configuration, validation evidence, and cost writeup.
+
 ## What this section still needs
 
 None remaining. This section now reads as one coherent narrative from
-Phase 0 through Phase 7 with no gap — every phase's mechanism is
+Phase 0 through Phase 10 with no gap — every phase's mechanism is
 described here at the same narrative depth, with the full technical
 detail cross-referenced to Class Diagrams, Database Schema Design,
-Testing Strategy, and `docs/architecture.html` rather than duplicated.
+Testing Strategy, Deployment Flow, and `docs/architecture.html` rather
+than duplicated.
