@@ -5808,3 +5808,84 @@ the isolated project name); confirmed the original
 `event-ticketing-platform_*` volumes were never touched.
 
 No decisions-log delta. `CLAUDE.md` self-check: no convention changes.
+
+## 2026-08-25 — Final sanity pass, part 4: container hardening and a real `npm run dev` bug
+
+Continued sanity rounds into infra/container hardening and found one
+genuine, currently-broken documented workflow.
+
+**Container hardening scan**: no `.dockerignore` anywhere in the repo, no
+`USER` directive in any backend Dockerfile (all five run as root inside
+their containers — noted, not fixed, since this project's threat model is
+a single-host EB deployment with no untrusted code execution path, and
+fixing it would mean touching all five Dockerfiles for a low-severity
+finding outside this pass's scope), and no Dockerfile- or compose-level
+`HEALTHCHECK` on any of the five FastAPI services (only their infra
+dependencies have one) — confirmed nothing in `docker-compose.yml`
+actually depends on that (`depends_on: condition: service_healthy` is
+only ever pointed at postgres/redis/kafka/etc., never at a FastAPI
+service), so this is a real gap with zero current functional impact, not
+fixed either.
+
+Investigated the missing `.dockerignore` further since `frontend/Dockerfile`
+uses `COPY . .` (unlike the backend Dockerfiles, which `COPY` explicit,
+named paths and are structurally immune to this). Built the frontend
+image's intermediate stage with a local `node_modules` present on the host
+(from this session's earlier lint/build/test pass) and found real
+contamination: `@rolldown/binding-darwin-arm64`,
+`@oxlint/binding-darwin-arm64`, and `lightningcss-darwin-arm64` — all
+macOS-ARM64 native binaries — ended up inside the container's
+Linux-targeted `node_modules`, via `COPY . .` copying the host's
+directory over the one `npm ci` had just installed correctly.
+Multi-stage build discards the builder stage from the final shipped
+image, so this never reached a deployed artifact, but it's a real
+reproducibility hazard during development. Fixed with `frontend/.dockerignore`
+excluding `node_modules`/`dist`/`.env`/`.git`; re-verified the same build
+with zero darwin artifacts afterward. Added `services/.dockerignore` too
+for the same class of hygiene (127MB `.venv` was being transferred as
+build context on every backend build, even though the explicit `COPY`
+paths there were never actually vulnerable to contamination the way
+frontend's `COPY . .` was). Rebuilt the full stack from these
+Dockerfile-context changes and re-smoke-tested — all endpoints and
+`/healthz` still 200.
+
+Along the way, a bundle-size discrepancy (233KB vs. 352KB) initially
+looked like it might be caused by this same contamination — it wasn't;
+confirmed it's simply `VITE_*` build-arg presence (the compose build
+passes real values, a bare local `npm run build` doesn't), which is
+expected and not a bug. Worth recording the correction since the wrong
+diagnosis was briefly live in this session's own reasoning.
+
+**A real, reproducible bug**: checked whether CORS is configured anywhere
+(no `Access-Control-Allow-Origin` header from any service, confirmed via
+a real `curl` with a foreign `Origin` header — the correct, safe default,
+fails closed for actual cross-origin browsers). This raised the question
+of whether the README's documented `npm run dev` workflow (a genuinely
+different origin, `:5173`, than Traefik's `:80`) actually works — tested
+live with a real Vite dev server and a real browser (Playwright, since
+`claude-in-chrome` is unavailable this session): `SearchPage` failed
+outright, `"Failed to load events: Failed to fetch"`, six real CORS
+console errors. Root cause: `frontend/.env.example`'s
+`VITE_*_SERVICE_URL` values were still the pre-P10 absolute
+`http://localhost` URLs — `infra/docker-compose.yml`'s frontend build
+args were changed to empty/relative strings during Phase 10's real-gaps
+fix (the same "hardcoded `localhost` URLs" gap `docs/report/conclusion.md`
+already credits Phase 10 with closing for the Docker-served path), but
+`.env.example` — the file `npm run dev` actually reads — never got the
+same fix. A genuine cross-doc/cross-config staleness gap that outlived
+Phase 10's own review.
+
+Fixed both halves: `frontend/.env.example`'s three `VITE_*_SERVICE_URL`
+values changed to empty (relative), and `vite.config.ts` given a
+`server.proxy` block forwarding `/events`, `/venues`, `/search`, and
+`/bookings` to Traefik (`:80`) — the same relative-path approach the
+Docker-served build already uses, kept working for the dev server via a
+proxy instead of loosening any backend's CORS policy. Verified live: a
+fresh `npm run dev`, real browser navigation through `SearchPage` and
+`EventDetailPage` (the latter composing both `/events` and `/bookings`
+data through the proxy) — zero console errors, real seeded event data
+rendering correctly.
+
+No decisions-log delta — this is a bug fix and a hygiene fix within
+existing conventions, not a new architectural decision. `CLAUDE.md`
+self-check: no convention changes.
