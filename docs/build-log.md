@@ -5889,3 +5889,46 @@ rendering correctly.
 No decisions-log delta — this is a bug fix and a hygiene fix within
 existing conventions, not a new architectural decision. `CLAUDE.md`
 self-check: no convention changes.
+
+## 2026-08-25 — Final sanity pass, part 5: metrics, a real network-level race, and edge-case fuzzing
+
+Closed out the remaining live-only angles.
+
+**`/metrics`**: confirmed live on all five services, not just registered —
+hit `/events` three times, then confirmed `http_requests_total{handler="/events"...}
+3.0` in `event-service`'s scrape output, alongside real default Python/GC
+process metrics.
+
+**A genuine network-level concurrency race**: the existing test suite's
+`test_n_clients_race_*` proves the guarantee via `asyncio.gather` inside a
+shared pytest session — real, but not the same code path as 25 independent
+TCP connections through the actual Traefik → booking-service → Postgres
+stack. Fired 25 real concurrent `curl` requests (`xargs -P 25`) at one
+seat: exactly one `201`, twenty-four clean `409 {"detail":"seat
+unavailable"}` — the guarantee holds under genuine OS-level concurrency,
+not just the test harness's simulation of it.
+
+**Edge-case input fuzzing**: negative offset, `limit=0`, and an absurd
+`limit` on `/events` — all clean `422`s. Elasticsearch's documented
+`offset<=9900` cap on `/search` — clean `422` with the exact configured
+threshold in the error body. A 20,001-seat seat-map PUT (one over
+`MAX_SEAT_MAP_SEATS`) — clean `422` naming the exact count and limit.
+Exactly 20,000 seats — accepted, but a real, previously-undiscussed second
+guard fired on publish: `EventProducer._send`'s independent 900KB
+Kafka-message byte cap (`MAX_EVENT_MESSAGE_BYTES`, with headroom below
+aiokafka's 1MB `max_request_size`) rejected it with `422 "seat map too
+large to publish"` — seat *count* and message *byte size* are two
+independent overflow risks with two independent guards, and this is that
+second guard working exactly as designed, not an inconsistency. Retested
+with 9,000 shorter-labeled seats to stay under the byte cap while still
+crossing the 4,000-row `chunked()` batch boundary: seat-map PUT and
+publish both succeeded, and `booking-service`'s `tickets_provisioned` log
+confirmed `seats_in_message: 9000, tickets_inserted: 9000` — a live,
+real-load confirmation that this session's earlier `event-service`
+`chunked()` fix (and booking-service's original one) both correctly
+handle a genuine multi-batch insert, not just the unit-test-sized cases.
+
+No decisions-log delta. `CLAUDE.md` self-check: no convention changes.
+This closes out the sanity-pass punch list — every angle from the
+original checklist plus everything found along the way has now been
+either live-verified clean or found-and-fixed.
