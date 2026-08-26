@@ -6022,3 +6022,72 @@ and exited cleanly, confirming the script's own already-seeded-data
 detection works as designed, not just assumed.
 
 No decisions-log delta. `CLAUDE.md` self-check: no convention changes.
+
+## 2026-08-27 — Pre-submission EB sanity check: stuck redeploy loop, disk-full root cause, `RootVolumeSize` fix
+
+Final pre-submission pass included resuming the stopped EB instance
+(`i-042877e8a95e2a68f`) to verify it still boots and serves the real
+booking flow, using the corrected pause/resume procedure from §13's
+existing amendment. The resume itself worked exactly as documented — same
+instance ID, ASG suspension held — but the app-level Docker Compose stack
+never came up. EB environment health transitioned to Degraded within
+three minutes and stayed there.
+
+No SSH keypair or SSM access existed on this instance (`EC2KeyName` was
+never set; the instance role had only the standard EB web/worker/
+multicontainer policies). Attached AWS's own `AmazonSSMManagedInstanceCore`
+managed policy to the existing `aws-elasticbeanstalk-ec2-role` to open a
+Session Manager shell — no inbound ports opened, no new credentials
+issued, purely an outbound-registration permission grant. This gave live
+visibility that EB's own tail-log endpoint couldn't: `docker compose pull`
+was failing partway through the Elasticsearch layer with `failed to
+register layer: ... no space left on device`, then the deploy engine
+retried the whole sequence (including a full `docker.service` restart)
+every 1.5-3 minutes, forever, without ever completing.
+
+Root cause: the EB launch template's `RootVolumeSize` had never been set,
+so it defaulted to the AMI's 8GB. That was always close to the edge for
+this stack's full image set (~3.5GB of infra images plus ~1.5-2GB for the
+5 built service images plus OS/Docker overhead), and EB's own deploy hook
+only ever runs `docker container prune`, never `docker image prune` —
+across the Aug 24, Aug 25, and this session's own failed retry attempts,
+dangling images accumulated (5 stale `<none>`-tagged images, ~1.68GB, plus
+807MB of unused build cache) until there was no headroom left for
+Elasticsearch's layer extraction. Pruning the dangling images/build cache
+bought a little room (Elasticsearch did finish pulling once) but confirmed
+the real ceiling was structural, not just cruft — disk hit 94% before the
+next image was even due.
+
+Fixed via `aws elasticbeanstalk update-environment` setting
+`RootVolumeSize=20` (gp3). This replaced the launch template, which
+launched a new instance (`i-0b34563eddd426afc`, replacing
+`i-042877e8a95e2a68f`) and created a new Auto Scaling Group
+(`awseb-e-jpcrvsyd22-stack-AWSEBAutoScalingGroup-rVIiYVCtXJdp`, replacing
+`...zQcEe8j7iXX2`). Caught a side effect immediately: the environment
+update reset the new ASG's suspended processes back to none — re-suspended
+`HealthCheck`/`ReplaceUnhealthy`/`AZRebalance` before any further stop, since
+leaving them active would have reproduced the original §13 accidental-
+replacement bug on the very next stop.
+
+Verified live on the new instance: EB Health Green/Ok, all 14 containers
+up (7 with passing container healthchecks), `/healthz`, `/events`, and
+`/search` all returned 200, disk at 36% used (13GB free). Stopped again
+via the corrected procedure; confirmed the same instance ID persisted (no
+replacement) and ASG suspension held. CNAME
+(`event-ticketing-env.eba-uvwm2tcf.ap-south-1.elasticbeanstalk.com`) was
+unaffected throughout, consistent with §12/§13's existing CNAME-stability
+claim.
+
+The report (`docs/report/deployment-flow.md`) is not being updated for
+this — the report is frozen ahead of submission, and every Verified claim
+it makes about the Aug 24/25 sessions remains accurate as of when it was
+measured. This was environment drift discovered between then and now, not
+a retroactive error in what's already written. `docs/report/
+deployment-flow.md:223`'s `EBS (8GB gp3...)` cost line and the instance-ID
+table (`:215-218`) are now stale relative to today's session, noted here
+for the record rather than corrected there.
+
+Decisions-log delta: §13 amended (new ASG-suspension-reset-on-update
+finding, see below); §12 given a one-line note (`RootVolumeSize` now
+explicit at 20GB, previously an implicit 8GB AMI default). `CLAUDE.md`
+self-check: no convention changes.

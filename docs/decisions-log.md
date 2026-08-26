@@ -132,6 +132,8 @@ Minimal functional React UI, not a polished product build. Five screens: event l
 
 **Instance sizing: t3.xlarge (16GB) as the realistic floor**, not a maybe-upgrade — even after the consolidations above, this is a genuinely heavy stack for 8GB. Given the instance is already stopped when idle (§13), the cost delta over t3.large is small.
 
+**Root volume: 20GB gp3, explicit** (amended 2026-08-27) — originally left unset, defaulting to the AMI's implicit 8GB. Live-tested insufficient: the full image set (~3.5GB infra images + ~1.5-2GB app builds + OS/Docker overhead) leaves too little headroom once EB's deploy hook's dangling-image accumulation (it only runs `docker container prune`, never `docker image prune`) is factored in across repeated sessions. See build-log 2026-08-27.
+
 **Amendment (Phase 10, 2026-08-24, P10.T1):** "single-instance mode... no auto-scaling group" above is corrected by what P10.T4 found — every Elastic Beanstalk environment, single-instance tier included, is backed by an Auto Scaling Group (min=max=desired=1) whether the tier "uses" scaling or not; "single-instance" means no load balancer and no *scaling*, not no ASG. See §13's amendment for the full consequence (a directly-stopped instance gets replaced, not paused) and the corrected stop procedure.
 
 Three real implementation-level gaps found deploying this topology for the first time, none anticipated when this section was originally written — full narrative in `docs/phases/phase-10-kickoff.md`'s T1 section, kept here as the durable summary:
@@ -187,6 +189,17 @@ instance ID and the same (post-replacement) event UUIDs intact — a true
 pause/resume, matching what this section originally intended. Every future
 session's stop/start should use this corrected procedure, not the bare
 EC2 API calls this section originally described.
+
+**Second amendment (2026-08-27):** the corrected procedure above covers
+stop/start, but not an `aws elasticbeanstalk update-environment` call
+that changes the launch template (e.g. `RootVolumeSize`) — live-verified
+that this **resets the ASG's suspended processes back to none and
+creates an entirely new Auto Scaling Group**, silently undoing the
+suspension this section requires. Any future environment-configuration
+update must be followed by re-suspending
+`HealthCheck`/`ReplaceUnhealthy`/`AZRebalance` on the (possibly renamed)
+ASG before the next `stop-instances`, or the original accidental-
+replacement bug recurs. See build-log 2026-08-27 for the full incident.
 
 ## 14. Kubernetes — Deferred
 
