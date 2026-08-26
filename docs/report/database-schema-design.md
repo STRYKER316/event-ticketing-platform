@@ -15,7 +15,7 @@ verification claim removed.*
 
 ![event_db ER diagram](assets/diagrams/db-event_db.png)
 
-*Rendered from the Mermaid source below (`assets/diagrams/db-event_db.svg`
+*Rendered from this project's Mermaid diagram source (`assets/diagrams/db-event_db.svg`
 for a vector version).*
 
 ```mermaid
@@ -177,7 +177,7 @@ after).
 
 ![booking_db ER diagram](assets/diagrams/db-booking_db.png)
 
-*Rendered from the Mermaid source below (`assets/diagrams/db-booking_db.svg`
+*Rendered from this project's Mermaid diagram source (`assets/diagrams/db-booking_db.svg`
 for a vector version).*
 
 ```mermaid
@@ -318,7 +318,7 @@ re-run repeatedly to rule out a false-positive pass.
 
 ![payment_db ER diagram](assets/diagrams/db-payment_db.png)
 
-*Rendered from the Mermaid source below (`assets/diagrams/db-payment_db.svg`
+*Rendered from this project's Mermaid diagram source (`assets/diagrams/db-payment_db.svg`
 for a vector version).*
 
 ```mermaid

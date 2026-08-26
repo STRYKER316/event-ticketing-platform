@@ -15,7 +15,7 @@ signature, fact, number, or verification claim was removed.*
 
 ![Event Service class diagram](assets/diagrams/class-event-service.png)
 
-*Rendered from the Mermaid source below (`assets/diagrams/class-event-service.svg`
+*Rendered from this project's Mermaid diagram source (`assets/diagrams/class-event-service.svg`
 for a vector version).*
 
 ```mermaid
@@ -139,7 +139,7 @@ to resolve against).
 
 ![Search Service class diagram](assets/diagrams/class-search-service.png)
 
-*Rendered from the Mermaid source below (`assets/diagrams/class-search-service.svg`
+*Rendered from this project's Mermaid diagram source (`assets/diagrams/class-search-service.svg`
 for a vector version).*
 
 ```mermaid
@@ -192,7 +192,7 @@ of Phase 2.
 
 ![Booking Service class diagram](assets/diagrams/class-booking-service.png)
 
-*Rendered from the Mermaid source below (`assets/diagrams/class-booking-service.svg`
+*Rendered from this project's Mermaid diagram source (`assets/diagrams/class-booking-service.svg`
 for a vector version).*
 
 ```mermaid
@@ -452,7 +452,7 @@ produced a real `notification_delivered` log line
 
 ![Payment Service class diagram](assets/diagrams/class-payment-service.png)
 
-*Rendered from the Mermaid source below (`assets/diagrams/class-payment-service.svg`
+*Rendered from this project's Mermaid diagram source (`assets/diagrams/class-payment-service.svg`
 for a vector version).*
 
 ```mermaid
@@ -622,7 +622,7 @@ real webhook delivery produced a real `notification_delivered` log line
 
 ![Notification Service class diagram](assets/diagrams/class-notification-service.png)
 
-*Rendered from the Mermaid source below (`assets/diagrams/class-notification-service.svg`
+*Rendered from this project's Mermaid diagram source (`assets/diagrams/class-notification-service.svg`
 for a vector version).*
 
 ```mermaid

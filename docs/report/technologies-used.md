@@ -5,8 +5,11 @@ Condensed 2026-08-25 (report trim, phase 2): each entry's narration was
 cut to its essential what/why/verified-status claim, dropping blow-by-blow
 bug narratives already covered in Class Diagrams, Database Schema Design,
 or `docs/build-log.md` — no fact, number, or verification claim was
-removed, only the duplicate retelling of it. AWS/Elastic Beanstalk is
-covered by the Deployment Flow chapter rather than repeated here.*
+removed, only the duplicate retelling of it. Docker/Elastic Beanstalk
+entries below cover the technology itself (what it is, why it was
+chosen); the deployment process built on top of them — the actual
+provisioning steps, fixes, and the live validation run — stays in the
+Deployment Flow chapter rather than being repeated here.*
 
 Each entry: what it is, why it was chosen over the alternatives considered,
 and its status in this build.
@@ -27,6 +30,68 @@ reachable, every route confirmed reachable only through Traefik, not by
 hitting a service directly on its container port. (A one-time Docker
 Desktop API-version incompatibility during setup was fixed with a small
 proxy in front of the Docker socket — see `docs/build-log.md`, P0.T5.)
+
+## Docker / Docker Compose (containerization)
+
+**What:** the containerization layer for every part of this system — the
+five backend services, the frontend, and every infrastructure dependency
+(Postgres, MongoDB, Kafka, Redis, Elasticsearch, Keycloak, Traefik) run
+as containers defined in a single `docker-compose.yml`. That same compose
+file is the deployment artifact itself, not a separate one rewritten for
+AWS — Elastic Beanstalk's Docker Compose platform branch runs it directly
+(decisions-log §12).
+
+**Why:** chosen over running services as bare host processes, for
+reproducibility (local and deployed environments run the same compose
+definition, not two config formats that can drift), and over Kubernetes
+for a solo capstone's actual operational scope — Kubernetes is named
+explicitly in Future Work as deferred, not attempted, since Docker
+Compose plus Elastic Beanstalk already covers this project's real demand
+profile (decisions-log §12, §14).
+
+**Status:** Implemented, Tested, Deployed, Verified (live) — roughly
+14–15 containers (5 app services, Traefik, Keycloak, Kafka, Redis,
+Elasticsearch, Postgres, MongoDB, the frontend, plus Prometheus/Grafana
+during benchmark runs) run from the same compose definition both locally
+and on the deployed EB instance. One gap surfaced only at deployment
+time, not anticipated when the compose file was first written: its build
+contexts reach outside the `infra/` directory in a way EB's Docker
+Compose deploy can't resolve. Fixed with `infra/build-eb-bundle.sh`,
+which assembles a flat, self-contained deployment bundle without altering
+the canonical compose file used for local development (decisions-log
+§12).
+
+## AWS Elastic Beanstalk (deployment platform)
+
+**What:** a managed AWS service that provisions and runs this project's
+existing `docker-compose.yml` directly, via its Docker platform branch
+(Amazon Linux 2023) — EB detects and runs Compose files on this branch
+without a separate multi-container config format to maintain.
+
+**Why:** chosen over raw EC2 for its automated provisioning, run in
+**single-instance mode** specifically (no load balancer, no autoscaling)
+to avoid a fixed ~$16–20/month ALB cost not needed for a capstone demo,
+on a **t3.xlarge (16GB)** instance sized to the stack's real memory
+footprint. Elasticsearch and Kafka are both genuinely memory-hungry, so
+three consolidations keep the full ~14–15 container stack workable on one
+instance: one Postgres container hosting three logical databases instead
+of three server processes, Kafka in KRaft mode (no separate Zookeeper
+container), and Keycloak in dev mode with its embedded database (no
+dedicated Postgres instance for it) (decisions-log §12).
+
+**Status:** Deployed, Verified (live) — the full browse → book → pay →
+confirm flow was exercised against the real deployed environment (see
+Deployment Flow). Three implementation-level gaps surfaced only at first
+deployment, not anticipated in advance: build-time-baked `localhost`
+URLs and Keycloak realm config (fixed with relative URLs and a
+runtime-templated realm), a PKCE `crypto.subtle` restriction that fails
+silently over plain HTTP (fixed with a pure-JS SHA-256 fallback), and the
+Docker Compose build-context issue described above. A correction to a
+previously locked decision was also found live, not assumed in advance:
+every EB environment — single-instance tier included — is backed by an
+Auto Scaling Group, so a directly-stopped instance gets *replaced* rather
+than paused; the stop/resume procedure was corrected accordingly once
+this was discovered (decisions-log §13 amendment).
 
 ## Keycloak (identity provider)
 
